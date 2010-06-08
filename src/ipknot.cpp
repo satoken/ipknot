@@ -78,6 +78,8 @@ private:
 
   // index
   boost::multi_array<int, 3> v_;
+  // bp list
+  boost::multi_array<std::vector<int>, 2> w_;
 };
 
 void
@@ -106,7 +108,10 @@ contrafold(const std::string& seq)
       float p=bp[en.GetOffset(i+1)+(j+1)];
       for (uint lv=0; lv!=pk_level_; ++lv)
         if (p>th_[lv])
+        {
           v_[lv][i][j] = ip_.make_variable(p*alpha_[lv]);
+          w_[lv][i].push_back(j);
+        }
     }
   }
 }
@@ -125,7 +130,10 @@ rnafold(const std::string& seq)
       float p=Vienna::pr[Vienna::iindx[i+1]-(j+1)];
       for (uint lv=0; lv!=pk_level_; ++lv)
         if (p>th_[lv])
+        {
           v_[lv][i][j] = ip_.make_variable(p*alpha_[lv]);
+          w_[lv][i].push_back(j);
+        }
     }
   }
   Vienna::free_pf_arrays();
@@ -137,6 +145,7 @@ solve(const std::string& s, std::string& r, std::vector<int>& bpseq)
 {
   v_.resize(boost::extents[pk_level_][s.size()][s.size()]);
   std::fill(v_.data(), v_.data()+v_.num_elements(), -1);
+  w_.resize(boost::extents[pk_level_][s.size()]);
 
   // make objective variavles with their weights
   if (use_contrafold_) contrafold(s);
@@ -159,6 +168,7 @@ solve(const std::string& s, std::string& r, std::vector<int>& bpseq)
   }
 
   // constraint 2: disallow pseudoknots in x[lv]
+#if 0
   for (uint lv=0; lv!=pk_level_; ++lv)
     for (uint i=0; i<s.size(); ++i)
       for (uint k=i+1; k<s.size(); ++k)
@@ -171,8 +181,28 @@ solve(const std::string& s, std::string& r, std::vector<int>& bpseq)
                 ip_.add_constraint(row, v_[lv][i][j], 1);
                 ip_.add_constraint(row, v_[lv][k][l], 1);
               }
+#else
+  for (uint lv=0; lv!=pk_level_; ++lv)
+    for (uint i=0; i<w_[lv].size(); ++i)
+      for (uint p=0; p<w_[lv][i].size(); ++p)
+      {
+        uint j=w_[lv][i][p];
+        for (uint k=i+1; k<j; ++k)
+          for (uint q=0; q<w_[lv][k].size(); ++q)
+          {
+            uint l=w_[lv][k][q];
+            if (j<l)
+            {
+              int row = ip_.make_constraint(IP::UP, 0, 1);
+              ip_.add_constraint(row, v_[lv][i][j], 1);
+              ip_.add_constraint(row, v_[lv][k][l], 1);
+            }
+          }
+      }
+#endif
 
   // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
+#if 0
   for (uint lv=1; lv!=pk_level_; ++lv)
     for (uint k=0; k<s.size(); ++k)
       for (uint l=k+1; l<s.size(); ++l)
@@ -190,6 +220,33 @@ solve(const std::string& s, std::string& r, std::vector<int>& bpseq)
                 if (v_[plv][i][j]>=0)
                   ip_.add_constraint(row, v_[plv][i][j], 1);
           }
+#else
+  for (uint lv=1; lv!=pk_level_; ++lv)
+    for (uint k=0; k<w_[lv].size(); ++k)
+      for (uint q=0; q<w_[lv][k].size(); ++q)
+      {
+        uint l=w_[lv][k][q];
+        for (uint plv=0; plv!=lv; ++plv)
+        {
+          int row = ip_.make_constraint(IP::LO, 0, 0);
+          ip_.add_constraint(row, v_[lv][k][l], -1);
+          for (uint i=0; i<k; ++i)
+            for (uint p=0; p<w_[plv][i].size(); ++p)
+            {
+              uint j=w_[plv][i][p];
+              if (k<j && j<l)
+                ip_.add_constraint(row, v_[plv][i][j], 1);
+            }
+          for (uint i=k+1; i<l; ++i)
+            for (uint p=0; p<w_[plv][i].size(); ++p)
+            {
+              uint j=w_[plv][i][p];
+              if (l<j)
+                ip_.add_constraint(row, v_[plv][i][j], 1);
+            }
+        }
+      }
+#endif
 
   if (stacking_constraints_)
   {
