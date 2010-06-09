@@ -256,6 +256,12 @@ public:
                                                          const std::vector< InferenceEngine<RealT>* >& en ) const;
     RealT *GetPosterior(const RealT posterior_cutoff) const;
     RealT *GetPosterior(const RealT posterior_cutoff, std::vector<RealT>& p) const;
+    RealT *GetPosterior(const RealT posterior_cutoff, std::vector<RealT>& p, std::vector<int>& o) const
+    {
+        RealT* ret = GetPosterior(posterior_cutoff, p);
+        o = offset;
+        return ret;
+    }
     RealT *GetPosterior2(const RealT posterior_cutoff) const;
     RealT *GetPosterior2(const RealT posterior_cutoff, std::vector<RealT>& p) const;
 

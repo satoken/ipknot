@@ -20,6 +20,7 @@
 */
 
 #include "config.h"
+#include <ctime>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -51,245 +52,294 @@ class IPknot
 public:
   IPknot(uint pk_level, const float* th, const float* alpha,
          bool use_contrafold, bool stacking_constraints, int n_th)
-    : ip_(IP::MAX, n_th),
-      pk_level_(pk_level),
+    : pk_level_(pk_level),
       th_(th, th+pk_level),
       alpha_(alpha, alpha+pk_level),
       use_contrafold_(use_contrafold),
-      stacking_constraints_(stacking_constraints)
+      stacking_constraints_(stacking_constraints),
+      n_th_(n_th)
   {
   }
 
-  void solve(const std::string& seq, std::string& res, std::vector<int>& ct);
+  void solve(const std::string& seq, std::string& res, std::vector<int>& ct) const;
+
+  void solve(const std::string& seq, const std::vector<float>& bp, const std::vector<int>& offset,
+             std::string& res, std::vector<int>& ct) const;
+
+  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    use_contrafold_ ? contrafold(seq, bp, offset) : rnafold(seq, bp, offset);
+  }
 
 private:
-  void contrafold(const std::string& seq);
-  void rnafold(const std::string& seq);
+  void contrafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
+  void rnafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
 
 private:
-  IP ip_;
-  
   // options
   uint pk_level_;
   std::vector<float> th_;
   std::vector<float> alpha_;
   bool use_contrafold_;        // use CONTRAfold model or not
   bool stacking_constraints_;
-
-  // index
-  boost::multi_array<int, 3> v_;
-  // bp list
-  boost::multi_array<std::vector<int>, 2> w_;
+  int n_th_;
 };
 
 void
 IPknot::
-contrafold(const std::string& seq)
+contrafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
 {
-  float th_min=1.0;
-  for (uint i=0; i!=th_.size(); ++i) th_min=std::min(th_min, th_[i]);
   SStruct ss("unknown", seq);
   ParameterManager<float> pm;
   InferenceEngine<float> en(false);
   std::vector<float> w = GetDefaultComplementaryValues<float>();
-  std::vector<float> bp((seq.size()+1)*(seq.size()+2)/2, 0.0);
+  bp.resize((seq.size()+1)*(seq.size()+2)/2, 0.0);
   en.RegisterParameters(pm);
   en.LoadValues(w);
   en.LoadSequence(ss);
   en.ComputeInside();
   en.ComputeOutside();
   en.ComputePosterior();
-  en.GetPosterior(th_min, bp);
-
-  for (uint j=1; j!=seq.size(); ++j)
-  {
-    for (uint i=j-1; i!=-1u; --i)
-    {
-      float p=bp[en.GetOffset(i+1)+(j+1)];
-      for (uint lv=0; lv!=pk_level_; ++lv)
-        if (p>th_[lv])
-        {
-          v_[lv][i][j] = ip_.make_variable(p*alpha_[lv]);
-          w_[lv][i].push_back(j);
-        }
-    }
-  }
+  en.GetPosterior(0, bp, offset);
 }
 
 void
 IPknot::
-rnafold(const std::string& seq)
+rnafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
 {
+  bp.resize((seq.size()+1)*(seq.size()+2)/2);
+  offset.resize(seq.size()+1);
+  for (uint i=0; i<=offset.size(); ++i)
+    offset[i] = i*(offset.size()+offset.size()-i-1)/2;
+  
   Vienna::pf_scale = -1;
   Vienna::init_pf_fold(seq.size());
   Vienna::pf_fold(const_cast<char*>(seq.c_str()), NULL);
   for (uint i=0; i!=seq.size()-1; ++i)
-  {
     for (uint j=i+1; j!=seq.size(); ++j)
-    {
-      float p=Vienna::pr[Vienna::iindx[i+1]-(j+1)];
-      for (uint lv=0; lv!=pk_level_; ++lv)
-        if (p>th_[lv])
-        {
-          v_[lv][i][j] = ip_.make_variable(p*alpha_[lv]);
-          w_[lv][i].push_back(j);
-        }
-    }
-  }
+      bp[offset[i+1]+(j+1)] = Vienna::pr[Vienna::iindx[i+1]-(j+1)];
   Vienna::free_pf_arrays();
 }
 
 void
 IPknot::
-solve(const std::string& s, std::string& r, std::vector<int>& bpseq)
+solve(const std::string& s, std::string& r, std::vector<int>& bpseq) const
 {
-  v_.resize(boost::extents[pk_level_][s.size()][s.size()]);
-  std::fill(v_.data(), v_.data()+v_.num_elements(), -1);
-  w_.resize(boost::extents[pk_level_][s.size()]);
+  std::vector<float> bp;
+  std::vector<int> offset;
+
+  clock_t t1 = clock();
+  std::cerr << "Calculating base-pairing probabilities ...";
+  calculate_posterior(s, bp, offset);
+  clock_t t2 = clock();
+  std::cerr << " done ("
+            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
+            << "s)." << std::endl;
+  
+  solve(s, bp, offset, r, bpseq);
+}
+
+void
+IPknot::
+solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>& offset,
+      std::string& r, std::vector<int>& bpseq) const
+{
+  IP ip(IP::MAX, n_th_);
+  
+  boost::multi_array<int, 3> v(boost::extents[pk_level_][s.size()][s.size()]);
+  boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][s.size()]);
+  std::fill(v.data(), v.data()+v.num_elements(), -1);
 
   // make objective variavles with their weights
-  if (use_contrafold_) contrafold(s);
-  else rnafold(s);
-  ip_.update();
+  clock_t t1 = clock();
+  std::cerr << "Making variables ...";
+  for (uint j=1; j!=s.size(); ++j)
+  {
+    for (uint i=j-1; i!=-1u; --i)
+    {
+      const float& p=bp[offset[i+1]+(j+1)];
+      for (uint lv=0; lv!=pk_level_; ++lv)
+        if (p>th_[lv])
+        {
+          v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
+          w[lv][i].push_back(j);
+        }
+    }
+  }
+  ip.update();
+  clock_t t2 = clock();
+  std::cerr << " done ("
+            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
+            << "s)." << std::endl;
 
   // constraint 1: each s_i is paired with at most one base
+  t1 = clock();
+  std::cerr << "Making constraints 1 ...";
   for (uint i=0; i!=s.size(); ++i)
   {
-    int row = ip_.make_constraint(IP::UP, 0, 1);
+    int row = ip.make_constraint(IP::UP, 0, 1);
     for (uint lv=0; lv!=pk_level_; ++lv)
     {
       for (uint j=0; j<i; ++j)
-        if (v_[lv][j][i]>=0)
-          ip_.add_constraint(row, v_[lv][j][i], 1);
+        if (v[lv][j][i]>=0)
+          ip.add_constraint(row, v[lv][j][i], 1);
       for (uint j=i+1; j<s.size(); ++j)
-        if (v_[lv][i][j]>=0)
-          ip_.add_constraint(row, v_[lv][i][j], 1);
+        if (v[lv][i][j]>=0)
+          ip.add_constraint(row, v[lv][i][j], 1);
     }
   }
+  t2 = clock();
+  std::cerr << " done (" 
+            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
+            << "s)." << std::endl;
 
   // constraint 2: disallow pseudoknots in x[lv]
+  t1 = clock();
+  std::cerr << "Making constraints 2 ...";
 #if 0
   for (uint lv=0; lv!=pk_level_; ++lv)
     for (uint i=0; i<s.size(); ++i)
       for (uint k=i+1; k<s.size(); ++k)
         for (uint j=k+1; j<s.size(); ++j)
-          if (v_[lv][i][j]>=0)
+          if (v[lv][i][j]>=0)
             for (uint l=j+1; l<s.size(); ++l)
-              if (v_[lv][k][l]>=0)
+              if (v[lv][k][l]>=0)
               {
-                int row = ip_.make_constraint(IP::UP, 0, 1);
-                ip_.add_constraint(row, v_[lv][i][j], 1);
-                ip_.add_constraint(row, v_[lv][k][l], 1);
+                int row = ip.make_constraint(IP::UP, 0, 1);
+                ip.add_constraint(row, v[lv][i][j], 1);
+                ip.add_constraint(row, v[lv][k][l], 1);
               }
 #else
   for (uint lv=0; lv!=pk_level_; ++lv)
-    for (uint i=0; i<w_[lv].size(); ++i)
-      for (uint p=0; p<w_[lv][i].size(); ++p)
+    for (uint i=0; i<w[lv].size(); ++i)
+      for (uint p=0; p<w[lv][i].size(); ++p)
       {
-        uint j=w_[lv][i][p];
+        uint j=w[lv][i][p];
         for (uint k=i+1; k<j; ++k)
-          for (uint q=0; q<w_[lv][k].size(); ++q)
+          for (uint q=0; q<w[lv][k].size(); ++q)
           {
-            uint l=w_[lv][k][q];
+            uint l=w[lv][k][q];
             if (j<l)
             {
-              int row = ip_.make_constraint(IP::UP, 0, 1);
-              ip_.add_constraint(row, v_[lv][i][j], 1);
-              ip_.add_constraint(row, v_[lv][k][l], 1);
+              int row = ip.make_constraint(IP::UP, 0, 1);
+              ip.add_constraint(row, v[lv][i][j], 1);
+              ip.add_constraint(row, v[lv][k][l], 1);
             }
           }
       }
 #endif
+  t2 = clock();
+  std::cerr << " done (" 
+            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
+            << "s)." << std::endl;
 
   // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
+  t1 = clock();
+  std::cerr << "Making constraints 3 ...";
 #if 0
   for (uint lv=1; lv!=pk_level_; ++lv)
     for (uint k=0; k<s.size(); ++k)
       for (uint l=k+1; l<s.size(); ++l)
-        if (v_[lv][k][l]>=0)
+        if (v[lv][k][l]>=0)
           for (uint plv=0; plv!=lv; ++plv)
           {
-            int row = ip_.make_constraint(IP::LO, 0, 0);
-            ip_.add_constraint(row, v_[lv][k][l], -1);
+            int row = ip.make_constraint(IP::LO, 0, 0);
+            ip.add_constraint(row, v[lv][k][l], -1);
             for (uint i=0; i<k; ++i)
               for (uint j=k+1; j<l; ++j)
-                if (v_[plv][i][j]>=0)
-                  ip_.add_constraint(row, v_[plv][i][j], 1);
+                if (v[plv][i][j]>=0)
+                  ip.add_constraint(row, v[plv][i][j], 1);
             for (uint i=k+1; i<l; ++i)
               for (uint j=l+1; j<s.size(); ++j)
-                if (v_[plv][i][j]>=0)
-                  ip_.add_constraint(row, v_[plv][i][j], 1);
+                if (v[plv][i][j]>=0)
+                  ip.add_constraint(row, v[plv][i][j], 1);
           }
 #else
   for (uint lv=1; lv!=pk_level_; ++lv)
-    for (uint k=0; k<w_[lv].size(); ++k)
-      for (uint q=0; q<w_[lv][k].size(); ++q)
+    for (uint k=0; k<w[lv].size(); ++k)
+      for (uint q=0; q<w[lv][k].size(); ++q)
       {
-        uint l=w_[lv][k][q];
+        uint l=w[lv][k][q];
         for (uint plv=0; plv!=lv; ++plv)
         {
-          int row = ip_.make_constraint(IP::LO, 0, 0);
-          ip_.add_constraint(row, v_[lv][k][l], -1);
+          int row = ip.make_constraint(IP::LO, 0, 0);
+          ip.add_constraint(row, v[lv][k][l], -1);
           for (uint i=0; i<k; ++i)
-            for (uint p=0; p<w_[plv][i].size(); ++p)
+            for (uint p=0; p<w[plv][i].size(); ++p)
             {
-              uint j=w_[plv][i][p];
+              uint j=w[plv][i][p];
               if (k<j && j<l)
-                ip_.add_constraint(row, v_[plv][i][j], 1);
+                ip.add_constraint(row, v[plv][i][j], 1);
             }
           for (uint i=k+1; i<l; ++i)
-            for (uint p=0; p<w_[plv][i].size(); ++p)
+            for (uint p=0; p<w[plv][i].size(); ++p)
             {
-              uint j=w_[plv][i][p];
+              uint j=w[plv][i][p];
               if (l<j)
-                ip_.add_constraint(row, v_[plv][i][j], 1);
+                ip.add_constraint(row, v[plv][i][j], 1);
             }
         }
       }
 #endif
+  t2 = clock();
+  std::cerr << " done (" 
+            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
+            << "s)." << std::endl;
 
   if (stacking_constraints_)
   {
+    t1 = clock();
+    std::cerr << "Making stacking constraints ...";
     for (uint lv=0; lv!=pk_level_; ++lv)
     {
       // upstream
       for (uint i=0; i<s.size(); ++i)
       {
-        int row = ip_.make_constraint(IP::LO, 0, 0);
+        int row = ip.make_constraint(IP::LO, 0, 0);
         for (uint j=0; j<i; ++j)
-          if (v_[lv][j][i]>=0)
-            ip_.add_constraint(row, v_[lv][j][i], -1);
+          if (v[lv][j][i]>=0)
+            ip.add_constraint(row, v[lv][j][i], -1);
         if (i>0)
           for (uint j=0; j<i-1; ++j)
-            if (v_[lv][j][i-1]>=0)
-              ip_.add_constraint(row, v_[lv][j][i-1], 1);
+            if (v[lv][j][i-1]>=0)
+              ip.add_constraint(row, v[lv][j][i-1], 1);
         if (i+1<s.size())
           for (uint j=0; j<i+1; ++j)
-            if (v_[lv][j][i+1]>=0)
-              ip_.add_constraint(row, v_[lv][j][i+1], 1);
+            if (v[lv][j][i+1]>=0)
+              ip.add_constraint(row, v[lv][j][i+1], 1);
       }
 
       // downstream
       for (uint i=0; i<s.size(); ++i)
       {
-        int row = ip_.make_constraint(IP::LO, 0, 0);
+        int row = ip.make_constraint(IP::LO, 0, 0);
         for (uint j=i+1; j<s.size(); ++j)
-          if (v_[lv][i][j]>=0)
-            ip_.add_constraint(row, v_[lv][i][j], -1);
+          if (v[lv][i][j]>=0)
+            ip.add_constraint(row, v[lv][i][j], -1);
         if (i>0)
           for (uint j=i; j<s.size(); ++j)
-            if (v_[lv][i-1][j]>=0)
-              ip_.add_constraint(row, v_[lv][i-1][j], 1);
+            if (v[lv][i-1][j]>=0)
+              ip.add_constraint(row, v[lv][i-1][j], 1);
         if (i+1<s.size())
           for (uint j=i+2; j<s.size(); ++j)
-            if (v_[lv][i+1][j]>=0)
-              ip_.add_constraint(row, v_[lv][i+1][j], 1);
+            if (v[lv][i+1][j]>=0)
+              ip.add_constraint(row, v[lv][i+1][j], 1);
       }
     }
+    t2 = clock();
+    std::cerr << " done (" 
+              << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
+              << "s)." << std::endl;
   }
 
   // execute optimization
-  ip_.solve();
+  t1 = clock();
+  std::cerr << "Solving IP problem...";
+  ip.solve();
+  t2 = clock();
+  std::cerr << " done (" 
+            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
+            << "s)." << std::endl;
 
   // build the resultant structure
   r.resize(s.size());
@@ -299,7 +349,7 @@ solve(const std::string& s, std::string& r, std::vector<int>& bpseq)
   for (uint lv=0; lv!=pk_level_; ++lv)
     for (uint i=0; i<s.size(); ++i)
       for (uint j=i+1; j<s.size(); ++j)
-        if (v_[lv][i][j]>=0 && ip_.get_value(v_[lv][i][j])>0.5)
+        if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
         {
           assert(r[i]=='.'); assert(r[j]=='.');
           r[i]=left_paren[lv]; r[j]=right_paren[lv];
@@ -312,8 +362,8 @@ usage(const char* progname)
 {
   std::cout << progname << ": [options] fasta" << std::endl
             << " -h:       show this message" << std::endl
-            << " -a alpha: weight for hybridation probabilities (default: 0.5)" << std::endl
-            << " -t th:    threshold of base-pairing probabilities (default: 0.5)" << std::endl
+            << " -a alpha: weight for hybridation probabilities" << std::endl
+            << " -t th:    threshold of base-pairing probabilities" << std::endl
             << " -m:       use McCaskill model (default: CONTRAfold model)" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
             << " -b:       output the prediction via BPSEQ format" << std::endl
@@ -335,7 +385,7 @@ main(int argc, char* argv[])
   bool use_contrafold=true;
   bool use_bpseq=false;
   int n_th=1;
-  while ((ch=getopt(argc, argv, "a:t:mibn:r:h"))!=-1)
+  while ((ch=getopt(argc, argv, "a:t:g:mibn:r:h"))!=-1)
   {
     switch (ch)
     {
@@ -347,6 +397,9 @@ main(int argc, char* argv[])
         break;
       case 't':
         th.push_back(atof(optarg));
+        break;
+      case 'g':
+        th.push_back(1/(atof(optarg)+1));
         break;
       case 'i':
         isolated_bp=true;
