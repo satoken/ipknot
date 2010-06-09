@@ -150,7 +150,7 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
   boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][s.size()]);
   std::fill(v.data(), v.data()+v.num_elements(), -1);
 
-  // make objective variavles with their weights
+  // make objective variables with their weights
   clock_t t1 = clock();
   std::cerr << "Making variables ...";
   for (uint j=1; j!=s.size(); ++j)
@@ -196,20 +196,6 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
   // constraint 2: disallow pseudoknots in x[lv]
   t1 = clock();
   std::cerr << "Making constraints 2 ...";
-#if 0
-  for (uint lv=0; lv!=pk_level_; ++lv)
-    for (uint i=0; i<s.size(); ++i)
-      for (uint k=i+1; k<s.size(); ++k)
-        for (uint j=k+1; j<s.size(); ++j)
-          if (v[lv][i][j]>=0)
-            for (uint l=j+1; l<s.size(); ++l)
-              if (v[lv][k][l]>=0)
-              {
-                int row = ip.make_constraint(IP::UP, 0, 1);
-                ip.add_constraint(row, v[lv][i][j], 1);
-                ip.add_constraint(row, v[lv][k][l], 1);
-              }
-#else
   for (uint lv=0; lv!=pk_level_; ++lv)
     for (uint i=0; i<w[lv].size(); ++i)
       for (uint p=0; p<w[lv][i].size(); ++p)
@@ -227,7 +213,6 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
             }
           }
       }
-#endif
   t2 = clock();
   std::cerr << " done (" 
             << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
@@ -236,25 +221,6 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
   // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
   t1 = clock();
   std::cerr << "Making constraints 3 ...";
-#if 0
-  for (uint lv=1; lv!=pk_level_; ++lv)
-    for (uint k=0; k<s.size(); ++k)
-      for (uint l=k+1; l<s.size(); ++l)
-        if (v[lv][k][l]>=0)
-          for (uint plv=0; plv!=lv; ++plv)
-          {
-            int row = ip.make_constraint(IP::LO, 0, 0);
-            ip.add_constraint(row, v[lv][k][l], -1);
-            for (uint i=0; i<k; ++i)
-              for (uint j=k+1; j<l; ++j)
-                if (v[plv][i][j]>=0)
-                  ip.add_constraint(row, v[plv][i][j], 1);
-            for (uint i=k+1; i<l; ++i)
-              for (uint j=l+1; j<s.size(); ++j)
-                if (v[plv][i][j]>=0)
-                  ip.add_constraint(row, v[plv][i][j], 1);
-          }
-#else
   for (uint lv=1; lv!=pk_level_; ++lv)
     for (uint k=0; k<w[lv].size(); ++k)
       for (uint q=0; q<w[lv][k].size(); ++q)
@@ -280,7 +246,6 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
             }
         }
       }
-#endif
   t2 = clock();
   std::cerr << " done (" 
             << static_cast<float>(t2-t1)/CLOCKS_PER_SEC

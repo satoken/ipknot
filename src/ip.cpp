@@ -134,21 +134,16 @@ public:
 
   int make_constraint(IP::BoundType bnd, double l, double u)
   {
-    GRBLinExpr c;
-    switch (bnd)
-    {
-      case IP::LO: model_->addConstr(c >= l); break;
-      case IP::UP: model_->addConstr(c <= u); break;
-      case IP::DB: model_->addConstr(c >= l); model_->addConstr(c <= u); break;
-      case IP::FX: model_->addConstr(c == l); break;
-    }
-    constr_.push_back(c);
-    return constr_.size()-1;
+    bnd_.push_back(bnd);
+    l_.push_back(l);
+    u_.push_back(u);
+    m_.resize(m_.size()+1);
+    return m_.size()-1;
   }
 
   void add_constraint(int row, int col, double val)
   {
-    constr_[row] += val * vars_[col];
+    m_[row].push_back(std::make_pair(col, val));
   }
 
   void update()
@@ -158,6 +153,23 @@ public:
 
   void solve()
   {
+    for (unsigned int i=0; i!=m_.size(); ++i)
+    {
+      GRBLinExpr c;
+      for (unsigned int j=0; j!=m_[i].size(); ++j)
+        c += vars_[m_[i][j].first] * m_[i][j].second;
+      switch (bnd_[i])
+      {
+        case IP::LO: model_->addConstr(c >= l_[i]); break;
+        case IP::UP: model_->addConstr(c <= u_[i]); break;
+        case IP::DB: model_->addConstr(c >= l_[i]); model_->addConstr(c <= u_[i]); break;
+        case IP::FX: model_->addConstr(c == l_[i]); break;
+      }
+    }
+    bnd_.clear();
+    l_.clear();
+    u_.clear();
+    m_.clear();
     model_->optimize();
   }
 
@@ -172,9 +184,101 @@ private:
   int dir_;
 
   std::vector<GRBVar> vars_;
-  std::vector<GRBLinExpr> constr_;
+  std::vector< std::vector< std::pair<int,double> > > m_;
+  std::vector<int> bnd_;
+  std::vector<double> l_;
+  std::vector<double> u_;
 };
 #endif  // WITH_GUROBI
+
+#ifdef WITH_CPLEX
+class IPimpl
+{
+public:
+  IPimpl(IP::DirType dir, int n_th)
+    : env_(), model_(env_), obj_(env_), cplex_(NULL), dir_(dir), n_th_(n_th)
+  {
+  }
+
+  ~IPimpl()
+  {
+    delete cplex_;
+  }
+
+  int make_variable(double coef)
+  {
+    int col = vars.getSize();
+    vars_.add(IloBoolVar(env_));
+    obj_ += coef * vars_[col];
+    return col;
+  }
+
+  int make_constraint(IP::BoundType bnd, double l, double u)
+  {
+    bnd_.push_back(bnd);
+    l_.push_back(l);
+    u_.push_back(u);
+    m_.resize(m_.size()+1);
+    return m_.size()-1;
+  }
+
+  void add_constraint(int row, int col, double val)
+  {
+    m_[row].push_back(std::make_pair(col, val));
+  }
+
+  void update()
+  {
+    switch (dir_)
+    {
+      case MAX: model_.add(IloMaximize(env_, obj)); break;
+      case MIN: model_.add(IloMinimize(env_, obj)); break;
+    }
+  }
+
+  void solve()
+  {
+    for (unsigned int i=0; i!=m_.size(); ++i)
+    {
+      IloExpr c;
+      for (unsigned int j=0; j!=m_[i].size(); ++j)
+        c += vars_[m_[i][j].first] * m_[i][j].second;
+      switch (bnd_[i])
+      {
+        case IP::LO: model_->add(c >= l_[i]); break;
+        case IP::UP: model_->add(c <= u_[i]); break;
+        case IP::DB: model_->add(c >= l_[i]); model_->add(c <= u_[i]); break;
+        case IP::FX: model_->add(c == l_[i]); break;
+      }
+    }
+    bnd_.clear();
+    l_.clear();
+    u_.clear();
+    m_.clear();
+
+    cplex_ = new IloCplex(model_);
+    cplex->solve();
+  }
+
+  double get_value(int col) const
+  {
+    return cplex_->getValue(vars_[col]);
+  }
+
+private:
+  IloEnv env_;
+  IloModel model_;
+  IloExpr obj_;
+  IloBoolVarArray vars_;
+  IloCplex* cplex_;
+  std::vector< std::vector< std::pair<int,double> > > m_;
+  std::vector<int> bnd_;
+  std::vector<double> l_;
+  std::vector<double> u_;
+  DirType dir_;
+  int n_th_;
+};
+#endif  // WITH_CPLEX
 
 IP::
 IP(DirType dir, int n_th)
