@@ -196,7 +196,7 @@ class IPimpl
 {
 public:
   IPimpl(IP::DirType dir, int n_th)
-    : env_(), model_(env_), obj_(env_), cplex_(NULL), dir_(dir), n_th_(n_th)
+    : env_(), model_(env_), obj_(env_), vars_(env_), cplex_(NULL), dir_(dir), n_th_(n_th)
   {
   }
 
@@ -207,7 +207,7 @@ public:
 
   int make_variable(double coef)
   {
-    int col = vars.getSize();
+    int col = vars_.getSize();
     vars_.add(IloBoolVar(env_));
     obj_ += coef * vars_[col];
     return col;
@@ -231,8 +231,8 @@ public:
   {
     switch (dir_)
     {
-      case MAX: model_.add(IloMaximize(env_, obj)); break;
-      case MIN: model_.add(IloMinimize(env_, obj)); break;
+      case IP::MAX: model_.add(IloMaximize(env_, obj_)); break;
+      case IP::MIN: model_.add(IloMinimize(env_, obj_)); break;
     }
   }
 
@@ -240,15 +240,15 @@ public:
   {
     for (unsigned int i=0; i!=m_.size(); ++i)
     {
-      IloExpr c;
+      IloExpr c(env_);
       for (unsigned int j=0; j!=m_[i].size(); ++j)
         c += vars_[m_[i][j].first] * m_[i][j].second;
       switch (bnd_[i])
       {
-        case IP::LO: model_->add(c >= l_[i]); break;
-        case IP::UP: model_->add(c <= u_[i]); break;
-        case IP::DB: model_->add(c >= l_[i]); model_->add(c <= u_[i]); break;
-        case IP::FX: model_->add(c == l_[i]); break;
+        case IP::LO: model_.add(c >= l_[i]); break;
+        case IP::UP: model_.add(c <= u_[i]); break;
+        case IP::DB: model_.add(c >= l_[i]); model_.add(c <= u_[i]); break;
+        case IP::FX: model_.add(c == l_[i]); break;
       }
     }
     bnd_.clear();
@@ -257,7 +257,7 @@ public:
     m_.clear();
 
     cplex_ = new IloCplex(model_);
-    cplex->solve();
+    cplex_->solve();
   }
 
   double get_value(int col) const
@@ -275,7 +275,7 @@ private:
   std::vector<int> bnd_;
   std::vector<double> l_;
   std::vector<double> u_;
-  DirType dir_;
+  IP::DirType dir_;
   int n_th_;
 };
 #endif  // WITH_CPLEX
