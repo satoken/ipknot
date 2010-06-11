@@ -107,16 +107,24 @@ void
 IPknot::
 rnafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
 {
-  bp.resize((seq.size()+1)*(seq.size()+2)/2);
-  offset.resize(seq.size()+1);
-  for (uint i=0; i<=offset.size(); ++i)
-    offset[i] = i*(offset.size()+offset.size()-i-1)/2;
-  
+  uint L=seq.size();
+  bp.resize((L+1)*(L+2)/2);
+  offset.resize(L+1);
+  for (uint i=0; i<=L; ++i)
+    offset[i] = i*((L+1)+(L+1)-i-1)/2;
+#if 0
+  std::string str(seq.size()+1, '.');
+  float min_en = Vienna::fold(const_cast<char*>(seq.c_str()), &str[0]);
+  float sfact = 1.07;
+  float kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
+  Vienna::pf_scale = exp(-(sfact*min_en)/kT/seq.size());
+#else
   Vienna::pf_scale = -1;
-  Vienna::init_pf_fold(seq.size());
+#endif
+  Vienna::init_pf_fold(L);
   Vienna::pf_fold(const_cast<char*>(seq.c_str()), NULL);
-  for (uint i=0; i!=seq.size()-1; ++i)
-    for (uint j=i+1; j!=seq.size(); ++j)
+  for (uint i=0; i!=L-1; ++i)
+    for (uint j=i+1; j!=L; ++j)
       bp[offset[i+1]+(j+1)] = Vienna::pr[Vienna::iindx[i+1]-(j+1)];
   Vienna::free_pf_arrays();
 }
