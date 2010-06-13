@@ -20,6 +20,8 @@
 */
 #define CALIBRATION
 #include "config.h"
+#include <sys/time.h>
+#include <sys/resource.h>
 #include <ctime>
 #include <iostream>
 #include <fstream>
@@ -47,6 +49,14 @@ typedef unsigned int uint;
 const int n_support_parens=4;
 const char* left_paren="([{<";
 const char* right_paren=")]}>";
+
+double
+timing()
+{
+  struct rusage ru;
+  getrusage(RUSAGE_SELF, &ru);
+  return ru.ru_utime.tv_sec+ru.ru_utime.tv_usec*1e-6;
+}
 
 class IPknot
 {
@@ -138,15 +148,13 @@ solve(const std::string& s, std::string& r, std::vector<int>& bpseq) const
   std::vector<int> offset;
 
 #if 0
-  clock_t t1 = clock();
+  double t1 = timing();
   std::cerr << "Calculating base-pairing probabilities ...";
 #endif
   calculate_posterior(s, bp, offset);
 #if 0
-  clock_t t2 = clock();
-  std::cerr << " done ("
-            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
-            << "s)." << std::endl;
+  double t2 = timing();
+  std::cerr << " done (" << t2-t1 << "s)." << std::endl;
 #endif
   solve(s, bp, offset, r, bpseq);
 }
@@ -164,7 +172,7 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
 
   // make objective variables with their weights
 #if 0
-  clock_t t1 = clock();
+  double t1 = timing();
   std::cerr << "Making variables ...";
 #endif
   for (uint j=1; j!=s.size(); ++j)
@@ -182,15 +190,13 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
   }
   ip.update();
 #if 0
-  clock_t t2 = clock();
-  std::cerr << " done ("
-            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
-            << "s)." << std::endl;
+  double t2 = timing();
+  std::cerr << " done (" << t2-t1 << "s)." << std::endl;
 #endif
 
   // constraint 1: each s_i is paired with at most one base
 #if 0
-  t1 = clock();
+  t1 = timing();
   std::cerr << "Making constraints 1 ...";
 #endif
   for (uint i=0; i!=s.size(); ++i)
@@ -207,15 +213,13 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
     }
   }
 #if 0
-  t2 = clock();
-  std::cerr << " done (" 
-            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
-            << "s)." << std::endl;
+  t2 = timing()
+  std::cerr << " done (" << t2-t1 << "s)." << std::endl;
 #endif
 
   // constraint 2: disallow pseudoknots in x[lv]
 #if 0
-  t1 = clock();
+  t1 = timing();
   std::cerr << "Making constraints 2 ...";
 #endif
   for (uint lv=0; lv!=pk_level_; ++lv)
@@ -236,15 +240,13 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
           }
       }
 #if 0
-  t2 = clock();
-  std::cerr << " done (" 
-            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
-            << "s)." << std::endl;
+  t2 = timing();
+  std::cerr << " done (" t2-t1 << "s)." << std::endl;
 #endif
 
   // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
 #if 0
-  t1 = clock();
+  t1 = timing();
   std::cerr << "Making constraints 3 ...";
 #endif
   for (uint lv=1; lv!=pk_level_; ++lv)
@@ -273,16 +275,14 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
         }
       }
 #if 0
-  t2 = clock();
-  std::cerr << " done (" 
-            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
-            << "s)." << std::endl;
+  t2 = timing();
+  std::cerr << " done (" t2-t1 << "s)." << std::endl;
 #endif
 
   if (stacking_constraints_)
   {
 #if 0
-    t1 = clock();
+    t1 = timing();
     std::cerr << "Making stacking constraints ...";
 #endif
     for (uint lv=0; lv!=pk_level_; ++lv)
@@ -322,24 +322,20 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
       }
     }
 #if 0
-    t2 = clock();
-    std::cerr << " done (" 
-              << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
-              << "s)." << std::endl;
+    t2 = timing()
+    std::cerr << " done (" t2-t1 << "s)." << std::endl;
 #endif
   }
 
   // execute optimization
 #if 0
-  t1 = clock();
+  t1 = timing();
   std::cerr << "Solving IP problem...";
 #endif
   ip.solve();
 #if 0
-  t2 = clock();
-  std::cerr << " done (" 
-            << static_cast<float>(t2-t1)/CLOCKS_PER_SEC
-            << "s)." << std::endl;
+  t2 = timing();
+  std::cerr << " done (" t2-t1 << "s)." << std::endl;
 #endif
 
   // build the resultant structure
@@ -510,9 +506,9 @@ main(int argc, char* argv[])
     float alpha[] = { 0.5, 0.5 };
     float th[] = { 0.5, 0.5 };
     IPknot ipknot(2, th, alpha, use_contrafold, false, n_th);
-    clock_t t1 = clock();
+    double t1 = timing();
     ipknot.calculate_posterior(fa->seq(), bp, offset);
-    clock_t t2 = clock();
+    double t2 = timing();
     for (uint i=0; i!=sizeof(a)/sizeof(a[0]); ++i)
     {
       alpha[0] = a[i]; alpha[1] = 1.0-a[i];
@@ -527,16 +523,16 @@ main(int argc, char* argv[])
             IPknot ipknot(2, th, alpha, use_contrafold, iso[l], n_th);
             std::string r;
             std::vector<int> bpseq;
-            clock_t t3 = clock();
+            double t3 = timing();
             ipknot.solve(fa->seq(), bp, offset, r, bpseq);
-            clock_t t4 = clock();
+            double t4 = timing();
             char fname[PATH_MAX];
             snprintf(fname, PATH_MAX, "%s-%2.1f-%5.4f-%5.4f-%d.bpseq",
                      argv[1], alpha[0], th[0], th[1], (iso[l] ? 1 : 0));
             std::ofstream os(fname);
             os << "# " << fa->name() << std::endl;
-            os << "# " << static_cast<float>(t2-t1)/CLOCKS_PER_SEC << "s" << std::endl;
-            os << "# " << static_cast<float>(t4-t3)/CLOCKS_PER_SEC << "s" << std::endl;
+            os << "# " << t2-t1 << "s" << std::endl;
+            os << "# " << t4-t3 << "s" << std::endl;
             for (uint p=0; p!=bpseq.size(); ++p)
               os << p+1 << " " << fa->seq()[p] << " " << bpseq[p]+1 << std::endl;
           }
