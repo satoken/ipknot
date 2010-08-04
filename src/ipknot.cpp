@@ -18,10 +18,10 @@
  * You should have received a copy of the GNU General Public License
  * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
 */
-#define CALIBRATION
+//#define CALIBRATION
 #include "config.h"
+#include <unistd.h>
 #include <sys/time.h>
-#include <sys/resource.h>
 #include <ctime>
 #include <iostream>
 #include <fstream>
@@ -33,7 +33,6 @@
 #include "fa.h"
 #include "contrafold/SStruct.hpp"
 #include "contrafold/InferenceEngine.hpp"
-#include "contrafold/DuplexEngine.hpp"
 #include "contrafold/Defaults.ipp"
 
 namespace Vienna {
@@ -46,10 +45,11 @@ extern "C" {
 
 typedef unsigned int uint;
 
-const int n_support_parens=4;
+const uint n_support_parens=4;
 const char* left_paren="([{<";
 const char* right_paren=")]}>";
 
+#if 0
 double
 timing()
 {
@@ -57,6 +57,7 @@ timing()
   getrusage(RUSAGE_SELF, &ru);
   return ru.ru_utime.tv_sec+ru.ru_utime.tv_usec*1e-6;
 }
+#endif
 
 class IPknot
 {
@@ -349,8 +350,11 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
         if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
         {
           assert(r[i]=='.'); assert(r[j]=='.');
-          r[i]=left_paren[lv]; r[j]=right_paren[lv];
           bpseq[i]=j; bpseq[j]=i;
+          if (lv<n_support_parens)
+          {
+            r[i]=left_paren[lv]; r[j]=right_paren[lv];
+          }
         }
 }
 
@@ -359,8 +363,10 @@ usage(const char* progname)
 {
   std::cout << progname << ": [options] fasta" << std::endl
             << " -h:       show this message" << std::endl
-            << " -a alpha: weight for hybridation probabilities" << std::endl
-            << " -t th:    threshold of base-pairing probabilities" << std::endl
+    //      << " -a alpha: weight for each level" << std::endl
+            << " -t th:    threshold of base-pairing probabilities for each level" << std::endl
+            << " -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)" << std::endl
+            << "           (default: -g 4 -g 8)" << std::endl
             << " -m:       use McCaskill model (default: CONTRAfold model)" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
             << " -b:       output the prediction via BPSEQ format" << std::endl
@@ -383,7 +389,7 @@ main(int argc, char* argv[])
   bool use_contrafold=true;
   bool use_bpseq=false;
   int n_th=1;
-  while ((ch=getopt(argc, argv, "a:t:g:mibn:r:h"))!=-1)
+  while ((ch=getopt(argc, argv, "a:t:g:mibn:h"))!=-1)
   {
     switch (ch)
     {
@@ -418,6 +424,21 @@ main(int argc, char* argv[])
   argv += optind;
 
   if (argc!=1) { usage(progname); return 1; }
+
+  // set default parameters
+  if (th.empty())
+  {
+    th.resize(2);
+    th[0]=1/(4.0+1);
+    th[1]=1/(8.0+1);
+  }
+  if (alpha.empty())
+  {
+    alpha.resize(th.size());
+    for (uint i=0; i!=alpha.size(); ++i)
+      alpha[i]=1.0/alpha.size();
+  }
+  
   std::list<Fasta> f;
   Fasta::load(f, argv[0]);
 
@@ -428,7 +449,7 @@ main(int argc, char* argv[])
     std::string r;
     std::vector<int> bpseq;
     ipknot.solve(fa->seq(), r, bpseq);
-    if (!use_bpseq)
+    if (!use_bpseq && th.size()<n_support_parens)
     {
       std::cout << ">" << fa->name() << std::endl
                 << fa->seq() << std::endl << r << std::endl;
