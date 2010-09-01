@@ -31,9 +31,17 @@
 
 #include "ip.h"
 #include "fa.h"
+
+#ifdef ORIGINAL_CONTRAFOLD
 #include "contrafold/SStruct.hpp"
 #include "contrafold/InferenceEngine.hpp"
 #include "contrafold/Defaults.ipp"
+#else
+#include "InferenceEngine.h"
+#include "ScoringModel.h"
+#include "Defaults.ipp"
+#include "log_value.h"
+#endif
 
 namespace Vienna {
 extern "C" {
@@ -70,7 +78,27 @@ public:
       use_contrafold_(use_contrafold),
       stacking_constraints_(stacking_constraints),
       n_th_(n_th)
+#ifndef ORIGINAL_CONTRAFOLD
+    , en_(NULL)
+#endif
   {
+#ifndef ORIGINAL_CONTRAFOLD
+    if (use_contrafold)
+    {
+      en_ = new InferenceEngine<LogValue<float>,float,ScoringModel<LogValue<float>,float> >(false);
+      std::vector<float> v = GetDefaultComplementaryValues<float>();
+      std::vector<LogValue<float> > p(v.size());
+      for (unsigned int i=0; i!=v.size(); ++i) p[i] = exp(v[i]);
+      en_->SetParameters(p);
+    }
+#endif
+  }
+
+  ~IPknot()
+  {
+#ifndef ORIGINAL_CONTRAFOLD
+    if (en_) delete en_;
+#endif
   }
 
   void solve(const std::string& seq, std::string& res, std::vector<int>& ct) const;
@@ -95,12 +123,16 @@ private:
   bool use_contrafold_;        // use CONTRAfold model or not
   bool stacking_constraints_;
   int n_th_;
+#ifndef ORIGINAL_CONTRAFOLD
+  InferenceEngine<LogValue<float>,float,ScoringModel<LogValue<float>,float> >* en_;
+#endif
 };
 
 void
 IPknot::
 contrafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
 {
+#ifdef ORIGINAL_CONTRAFOLD
   SStruct ss("unknown", seq);
   ParameterManager<float> pm;
   InferenceEngine<float> en(false);
@@ -113,6 +145,13 @@ contrafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& off
   en.ComputeOutside();
   en.ComputePosterior();
   en.GetPosterior(0, bp, offset);
+#else
+  en_->LoadSequence(seq);
+  en_->ComputeInside();
+  en_->ComputeOutside();
+  en_->ComputePosterior();
+  en_->GetPosterior(bp, offset);
+#endif
 }
 
 void
@@ -478,27 +517,12 @@ main(int argc, char* argv[])
   bool use_contrafold=true;
   bool use_bpseq=false;
   int n_th=1;
-  while ((ch=getopt(argc, argv, "a:t:g:mibn:r:h"))!=-1)
+  while ((ch=getopt(argc, argv, "mn:h"))!=-1)
   {
     switch (ch)
     {
       case 'm':
         use_contrafold=false;
-        break;
-      case 'a':
-        alpha.push_back(atof(optarg));
-        break;
-      case 't':
-        th.push_back(atof(optarg));
-        break;
-      case 'g':
-        th.push_back(1/(atof(optarg)+1));
-        break;
-      case 'i':
-        isolated_bp=true;
-        break;
-      case 'b':
-        use_bpseq=true;
         break;
       case 'n':
         n_th=atoi(optarg);
