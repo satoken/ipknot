@@ -580,6 +580,112 @@ ComputeInside()
 template < class ProbT, class CountT, class ScoringModel >
 ProbT
 InferenceEngine<ProbT, CountT, ScoringModel>::
+ComputeInside2()
+{
+  const int L = seq_.size()-1;
+  const int SIZE = (L+1)*(L+2)/2;
+
+  F5j_.clear(); F5j_.resize(L+1, ProbT(0));
+  FCj_.clear(); FCj_.resize(SIZE, ProbT(0));
+  FMj_.clear(); FMj_.resize(SIZE, ProbT(0));
+  FM1j_.clear(); FM1j_.resize(SIZE, ProbT(0));
+
+  for (int i=L; i>=0; --i)
+  {
+    for (int j=i; j<=L; ++j)
+    {
+      // FM2[i,j] = MAX(i<k<j : FM1[i,k] * FM[k,j])
+      ProbT FM2j = ProbT(0);
+      for (int k=i+1; k<j; ++k)
+        FM2j += FM1j_[offset_[i]+k] * FMi_[offset_[k]+j] +
+          FM1i_[offset_[i]+k] * FMj_[offset_[k]+j];
+ 
+      // FC[i,j] = MAX [ScoreHairpin(i,j),
+      //                MAX (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) * FC[p+1,q-1]),
+      //                ScoreJunctionA(i,j) * a * c * MAX (i<k<j : FM1[i,k] * FM[k,j])]
+      if (0<i && j<L && allow_paired_[offset_[i]+j+1])
+      {
+        // compute ScoreHairpin(i,j)
+        
+        // compute MAX (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) * FC[p+1,q-1])
+        for (int p=i; p<=std::min(i+C_MAX_SINGLE_LENGTH,j); ++p)
+        {
+          if (p>i && !allow_unpaired_position_[p]) break;
+          int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+          for (int q=j; q>=q_min; --q)
+          {
+            if (q<j && !allow_unpaired_position_[q+1]) break;
+            if (!allow_paired_[offset_[p+1]+q]) continue;
+            FCj_[offset_[i]+j] +=
+              (FCj_[offset_[p+1]+q-1] + FCi_[offset_[p+1]+q-1] * weight[offset_[p+1]+q])
+              * ScoringModel::ScoreFCSingle(seq_,i,j,p,q);
+          }
+        }
+
+        // compute MAX (i<k<j : FM1[i,k] * FM[k,j] * ScoreJunctionA(i,j) * a * c)
+        FCj_[offset_[i]+j] += FM2j * ScoringModel::ScoreFCBifurcation(seq_,i,j);
+      }
+
+      // FM1[i,j] = MAX [FC[i+1,j-1] * ScoreJunctionA(j,i) * c * ScoreBP(i+1,j)  if i+2<=j,
+      //                 FM1[i+1,j] * b                                          if i+2<=j]
+      if (0<i && i+2<=j && j<L)
+      {
+        // compute FC[i+1,j-1] * ScoreJunctionA(j,i) * c * ScoreBP(i+1,j)
+        if (allow_paired_[offset_[i+1]+j])
+          FM1j_[offset_[i]+j] +=
+            (FCj_[offset_[i+1]+j-1] + FCi_[offset_[i+1]+j-1] * weight[offset_[i+1]+j])
+            * ScoringModel::ScoreFM1Paired(seq_,i,j);
+
+        // compute FM1[i+1,j] * b
+        if (allow_unpaired_position_[i+1])
+          FM1j_[offset_[i]+j] += FM1j_[offset_[i+1]+j] * ScoringModel::ScoreFM1Unpaired(seq_,i,j);
+      }
+
+      // FM[i,j] = MAX [MAX (i<k<j : FM1[i,k] * FM[k,j]),
+      //                FM[i,j-1] * b,
+      //                FM1[i,j]]
+      if (0<i && i+2<=j && j<L)
+      {
+        // compute MAX (i<k<j : FM1[i,k] * FM[k,j])
+        FMj_[offset_[i]+j] += FM2j * ScoringModel::ScoreFMBifurcation(seq_,i,j);
+
+        // compute FM[i,j-1] * b
+        if (allow_unpaired_position_[j])
+          FMj_[offset_[i]+j] += FMj_[offset_[i]+j-1] * ScoringModel::ScoreFMUnpaired(seq_,i,j);
+
+        // compute FM1[i,j]
+        FMj_[offset_[i]+j] += FM1j_[offset_[i]+j] * ScoringModel::ScoreFMtoFM1(seq_,i,j);
+      }
+    }
+  }
+
+  F5j_[0] = ProbT(0);
+  for (int j=1; j<=L; ++j)
+  {
+    // F5[j] = MAX [F5[j-1] * ScoreExternalUnpaired(),
+    //              MAX (0<=k<j : F5[k] * FC[k+1,j-1] * ScoreExternalPaired() * ScoreBP(k+1,j) * ScoreJunctionA(j,k)
+
+    // compute F5[j-1] * ScoreExternalUnpaired()
+    if (allow_unpaired_position_[j])
+      F5j_[j] += F5j_[j-1] * ScoringModel::ScoreF5Unpaired(seq_,j);
+    
+    // compute MAX (0<=k<j : F5[k] * FC[k+1,j-1] * ScoreExternalPaired() * ScoreBP(k+1,j) * ScoreJunctionA(j,k))
+    for (int k = 0; k < j; k++)
+    {
+      if (allow_paired_[offset_[k+1]+j])
+        F5j_[j] +=
+          (F5j_[k] * FCi_[offset_[k+1]+j-1] + F5i_[k] * FCj_[offset_[k+1]+j-1] +
+           F5i_[k] * FCi_[offset_[k+1]+j-1] * weight[offset_[k+1]+j])
+          * ScoringModel::ScoreF5Bifurcation(seq_,k,j);
+    }
+  }
+
+  return F5j_[L];
+}
+
+template < class ProbT, class CountT, class ScoringModel >
+ProbT
+InferenceEngine<ProbT, CountT, ScoringModel>::
 ComputeOutside()
 {
   const int L = seq_.size()-1;
@@ -681,6 +787,123 @@ ComputeOutside()
   }
 
   return F5o_[0];
+}
+
+template < class ProbT, class CountT, class ScoringModel >
+ProbT
+InferenceEngine<ProbT, CountT, ScoringModel>::
+ComputeOutside2()
+{
+  const int L = seq_.size()-1;
+  const int SIZE = (L+1)*(L+2)/2;
+
+  F5p_.clear(); F5p_.resize(L+1, ProbT(0));
+  FCp_.clear(); FCp_.resize(SIZE, ProbT(0));
+  FMp_.clear(); FMp_.resize(SIZE, ProbT(0));
+  FM1p_.clear(); FM1p_.resize(SIZE, ProbT(0));
+
+  F5p_[L] = ProbT(0);
+  for (int j=L; j>=1; --j)
+  {
+    // F5[j] = MAX [F5[j-1] * ScoreExternalUnpaired(),
+    //              MAX (0<=k<j : F5[k] * FC[k+1,j-1] * ScoreExternalPaired() * ScoreBP(k+1,j) * ScoreJunctionA(j,k)
+
+    // compute F5[j-1] * ScoreExternalUnpaired()
+    if (allow_unpaired_position_[j])
+      F5p_[j-1] += F5p_[j] * ScoringModel::ScoreF5Unpaired(seq_,j);
+    
+    // compute MAX (0<=k<j : F5[k] * FC[k+1,j-1] * ScoreExternalPaired() * ScoreBP(k+1,j) * ScoreJunctionA(j,k))
+    for (int k = 0; k < j; k++)
+    {
+      if (allow_paired_[offset_[k+1]+j])
+      {
+        F5p_[k] +=
+          (F5p_[j] * FCi_[offset_[k+1]+j-1] + F5o_[j] * FCj_[offset_[k+1]+j-1] +
+           F5o_[j] * FCi_[offset_[k+1]+j-1] * weight[offset_[k+1]+j])
+          * ScoringModel::ScoreF5Bifurcation(seq_,k,j);
+        FCp_[offset_[k+1]+j-1] +=
+          (F5p_[j] * F5i_[k] + F5o_[j] * F5j_[k] +  F5o_[j] * F5i_[k] * weight[offset_[k+1]+j])
+          * ScoringModel::ScoreF5Bifurcation(seq_,k,j);
+      }
+    }
+  }
+
+  for (int i=0; i<=L; ++i)
+  {
+    for (int j=L; j>=i; --j)
+    {
+      ProbT FM2o = ProbT(0);
+      ProbT FM2p = ProbT(0);
+
+      // FM[i,j] = MAX [MAX (i<k<j : FM1[i,k] * FM[k,j]),
+      //                FM[i,j-1] * b,
+      //                FM1[i,j]]
+      if (0<i && i+2<=j && j<L)
+      {
+        // compute MAX (i<k<j : FM1[i,k] * FM[k,j])
+        FM2o += FMo_[offset_[i]+j] * ScoringModel::ScoreFMBifurcation(seq_,i,j);
+        FM2p += FMp_[offset_[i]+j] * ScoringModel::ScoreFMBifurcation(seq_,i,j);
+
+        // compute FM[i,j-1] * b
+        if (allow_unpaired_position_[j])
+          FMp_[offset_[i]+j-1] += FMp_[offset_[i]+j] * ScoringModel::ScoreFMUnpaired(seq_,i,j);
+
+        // compute FM1[i,j]
+        FM1p_[offset_[i]+j] += FMp_[offset_[i]+j] * ScoringModel::ScoreFMtoFM1(seq_,i,j);
+      }
+
+      // FM1[i,j] = MAX [FC[i+1,j-1] * ScoreJunctionA(j,i) * c * ScoreBP(i+1,j)  if i+2<=j,
+      //                 FM1[i+1,j] * b                                          if i+2<=j]
+      if (0<i && i+2<=j && j<L)
+      {
+        // compute FC[i+1,j-1] * ScoreJunctionA(j,i) * c * ScoreBP(i+1,j)
+        if (allow_paired_[offset_[i+1]+j])
+          FCp_[offset_[i+1]+j-1] +=
+            (FM1p_[offset_[i]+j] + FM1o_[offset_[i]+j] * weight_[offset_[i+1]+j])
+            * ScoringModel::ScoreFM1Paired(seq_,i,j);
+
+        // compute FM1[i+1,j] * b
+        if (allow_unpaired_position_[i+1])
+          FM1p_[offset_[i+1]+j] += FM1p_[offset_[i]+j] * ScoringModel::ScoreFM1Unpaired(seq_,i,j);
+      }
+
+      // FC[i,j] = MAX [ScoreHairpin(i,j),
+      //                MAX (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) * FC[p+1,q-1]),
+      //                ScoreJunctionA(i,j) * a * c * MAX (i<k<j : FM1[i,k] * FM[k,j])]
+      if (0<i && j<L && allow_paired_[offset_[i]+j+1])
+      {
+        // compute ScoreHairpin(i,j) -- do nothing
+
+        // compute MAX (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) * FC[p+1,q-1])
+        for (int p=i; p<=std::min(i+C_MAX_SINGLE_LENGTH,j); ++p)
+        {
+          if (p>i && !allow_unpaired_position_[p]) break;
+          int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+          for (int q=j; q>=q_min; --q)
+          {
+            if (q<j && !allow_unpaired_position_[q+1]) break;
+            if (!allow_paired_[offset_[p+1]+q]) continue;
+            FCp_[offset_[p+1]+q-1] +=
+              (FCp_[offset_[i]+j] + FCo_[offset_[i]+j] * weight[offset_[p+1]+q])
+              * ScoringModel::ScoreFCSingle(seq_,i,j,p,q);
+          }
+        }
+
+        // compute MAX (i<k<j : FM1[i,k] * FM[k,j] * ScoreJunctionA(i,j) * a * c)
+        FM2o += FCo_[offset_[i]+j] * ScoringModel::ScoreFCBifurcation(seq_,i,j);
+        FM2p += FCp_[offset_[i]+j] * ScoringModel::ScoreFCBifurcation(seq_,i,j);
+      }
+
+      // FM2[i,j] = SUM (i<k<j : FM1[i,k] * FM[k,j])
+      for (int k = i+1; k < j; k++)
+      {
+        FM1p_[offset_[i]+k] += FM2o * FMj_[offset_[k]+j] + FM2p * FMi_[offset_[k]+j];
+        FMp_[offset_[k]+j] += FM2o * FM1j_[offset_[i]+k] + FM2p * FM1i_[offset_[i]+k];
+      }
+    }
+  }
+
+  return F5p_[0];
 }
 
 template < class ProbT, class CountT, class ScoringModel >
