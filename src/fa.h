@@ -1,31 +1,39 @@
 /*
- * $Id: fa.h 28 2010-04-20 02:25:33Z satoken $
- * 
- * Copyright (C) 2010 Kengo Sato
+ * $Id: fa.h 91 2010-01-03 16:46:51Z sato-kengo $
  *
- * This file is part of RactIP.
+ * Copyright (C) 2008-2010 Kengo Sato
  *
- * RactIP is free software: you can redistribute it and/or modify
+ * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
- * RactIP is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with RactIP.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
 #ifndef __INC_FA_H__
 #define __INC_FA_H__
 
+#include <boost/version.hpp>
+#if BOOST_VERSION >= 103800
+#include <boost/spirit/include/classic.hpp>
+#else
 #include <boost/spirit/iterator/file_iterator.hpp>
+#endif
 #include <string>
 #include <list>
 //#include "rna.h"
+
+#ifndef BOOST_SPIRIT_CLASSIC_NS
+#define BOOST_SPIRIT_CLASSIC_NS boost::spirit
+#endif
 
 class Fasta
 {
@@ -64,7 +72,7 @@ public:
   load(std::list<Fasta>& data, const char* file);
   
   bool
-  load(boost::spirit::file_iterator<>& fi);
+  load(BOOST_SPIRIT_CLASSIC_NS::file_iterator<>& fi);
 
 private:
   std::string name_;

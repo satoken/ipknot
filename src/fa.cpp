@@ -1,22 +1,21 @@
 /*
- * $Id: fa.cpp 28 2010-04-20 02:25:33Z satoken $
- * 
- * Copyright (C) 2010 Kengo Sato
+ * $Id: fa.cpp 94 2010-03-06 08:40:48Z sato-kengo $
  *
- * This file is part of RactIP.
+ * Copyright (C) 2008-2010 Kengo Sato
  *
- * RactIP is free software: you can redistribute it and/or modify
+ * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
- * RactIP is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with RactIP.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -26,9 +25,8 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <boost/spirit.hpp>
 
-using namespace boost::spirit;
+using namespace BOOST_SPIRIT_CLASSIC_NS;
 
 struct fa_parser : public grammar< fa_parser >
 {

@@ -18,10 +18,14 @@
  * You should have received a copy of the GNU General Public License
  * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
 */
-//#define CALIBRATION
+#define CALIBRATION
+#define ORIGINAL_CONTRAFOLD
+
 #include "config.h"
 #include <unistd.h>
 #include <sys/time.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <ctime>
 #include <iostream>
 #include <fstream>
@@ -48,6 +52,7 @@ extern "C" {
 #include <ViennaRNA/fold.h>
 #include <ViennaRNA/fold_vars.h>
 #include <ViennaRNA/part_func.h>
+  extern void read_parameter_file(const char fname[]);
 };
 };
 
@@ -57,7 +62,7 @@ const uint n_support_parens=4;
 const char* left_paren="([{<";
 const char* right_paren=")]}>";
 
-#if 0
+#ifdef CALIBRATION
 double
 timing()
 {
@@ -71,7 +76,8 @@ class IPknot
 {
 public:
   IPknot(uint pk_level, const float* th, const float* alpha,
-         bool use_contrafold, bool stacking_constraints, int n_th)
+         bool use_contrafold, bool stacking_constraints, const std::string& param,
+         int n_th)
     : pk_level_(pk_level),
       th_(th, th+pk_level),
       alpha_(alpha, alpha+pk_level),
@@ -92,6 +98,9 @@ public:
       en_->SetParameters(p);
     }
 #endif
+
+    if (!use_contrafold)
+      if (!param.empty()) Vienna::read_parameter_file(param.c_str());
   }
 
   ~IPknot()
@@ -428,7 +437,8 @@ main(int argc, char* argv[])
   bool use_contrafold=true;
   bool use_bpseq=false;
   int n_th=1;
-  while ((ch=getopt(argc, argv, "a:t:g:mibn:h"))!=-1)
+  std::string param;
+  while ((ch=getopt(argc, argv, "a:t:g:mibn:P:h"))!=-1)
   {
     switch (ch)
     {
@@ -452,6 +462,9 @@ main(int argc, char* argv[])
         break;
       case 'n':
         n_th=atoi(optarg);
+        break;
+      case 'P':
+        param=optarg;
         break;
       case 'h': case '?': default:
         usage(progname);
@@ -481,7 +494,7 @@ main(int argc, char* argv[])
   std::list<Fasta> f;
   Fasta::load(f, argv[0]);
 
-  IPknot ipknot(th.size(), &th[0], &alpha[0], use_contrafold, !isolated_bp, n_th);
+  IPknot ipknot(th.size(), &th[0], &alpha[0], use_contrafold, !isolated_bp, param, n_th);
   while (!f.empty())
   {
     std::list<Fasta>::iterator fa = f.begin();
@@ -513,11 +526,12 @@ main(int argc, char* argv[])
   char ch;
   std::vector<float> th;
   std::vector<float> alpha;
-  bool isolated_bp=false;
+  //bool isolated_bp=false;
   bool use_contrafold=true;
-  bool use_bpseq=false;
+  //bool use_bpseq=false;
   int n_th=1;
-  while ((ch=getopt(argc, argv, "mn:h"))!=-1)
+  std::string param;
+  while ((ch=getopt(argc, argv, "mn:P:h"))!=-1)
   {
     switch (ch)
     {
@@ -527,6 +541,8 @@ main(int argc, char* argv[])
       case 'n':
         n_th=atoi(optarg);
         break;
+      case 'P':
+        param=optarg;
       case 'h': case '?': default:
         usage(progname);
         return 1;
@@ -541,7 +557,8 @@ main(int argc, char* argv[])
   Fasta::load(f, argv[0]);
 
   float a[] = { 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1 };
-  float g[] = { 0.25, 0.5, 1, 2, 4, 8, 16 }; //, 32, 64, 128, 256, 512;
+  float g0[] = { 1, 2, 4, 8 }; //, 16, 32, 64, 128, 256, 512;
+  float g1[] = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512 };
   bool iso[] = { false, true };
   while (!f.empty())
   {
@@ -550,34 +567,81 @@ main(int argc, char* argv[])
     std::vector<int> offset;
     float alpha[] = { 0.5, 0.5 };
     float th[] = { 0.5, 0.5 };
-    IPknot ipknot(2, th, alpha, use_contrafold, false, n_th);
+    IPknot ipknot(2, th, alpha, use_contrafold, false, param, n_th);
+    char fname[PATH_MAX];
     double t1 = timing();
     ipknot.calculate_posterior(fa->seq(), bp, offset);
     double t2 = timing();
+    snprintf(fname, PATH_MAX, "%c", (use_contrafold ? 'c' : 'm'));
+    mkdir(fname, 0755);
     for (uint i=0; i!=sizeof(a)/sizeof(a[0]); ++i)
     {
+      snprintf(fname, PATH_MAX, "%c/%g",
+               (use_contrafold ? 'c' : 'm'), a[i]);
+      mkdir(fname, 0755);
       alpha[0] = a[i]; alpha[1] = 1.0-a[i];
-      for (uint j=0; j!=sizeof(g)/sizeof(g[0]); ++j)
+      for (uint j=0; j!=sizeof(g0)/sizeof(g0[0]); ++j)
       {
-        th[0] = 1.0/(g[j]+1.0);
-        for (uint k=0; k!=sizeof(g)/sizeof(g[0]); ++k)
+        snprintf(fname, PATH_MAX, "%c/%g/%g",
+                 (use_contrafold ? 'c' : 'm'), a[i], g0[j]);
+        mkdir(fname, 0755);
+        th[0] = 1.0/(g0[j]+1.0);
+        if (alpha[1]!=0.0)
         {
-          th[1] = 1.0/(g[k]+1.0);
+          for (uint k=0; k!=sizeof(g1)/sizeof(g1[0]); ++k)
+          {
+            snprintf(fname, PATH_MAX, "%c/%g/%g/%g",
+                     (use_contrafold ? 'c' : 'm'), a[i], g0[j], g1[k]);
+            mkdir(fname, 0755);
+            th[1] = 1.0/(g1[k]+1.0);
+            for (uint l=0; l!=sizeof(iso)/sizeof(iso[0]); ++l)
+            {
+              snprintf(fname, PATH_MAX, "%c/%g/%g/%g/%d",
+                       (use_contrafold ? 'c' : 'm'),
+                       a[i], g0[j], g1[k], (iso[l] ? 1 : 0));
+              mkdir(fname, 0755);
+              IPknot ipknot(2, th, alpha, use_contrafold, iso[l], param, n_th);
+              std::string r;
+              std::vector<int> bpseq;
+              double t3 = timing();
+              ipknot.solve(fa->seq(), bp, offset, r, bpseq);
+              double t4 = timing();
+              snprintf(fname, PATH_MAX, "%c/%g/%g/%g/%d/%s.bpseq",
+                       (use_contrafold ? 'c' : 'm'),
+                       a[i], g0[j], g1[k], (iso[l] ? 1 : 0), argv[1]);
+              std::cout << fname << std::endl;
+              std::ofstream os(fname);
+              os << "# " << fa->name() << std::endl;
+              os << "#bp " << t2-t1 << "s" << std::endl;
+              os << "#ip " << t4-t3 << "s" << std::endl;
+              for (uint p=0; p!=bpseq.size(); ++p)
+                os << p+1 << " " << fa->seq()[p] << " " << bpseq[p]+1 << std::endl;
+            }
+          }
+        }
+        else
+        {
           for (uint l=0; l!=sizeof(iso)/sizeof(iso[0]); ++l)
           {
-            IPknot ipknot(2, th, alpha, use_contrafold, iso[l], n_th);
+            snprintf(fname, PATH_MAX, "%c/%g/%g/%d",
+                     (use_contrafold ? 'c' : 'm'),
+                     a[i], g0[j], (iso[l] ? 1 : 0));
+            mkdir(fname, 0755);
+            IPknot ipknot(1, th, alpha, use_contrafold, iso[l], param, n_th);
             std::string r;
             std::vector<int> bpseq;
             double t3 = timing();
             ipknot.solve(fa->seq(), bp, offset, r, bpseq);
             double t4 = timing();
             char fname[PATH_MAX];
-            snprintf(fname, PATH_MAX, "%s-%2.1f-%5.4f-%5.4f-%d.bpseq",
-                     argv[1], alpha[0], th[0], th[1], (iso[l] ? 1 : 0));
+            snprintf(fname, PATH_MAX, "%c/%g/%g/%d/%s.bpseq",
+                     (use_contrafold ? 'c' : 'm'),
+                     a[i], g0[j], (iso[l] ? 1 : 0), argv[1]);
+            std::cout << fname << std::endl;
             std::ofstream os(fname);
             os << "# " << fa->name() << std::endl;
-            os << "# " << t2-t1 << "s" << std::endl;
-            os << "# " << t4-t3 << "s" << std::endl;
+            os << "#bp " << t2-t1 << "s" << std::endl;
+            os << "#ip " << t4-t3 << "s" << std::endl;
             for (uint p=0; p!=bpseq.size(); ++p)
               os << p+1 << " " << fa->seq()[p] << " " << bpseq[p]+1 << std::endl;
           }
