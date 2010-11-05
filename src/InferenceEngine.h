@@ -28,6 +28,9 @@ public:
   void ComputePosterior();
   std::vector<int> DecodePosterior();
   void ComputeExpectation();
+  ProbT ComputeInside2(const std::vector<CountT>& weight);
+  ProbT ComputeOutside2(const std::vector<CountT>& weight);
+  void ComputeExpectation2(const std::vector<CountT>& weight);
   ProbT ComputePartitionCoefficient() const
   {
     return F5i_[seq_.size()-1];
@@ -64,7 +67,9 @@ private:
   std::vector<int> FCt_, F5t_, FMt_, FM1t_;   // traceback
   std::vector<ProbT> FCv_, F5v_, FMv_, FM1v_; // Viterbi  
   std::vector<ProbT> FCi_, F5i_, FMi_, FM1i_; // inside
+  std::vector<ProbT> FCj_, F5j_, FMj_, FM1j_; // inside2
   std::vector<ProbT> FCo_, F5o_, FMo_, FM1o_; // outside
+  std::vector<ProbT> FCp_, F5p_, FMp_, FM1p_; // outside2
   std::vector<CountT> posterior_;             // posterior
 
   enum TRACEBACK_TYPE {

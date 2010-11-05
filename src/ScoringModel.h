@@ -11,6 +11,7 @@ template <class ProbT, class CountT>
 class ScoringModel
 {
 protected:
+  // constants
   enum {
     C_MIN_HAIRPIN_LENGTH = 0,
     C_MAX_SINGLE_LENGTH = 30,
@@ -69,11 +70,11 @@ protected:
   ProbT ScoreF5Bifurcation(const std::vector<int>& seq, int j, int k) const;
   void CountF5Bifurcation(const std::vector<int>& seq, int j, int k, CountT c);
 
-//private:
   void MakeMapping();
   void InitializeCache();
   void FinalizeCounts();
 
+private:
   ProbT ScoreHairpin(const std::vector<int>& seq, int i, int j) const;
   void CountHairpin(const std::vector<int>& seq, int i, int j, CountT c);
 
@@ -147,7 +148,6 @@ protected:
   std::vector< std::vector<std::pair<ProbT,CountT>*> > rev_;
   std::vector<std::string> name_;
 };
-
 
 #endif  //  __INC_SCORING_MODEL_H__
 

@@ -25,7 +25,7 @@
 #if BOOST_VERSION >= 103800
 #include <boost/spirit/include/classic.hpp>
 #else
-#include <boost/spirit/iterator/file_iterator.hpp>
+#include <boost/spirit.hpp>
 #endif
 #include <string>
 #include <list>

@@ -18,14 +18,15 @@
  * You should have received a copy of the GNU General Public License
  * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
 */
-#define CALIBRATION
-#define ORIGINAL_CONTRAFOLD
+//#define CALIBRATION
+//#define ORIGINAL_CONTRAFOLD
 
 #include "config.h"
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/resource.h>
 #include <ctime>
 #include <iostream>
 #include <fstream>
@@ -76,7 +77,7 @@ class IPknot
 {
 public:
   IPknot(uint pk_level, const float* th, const float* alpha,
-         bool use_contrafold, bool stacking_constraints, const std::string& param,
+         bool use_contrafold, bool stacking_constraints, const char* param,
          int n_th)
     : pk_level_(pk_level),
       th_(th, th+pk_level),
@@ -100,7 +101,8 @@ public:
 #endif
 
     if (!use_contrafold)
-      if (!param.empty()) Vienna::read_parameter_file(param.c_str());
+      if (param)
+        Vienna::read_parameter_file(param);
   }
 
   ~IPknot()
@@ -195,16 +197,7 @@ solve(const std::string& s, std::string& r, std::vector<int>& bpseq) const
 {
   std::vector<float> bp;
   std::vector<int> offset;
-
-#if 0
-  double t1 = timing();
-  std::cerr << "Calculating base-pairing probabilities ...";
-#endif
   calculate_posterior(s, bp, offset);
-#if 0
-  double t2 = timing();
-  std::cerr << " done (" << t2-t1 << "s)." << std::endl;
-#endif
   solve(s, bp, offset, r, bpseq);
 }
 
@@ -220,10 +213,6 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
   std::fill(v.data(), v.data()+v.num_elements(), -1);
 
   // make objective variables with their weights
-#if 0
-  double t1 = timing();
-  std::cerr << "Making variables ...";
-#endif
   for (uint j=1; j!=s.size(); ++j)
   {
     for (uint i=j-1; i!=-1u; --i)
@@ -238,16 +227,8 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
     }
   }
   ip.update();
-#if 0
-  double t2 = timing();
-  std::cerr << " done (" << t2-t1 << "s)." << std::endl;
-#endif
 
   // constraint 1: each s_i is paired with at most one base
-#if 0
-  t1 = timing();
-  std::cerr << "Making constraints 1 ...";
-#endif
   for (uint i=0; i!=s.size(); ++i)
   {
     int row = ip.make_constraint(IP::UP, 0, 1);
@@ -261,16 +242,8 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
           ip.add_constraint(row, v[lv][i][j], 1);
     }
   }
-#if 0
-  t2 = timing()
-  std::cerr << " done (" << t2-t1 << "s)." << std::endl;
-#endif
 
   // constraint 2: disallow pseudoknots in x[lv]
-#if 0
-  t1 = timing();
-  std::cerr << "Making constraints 2 ...";
-#endif
   for (uint lv=0; lv!=pk_level_; ++lv)
     for (uint i=0; i<w[lv].size(); ++i)
       for (uint p=0; p<w[lv][i].size(); ++p)
@@ -288,16 +261,8 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
             }
           }
       }
-#if 0
-  t2 = timing();
-  std::cerr << " done (" t2-t1 << "s)." << std::endl;
-#endif
 
   // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
-#if 0
-  t1 = timing();
-  std::cerr << "Making constraints 3 ...";
-#endif
   for (uint lv=1; lv!=pk_level_; ++lv)
     for (uint k=0; k<w[lv].size(); ++k)
       for (uint q=0; q<w[lv][k].size(); ++q)
@@ -323,17 +288,9 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
             }
         }
       }
-#if 0
-  t2 = timing();
-  std::cerr << " done (" t2-t1 << "s)." << std::endl;
-#endif
 
   if (stacking_constraints_)
   {
-#if 0
-    t1 = timing();
-    std::cerr << "Making stacking constraints ...";
-#endif
     for (uint lv=0; lv!=pk_level_; ++lv)
     {
       // upstream
@@ -370,22 +327,10 @@ solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>
               ip.add_constraint(row, v[lv][i+1][j], 1);
       }
     }
-#if 0
-    t2 = timing()
-    std::cerr << " done (" t2-t1 << "s)." << std::endl;
-#endif
   }
 
   // execute optimization
-#if 0
-  t1 = timing();
-  std::cerr << "Solving IP problem...";
-#endif
   ip.solve();
-#if 0
-  t2 = timing();
-  std::cerr << " done (" t2-t1 << "s)." << std::endl;
-#endif
 
   // build the resultant structure
   r.resize(s.size());
@@ -418,6 +363,7 @@ usage(const char* progname)
             << " -m:       use McCaskill model (default: CONTRAfold model)" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
             << " -b:       output the prediction via BPSEQ format" << std::endl
+            << " -P param: read the energy parameter file for the Vienna RNA package" << std::endl
 #ifndef WITH_GLPK
             << " -n n_th:  specify the number of threads (default: 1)" << std::endl
 #endif
@@ -437,7 +383,7 @@ main(int argc, char* argv[])
   bool use_contrafold=true;
   bool use_bpseq=false;
   int n_th=1;
-  std::string param;
+  const char* param=NULL;
   while ((ch=getopt(argc, argv, "a:t:g:mibn:P:h"))!=-1)
   {
     switch (ch)
@@ -530,7 +476,7 @@ main(int argc, char* argv[])
   bool use_contrafold=true;
   //bool use_bpseq=false;
   int n_th=1;
-  std::string param;
+  const char* param=NULL;
   while ((ch=getopt(argc, argv, "mn:P:h"))!=-1)
   {
     switch (ch)
@@ -543,6 +489,7 @@ main(int argc, char* argv[])
         break;
       case 'P':
         param=optarg;
+        break;
       case 'h': case '?': default:
         usage(progname);
         return 1;
