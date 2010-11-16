@@ -19,7 +19,7 @@
  * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
 */
 //#define CALIBRATION
-//#define ORIGINAL_CONTRAFOLD
+#define ORIGINAL_CONTRAFOLD
 
 #include "config.h"
 #include <unistd.h>
@@ -33,9 +33,11 @@
 #include <string>
 #include <vector>
 #include <boost/multi_array.hpp>
+#include <boost/algorithm/string.hpp>
 
 #include "ip.h"
 #include "fa.h"
+#include "aln.h"
 
 #ifdef ORIGINAL_CONTRAFOLD
 #include "contrafold/SStruct.hpp"
@@ -53,6 +55,10 @@ extern "C" {
 #include <ViennaRNA/fold.h>
 #include <ViennaRNA/fold_vars.h>
 #include <ViennaRNA/part_func.h>
+#include <ViennaRNA/alifold.h>
+#include <ViennaRNA/aln_util.h>
+#include <ViennaRNA/utils.h>
+#include <ViennaRNA/PS_dot.h>
   extern void read_parameter_file(const char fname[]);
 };
 };
@@ -73,283 +79,430 @@ timing()
 }
 #endif
 
-class IPknot
+// The base class for calculating base-pairing probabilities of an indivisual sequence
+class BPEngineSeq
 {
 public:
-  IPknot(uint pk_level, const float* th, const float* alpha,
-         bool use_contrafold, bool stacking_constraints, const char* param,
-         int n_th)
-    : pk_level_(pk_level),
-      th_(th, th+pk_level),
-      alpha_(alpha, alpha+pk_level),
-      use_contrafold_(use_contrafold),
-      stacking_constraints_(stacking_constraints),
-      n_th_(n_th)
+  BPEngineSeq() { }
+  virtual ~BPEngineSeq() {}
+
+  virtual void calculate_posterior(const std::string& seq,
+                                   std::vector<float>& bp, std::vector<int>& offset) const = 0;
+};
+
+// The base class for calculating base-pairing probabilities of aligned sequences
+class BPEngineAln
+{
+public:
+  BPEngineAln() { }
+  virtual ~BPEngineAln() {}
+
+  virtual void calculate_posterior(const std::list<std::string>& aln,
+                                   std::vector<float>& bp, std::vector<int>& offset) const = 0;
+};
+
+class CONTRAfoldModel : public BPEngineSeq
+{
+public:
+  CONTRAfoldModel()
+    : BPEngineSeq()
 #ifndef ORIGINAL_CONTRAFOLD
     , en_(NULL)
 #endif
   {
 #ifndef ORIGINAL_CONTRAFOLD
-    if (use_contrafold)
-    {
-      en_ = new InferenceEngine<LogValue<float>,float,ScoringModel<LogValue<float>,float> >(false);
-      std::vector<float> v = GetDefaultComplementaryValues<float>();
-      std::vector<LogValue<float> > p(v.size());
-      for (unsigned int i=0; i!=v.size(); ++i) p[i] = exp(v[i]);
-      en_->SetParameters(p);
-    }
+    en_ = new InferenceEngine<LogValue<float>,float,ScoringModel<LogValue<float>,float> >(false);
+    std::vector<float> v = GetDefaultComplementaryValues<float>();
+    std::vector<LogValue<float> > p(v.size());
+    for (uint i=0; i!=v.size(); ++i) p[i] = exp(v[i]);
+    en_->SetParameters(p);
 #endif
-
-    if (!use_contrafold)
-      if (param)
-        Vienna::read_parameter_file(param);
   }
 
-  ~IPknot()
+  ~CONTRAfoldModel()
   {
 #ifndef ORIGINAL_CONTRAFOLD
     if (en_) delete en_;
 #endif
   }
 
-  void solve(const std::string& seq, std::string& res, std::vector<int>& ct) const;
-
-  void solve(const std::string& seq, const std::vector<float>& bp, const std::vector<int>& offset,
-             std::string& res, std::vector<int>& ct) const;
-
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
   {
-    use_contrafold_ ? contrafold(seq, bp, offset) : rnafold(seq, bp, offset);
+#ifdef ORIGINAL_CONTRAFOLD
+    SStruct ss("unknown", seq);
+    ParameterManager<float> pm;
+    InferenceEngine<float> en(false);
+    std::vector<float> w = GetDefaultComplementaryValues<float>();
+    bp.resize((seq.size()+1)*(seq.size()+2)/2, 0.0);
+    en.RegisterParameters(pm);
+    en.LoadValues(w);
+    en.LoadSequence(ss);
+    en.ComputeInside();
+    en.ComputeOutside();
+    en.ComputePosterior();
+    en.GetPosterior(0, bp, offset);
+#else
+    en_->LoadSequence(seq);
+    en_->ComputeInside();
+    en_->ComputeOutside();
+    en_->ComputePosterior();
+    en_->GetPosterior(bp, offset);
+#endif
   }
 
 private:
-  void contrafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
-  void rnafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
+#ifndef ORIGINAL_CONTRAFOLD
+  InferenceEngine<LogValue<float>,float,ScoringModel<LogValue<float>,float> >* en_;
+#endif
+};
+
+class RNAfoldModel : public BPEngineSeq
+{
+public:
+  RNAfoldModel(const char* param)
+  {
+    if (param) Vienna::read_parameter_file(param);
+  }
+  
+  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    uint L=seq.size();
+    bp.resize((L+1)*(L+2)/2);
+    offset.resize(L+1);
+    for (uint i=0; i<=L; ++i)
+      offset[i] = i*((L+1)+(L+1)-i-1)/2;
+#if 0
+    std::string str(seq.size()+1, '.');
+    float min_en = Vienna::fold(const_cast<char*>(seq.c_str()), &str[0]);
+    float sfact = 1.07;
+    float kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
+    Vienna::pf_scale = exp(-(sfact*min_en)/kT/seq.size());
+#else
+    Vienna::pf_scale = -1;
+#endif
+    Vienna::init_pf_fold(L);
+    Vienna::pf_fold(const_cast<char*>(seq.c_str()), NULL);
+    for (uint i=0; i!=L-1; ++i)
+      for (uint j=i+1; j!=L; ++j)
+        bp[offset[i+1]+(j+1)] = Vienna::pr[Vienna::iindx[i+1]-(j+1)];
+    Vienna::free_pf_arrays();
+  }
+};
+
+class AlifoldModel : public BPEngineAln
+{
+public:
+  AlifoldModel(const char* param)
+  {
+    if (param) Vienna::read_parameter_file(param);
+  }
+
+  void calculate_posterior(const std::list<std::string>& aln,
+                           std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    //uint N=aln.size();
+    uint L=aln.front().size();
+    bp.resize((L+1)*(L+2)/2, 0.0);
+    offset.resize(L+1);
+    for (uint i=0; i<=L; ++i)
+      offset[i] = i*((L+1)+(L+1)-i-1)/2;
+
+    char** seqs=alloc_aln(aln);
+    char* str2=new char[L+1];
+    // scaling parameters to avoid overflow
+    double min_en = Vienna::alifold(seqs, str2);
+    double kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
+    Vienna::pf_scale = exp(-(1.07*min_en)/kT/L);
+    Vienna::free_alifold_arrays();
+
+#ifdef HAVE_VIENNA18
+    Vienna::plist* pi;
+#else
+    Vienna::pair_info* pi;
+#endif
+    Vienna::alipf_fold(seqs, str2, &pi);
+    for (uint k=0; pi[k].i!=0; ++k)
+      bp[offset[pi[k].i]+pi[k].j]=pi[k].p;
+    free(pi);
+
+    Vienna::free_alipf_arrays();
+    if (str2) delete[] str2;
+    free_aln(seqs);
+  }
+
+private:
+  static char** alloc_aln(const std::list<std::string>& aln)
+  {
+    uint L=aln.front().size();
+    char** seqs = new char*[aln.size()+1];
+    seqs[aln.size()]=NULL;
+    std::list<std::string>::const_iterator x;
+    uint i=0;
+    for (x=aln.begin(); x!=aln.end(); ++x)
+    {
+      seqs[i] = new char[L+1];
+      strcpy(seqs[i++], x->c_str());
+    }
+    return seqs;
+  }
+
+  static void free_aln(char** seqs)
+  {
+    for (uint i=0; seqs[i]!=NULL; ++i) delete[] seqs[i];
+    delete[] seqs;
+  }
+};
+
+class AveragedModel : public BPEngineAln
+{
+public:
+  AveragedModel(BPEngineSeq* en) : en_(en) { }
+  ~AveragedModel() { }
+
+  void calculate_posterior(const std::list<std::string>& aln,
+                           std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    uint N=aln.size();
+    uint L=aln.front().size();
+    bp.resize((L+1)*(L+2)/2, 0.0);
+    offset.resize(L+1);
+    for (uint i=0; i<=L; ++i)
+      offset[i] = i*((L+1)+(L+1)-i-1)/2;
+    for (std::list<std::string>::const_iterator s=aln.begin(); s!=aln.end(); ++s)
+    {
+      std::vector<float> lbp;
+      std::vector<int> loffset;
+      std::string seq;
+      std::vector<int> idx;
+      for (uint i=0; i!=s->size(); ++i)
+      {
+        if ((*s)[i]!='-')
+        {
+          seq.push_back((*s)[i]);
+          idx.push_back(i);
+        }
+      }
+      en_->calculate_posterior(seq, lbp, loffset);
+      for (uint i=0; i!=seq.size()-1; ++i)
+        for (uint j=i+1; j!=seq.size(); ++j)
+          bp[offset[idx[i]+1]+(idx[j]+1)] += lbp[loffset[i+1]+(j+1)]/N;
+    }
+  }
+
+private:
+  BPEngineSeq* en_;
+};
+
+class AuxModel
+{
+public:
+  AuxModel() { }
+
+  bool calculate_posterior(const char* filename, std::string& seq,
+                           std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    std::string l;
+    uint L=0;
+    std::ifstream in(filename);
+    if (!in) return false;
+    while (std::getline(in, l)) ++L;
+    bp.resize((L+1)*(L+2)/2, 0.0);
+    offset.resize(L+1);
+    for (uint i=0; i<=L; ++i)
+      offset[i] = i*((L+1)+(L+1)-i-1)/2;
+    seq.resize(L);
+    in.clear();
+    in.seekg(0, std::ios::beg);
+    while (std::getline(in, l))
+    {
+      std::vector<std::string> v;
+      boost::algorithm::split(v, l, boost::is_space(), boost::algorithm::token_compress_on);
+      uint up = atoi(v[0].c_str());
+      seq[up-1] = v[1][0];
+      for (uint i=2; i!=v.size(); ++i)
+      {
+        uint down;
+        float p;
+        if (sscanf(v[i].c_str(), "%u:%f", &down, &p)==2)
+          bp[offset[up]+down]=p;
+      }
+    }
+
+    return true;
+  }
+};
+
+class IPknot
+{
+public:
+  IPknot(uint pk_level, const float* th, const float* alpha,
+         bool stacking_constraints, int n_th)
+    : pk_level_(pk_level),
+      th_(th, th+pk_level),
+      alpha_(alpha, alpha+pk_level),
+      stacking_constraints_(stacking_constraints),
+      n_th_(n_th)
+  {
+  }
+
+  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
+             std::string& r, std::vector<int>& bpseq) const
+  {
+    IP ip(IP::MAX, n_th_);
+    uint n=0;
+  
+    boost::multi_array<int, 3> v(boost::extents[pk_level_][L][L]);
+    boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][L]);
+    std::fill(v.data(), v.data()+v.num_elements(), -1);
+
+    // make objective variables with their weights
+    for (uint j=1; j!=L; ++j)
+    {
+      for (uint i=j-1; i!=-1u; --i)
+      {
+        const float& p=bp[offset[i+1]+(j+1)];
+        for (uint lv=0; lv!=pk_level_; ++lv)
+          if (p>th_[lv])
+          {
+            v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
+            w[lv][i].push_back(j);
+            n++;
+          }
+      }
+    }
+    ip.update();
+
+    // constraint 1: each s_i is paired with at most one base
+    for (uint i=0; i!=L; ++i)
+    {
+      int row = ip.make_constraint(IP::UP, 0, 1);
+      for (uint lv=0; lv!=pk_level_; ++lv)
+      {
+        for (uint j=0; j<i; ++j)
+          if (v[lv][j][i]>=0)
+            ip.add_constraint(row, v[lv][j][i], 1);
+        for (uint j=i+1; j<L; ++j)
+          if (v[lv][i][j]>=0)
+            ip.add_constraint(row, v[lv][i][j], 1);
+      }
+    }
+
+    // constraint 2: disallow pseudoknots in x[lv]
+    for (uint lv=0; lv!=pk_level_; ++lv)
+      for (uint i=0; i<w[lv].size(); ++i)
+        for (uint p=0; p<w[lv][i].size(); ++p)
+        {
+          uint j=w[lv][i][p];
+          for (uint k=i+1; k<j; ++k)
+            for (uint q=0; q<w[lv][k].size(); ++q)
+            {
+              uint l=w[lv][k][q];
+              if (j<l)
+              {
+                int row = ip.make_constraint(IP::UP, 0, 1);
+                ip.add_constraint(row, v[lv][i][j], 1);
+                ip.add_constraint(row, v[lv][k][l], 1);
+              }
+            }
+        }
+
+    // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
+    for (uint lv=1; lv!=pk_level_; ++lv)
+      for (uint k=0; k<w[lv].size(); ++k)
+        for (uint q=0; q<w[lv][k].size(); ++q)
+        {
+          uint l=w[lv][k][q];
+          for (uint plv=0; plv!=lv; ++plv)
+          {
+            int row = ip.make_constraint(IP::LO, 0, 0);
+            ip.add_constraint(row, v[lv][k][l], -1);
+            for (uint i=0; i<k; ++i)
+              for (uint p=0; p<w[plv][i].size(); ++p)
+              {
+                uint j=w[plv][i][p];
+                if (k<j && j<l)
+                  ip.add_constraint(row, v[plv][i][j], 1);
+              }
+            for (uint i=k+1; i<l; ++i)
+              for (uint p=0; p<w[plv][i].size(); ++p)
+              {
+                uint j=w[plv][i][p];
+                if (l<j)
+                  ip.add_constraint(row, v[plv][i][j], 1);
+              }
+          }
+        }
+
+    if (stacking_constraints_)
+    {
+      for (uint lv=0; lv!=pk_level_; ++lv)
+      {
+        // upstream
+        for (uint i=0; i<L; ++i)
+        {
+          int row = ip.make_constraint(IP::LO, 0, 0);
+          for (uint j=0; j<i; ++j)
+            if (v[lv][j][i]>=0)
+              ip.add_constraint(row, v[lv][j][i], -1);
+          if (i>0)
+            for (uint j=0; j<i-1; ++j)
+              if (v[lv][j][i-1]>=0)
+                ip.add_constraint(row, v[lv][j][i-1], 1);
+          if (i+1<L)
+            for (uint j=0; j<i+1; ++j)
+              if (v[lv][j][i+1]>=0)
+                ip.add_constraint(row, v[lv][j][i+1], 1);
+        }
+
+        // downstream
+        for (uint i=0; i<L; ++i)
+        {
+          int row = ip.make_constraint(IP::LO, 0, 0);
+          for (uint j=i+1; j<L; ++j)
+            if (v[lv][i][j]>=0)
+              ip.add_constraint(row, v[lv][i][j], -1);
+          if (i>0)
+            for (uint j=i; j<L; ++j)
+              if (v[lv][i-1][j]>=0)
+                ip.add_constraint(row, v[lv][i-1][j], 1);
+          if (i+1<L)
+            for (uint j=i+2; j<L; ++j)
+              if (v[lv][i+1][j]>=0)
+                ip.add_constraint(row, v[lv][i+1][j], 1);
+        }
+      }
+    }
+
+    // execute optimization
+    ip.solve();
+
+    // build the resultant structure
+    r.resize(L);
+    std::fill(r.begin(), r.end(), '.');
+    bpseq.resize(L);
+    std::fill(bpseq.begin(), bpseq.end(), -1);
+    for (uint lv=0; lv!=pk_level_; ++lv)
+      for (uint i=0; i<L; ++i)
+        for (uint j=i+1; j<L; ++j)
+          if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
+          {
+            assert(r[i]=='.'); assert(r[j]=='.');
+            bpseq[i]=j; bpseq[j]=i;
+            if (lv<n_support_parens)
+            {
+              r[i]=left_paren[lv]; r[j]=right_paren[lv];
+            }
+          }
+  }
 
 private:
   // options
   uint pk_level_;
   std::vector<float> th_;
   std::vector<float> alpha_;
-  bool use_contrafold_;        // use CONTRAfold model or not
   bool stacking_constraints_;
   int n_th_;
-#ifndef ORIGINAL_CONTRAFOLD
-  InferenceEngine<LogValue<float>,float,ScoringModel<LogValue<float>,float> >* en_;
-#endif
 };
-
-void
-IPknot::
-contrafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
-{
-#ifdef ORIGINAL_CONTRAFOLD
-  SStruct ss("unknown", seq);
-  ParameterManager<float> pm;
-  InferenceEngine<float> en(false);
-  std::vector<float> w = GetDefaultComplementaryValues<float>();
-  bp.resize((seq.size()+1)*(seq.size()+2)/2, 0.0);
-  en.RegisterParameters(pm);
-  en.LoadValues(w);
-  en.LoadSequence(ss);
-  en.ComputeInside();
-  en.ComputeOutside();
-  en.ComputePosterior();
-  en.GetPosterior(0, bp, offset);
-#else
-  en_->LoadSequence(seq);
-  en_->ComputeInside();
-  en_->ComputeOutside();
-  en_->ComputePosterior();
-  en_->GetPosterior(bp, offset);
-#endif
-}
-
-void
-IPknot::
-rnafold(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
-{
-  uint L=seq.size();
-  bp.resize((L+1)*(L+2)/2);
-  offset.resize(L+1);
-  for (uint i=0; i<=L; ++i)
-    offset[i] = i*((L+1)+(L+1)-i-1)/2;
-#if 0
-  std::string str(seq.size()+1, '.');
-  float min_en = Vienna::fold(const_cast<char*>(seq.c_str()), &str[0]);
-  float sfact = 1.07;
-  float kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
-  Vienna::pf_scale = exp(-(sfact*min_en)/kT/seq.size());
-#else
-  Vienna::pf_scale = -1;
-#endif
-  Vienna::init_pf_fold(L);
-  Vienna::pf_fold(const_cast<char*>(seq.c_str()), NULL);
-  for (uint i=0; i!=L-1; ++i)
-    for (uint j=i+1; j!=L; ++j)
-      bp[offset[i+1]+(j+1)] = Vienna::pr[Vienna::iindx[i+1]-(j+1)];
-  Vienna::free_pf_arrays();
-}
-
-void
-IPknot::
-solve(const std::string& s, std::string& r, std::vector<int>& bpseq) const
-{
-  std::vector<float> bp;
-  std::vector<int> offset;
-  calculate_posterior(s, bp, offset);
-  solve(s, bp, offset, r, bpseq);
-}
-
-void
-IPknot::
-solve(const std::string& s, const std::vector<float>& bp, const std::vector<int>& offset,
-      std::string& r, std::vector<int>& bpseq) const
-{
-  IP ip(IP::MAX, n_th_);
-  
-  boost::multi_array<int, 3> v(boost::extents[pk_level_][s.size()][s.size()]);
-  boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][s.size()]);
-  std::fill(v.data(), v.data()+v.num_elements(), -1);
-
-  // make objective variables with their weights
-  for (uint j=1; j!=s.size(); ++j)
-  {
-    for (uint i=j-1; i!=-1u; --i)
-    {
-      const float& p=bp[offset[i+1]+(j+1)];
-      for (uint lv=0; lv!=pk_level_; ++lv)
-        if (p>th_[lv])
-        {
-          v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
-          w[lv][i].push_back(j);
-        }
-    }
-  }
-  ip.update();
-
-  // constraint 1: each s_i is paired with at most one base
-  for (uint i=0; i!=s.size(); ++i)
-  {
-    int row = ip.make_constraint(IP::UP, 0, 1);
-    for (uint lv=0; lv!=pk_level_; ++lv)
-    {
-      for (uint j=0; j<i; ++j)
-        if (v[lv][j][i]>=0)
-          ip.add_constraint(row, v[lv][j][i], 1);
-      for (uint j=i+1; j<s.size(); ++j)
-        if (v[lv][i][j]>=0)
-          ip.add_constraint(row, v[lv][i][j], 1);
-    }
-  }
-
-  // constraint 2: disallow pseudoknots in x[lv]
-  for (uint lv=0; lv!=pk_level_; ++lv)
-    for (uint i=0; i<w[lv].size(); ++i)
-      for (uint p=0; p<w[lv][i].size(); ++p)
-      {
-        uint j=w[lv][i][p];
-        for (uint k=i+1; k<j; ++k)
-          for (uint q=0; q<w[lv][k].size(); ++q)
-          {
-            uint l=w[lv][k][q];
-            if (j<l)
-            {
-              int row = ip.make_constraint(IP::UP, 0, 1);
-              ip.add_constraint(row, v[lv][i][j], 1);
-              ip.add_constraint(row, v[lv][k][l], 1);
-            }
-          }
-      }
-
-  // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
-  for (uint lv=1; lv!=pk_level_; ++lv)
-    for (uint k=0; k<w[lv].size(); ++k)
-      for (uint q=0; q<w[lv][k].size(); ++q)
-      {
-        uint l=w[lv][k][q];
-        for (uint plv=0; plv!=lv; ++plv)
-        {
-          int row = ip.make_constraint(IP::LO, 0, 0);
-          ip.add_constraint(row, v[lv][k][l], -1);
-          for (uint i=0; i<k; ++i)
-            for (uint p=0; p<w[plv][i].size(); ++p)
-            {
-              uint j=w[plv][i][p];
-              if (k<j && j<l)
-                ip.add_constraint(row, v[plv][i][j], 1);
-            }
-          for (uint i=k+1; i<l; ++i)
-            for (uint p=0; p<w[plv][i].size(); ++p)
-            {
-              uint j=w[plv][i][p];
-              if (l<j)
-                ip.add_constraint(row, v[plv][i][j], 1);
-            }
-        }
-      }
-
-  if (stacking_constraints_)
-  {
-    for (uint lv=0; lv!=pk_level_; ++lv)
-    {
-      // upstream
-      for (uint i=0; i<s.size(); ++i)
-      {
-        int row = ip.make_constraint(IP::LO, 0, 0);
-        for (uint j=0; j<i; ++j)
-          if (v[lv][j][i]>=0)
-            ip.add_constraint(row, v[lv][j][i], -1);
-        if (i>0)
-          for (uint j=0; j<i-1; ++j)
-            if (v[lv][j][i-1]>=0)
-              ip.add_constraint(row, v[lv][j][i-1], 1);
-        if (i+1<s.size())
-          for (uint j=0; j<i+1; ++j)
-            if (v[lv][j][i+1]>=0)
-              ip.add_constraint(row, v[lv][j][i+1], 1);
-      }
-
-      // downstream
-      for (uint i=0; i<s.size(); ++i)
-      {
-        int row = ip.make_constraint(IP::LO, 0, 0);
-        for (uint j=i+1; j<s.size(); ++j)
-          if (v[lv][i][j]>=0)
-            ip.add_constraint(row, v[lv][i][j], -1);
-        if (i>0)
-          for (uint j=i; j<s.size(); ++j)
-            if (v[lv][i-1][j]>=0)
-              ip.add_constraint(row, v[lv][i-1][j], 1);
-        if (i+1<s.size())
-          for (uint j=i+2; j<s.size(); ++j)
-            if (v[lv][i+1][j]>=0)
-              ip.add_constraint(row, v[lv][i+1][j], 1);
-      }
-    }
-  }
-
-  // execute optimization
-  ip.solve();
-
-  // build the resultant structure
-  r.resize(s.size());
-  std::fill(r.begin(), r.end(), '.');
-  bpseq.resize(s.size());
-  std::fill(bpseq.begin(), bpseq.end(), -1);
-  for (uint lv=0; lv!=pk_level_; ++lv)
-    for (uint i=0; i<s.size(); ++i)
-      for (uint j=i+1; j<s.size(); ++j)
-        if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
-        {
-          assert(r[i]=='.'); assert(r[j]=='.');
-          bpseq[i]=j; bpseq[j]=i;
-          if (lv<n_support_parens)
-          {
-            r[i]=left_paren[lv]; r[j]=right_paren[lv];
-          }
-        }
-}
 
 void
 usage(const char* progname)
@@ -360,7 +513,7 @@ usage(const char* progname)
             << " -t th:    threshold of base-pairing probabilities for each level" << std::endl
             << " -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)" << std::endl
             << "           (default: -g 4 -g 8)" << std::endl
-            << " -m:       use McCaskill model (default: CONTRAfold model)" << std::endl
+            << " -m model: probaility distribution model" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
             << " -b:       output the prediction via BPSEQ format" << std::endl
             << " -P param: read the energy parameter file for the Vienna RNA package" << std::endl
@@ -380,16 +533,17 @@ main(int argc, char* argv[])
   std::vector<float> th;
   std::vector<float> alpha;
   bool isolated_bp=false;
-  bool use_contrafold=true;
+  char* model=NULL;
   bool use_bpseq=false;
   int n_th=1;
   const char* param=NULL;
-  while ((ch=getopt(argc, argv, "a:t:g:mibn:P:h"))!=-1)
+  bool aux=false;
+  while ((ch=getopt(argc, argv, "a:t:g:m:ibn:P:xh"))!=-1)
   {
     switch (ch)
     {
       case 'm':
-        use_contrafold=false;
+        model=optarg;
         break;
       case 'a':
         alpha.push_back(atof(optarg));
@@ -411,6 +565,9 @@ main(int argc, char* argv[])
         break;
       case 'P':
         param=optarg;
+        break;
+      case 'x':
+        aux=true;
         break;
       case 'h': case '?': default:
         usage(progname);
@@ -436,29 +593,110 @@ main(int argc, char* argv[])
     for (uint i=0; i!=alpha.size(); ++i)
       alpha[i]=1.0/alpha.size();
   }
+  IPknot ipknot(th.size(), &th[0], &alpha[0], !isolated_bp, n_th);
+  std::vector<float> bp;
+  std::vector<int> offset;
+  std::string r;
+  std::vector<int> bpseq;
   
   std::list<Fasta> f;
-  Fasta::load(f, argv[0]);
-
-  IPknot ipknot(th.size(), &th[0], &alpha[0], use_contrafold, !isolated_bp, param, n_th);
-  while (!f.empty())
+  std::list<Aln> a;
+  if (aux)
   {
-    std::list<Fasta>::iterator fa = f.begin();
-    std::string r;
-    std::vector<int> bpseq;
-    ipknot.solve(fa->seq(), r, bpseq);
+    AuxModel aux;
+    std::string seq;
+    aux.calculate_posterior(argv[0], seq, bp, offset);
+    ipknot.solve(seq.size(), bp, offset, r, bpseq);
     if (!use_bpseq && th.size()<n_support_parens)
     {
-      std::cout << ">" << fa->name() << std::endl
-                << fa->seq() << std::endl << r << std::endl;
+      std::cout << ">" << argv[0] << std::endl
+                << seq << std::endl << r << std::endl;
     }
     else
     {
-      std::cout << "# " << fa->name() << std::endl;
+      std::cout << "# " << argv[0] << std::endl;
       for (uint i=0; i!=bpseq.size(); ++i)
-        std::cout << i+1 << " " << fa->seq()[i] << " " << bpseq[i]+1 << std::endl;
+        std::cout << i+1 << " " << seq[i] << " " << bpseq[i]+1 << std::endl;
     }
-    f.erase(fa);
+  }    
+  else if (Fasta::load(f, argv[0])>0)
+  {
+    BPEngineSeq* en=NULL;
+    if (model==NULL || strcmp(model, "McCaskill")==0)
+      en = new RNAfoldModel(param);
+    else if (strcmp(model, "CONTRAfold")==0)
+      en = new CONTRAfoldModel();
+    else
+    {
+      usage(progname);
+      return 1;
+    }
+    
+    while (!f.empty())
+    {
+      std::list<Fasta>::iterator fa = f.begin();
+      en->calculate_posterior(fa->seq(), bp, offset);
+      ipknot.solve(fa->seq().size(), bp, offset, r, bpseq);
+      if (!use_bpseq && th.size()<n_support_parens)
+      {
+        std::cout << ">" << fa->name() << std::endl
+                  << fa->seq() << std::endl << r << std::endl;
+      }
+      else
+      {
+        std::cout << "# " << fa->name() << std::endl;
+        for (uint i=0; i!=bpseq.size(); ++i)
+          std::cout << i+1 << " " << fa->seq()[i] << " " << bpseq[i]+1 << std::endl;
+      }
+      f.erase(fa);
+    }
+
+    delete en;
+  }
+  else if (Aln::load(a, argv[0])>0)
+  {
+    BPEngineAln* en=NULL;
+    BPEngineSeq* en_s=NULL;
+    if (model==NULL || strcmp(model, "McCaskill")==0)
+    {
+      en_s = new RNAfoldModel(param);
+      en = new AveragedModel(en_s);
+    }
+    else if (strcmp(model, "CONTRAfold")==0)
+    {
+      en_s = new CONTRAfoldModel();
+      en = new AveragedModel(en_s);
+    }
+    else if (strcmp(model, "Alifold")==0)
+      en = new AlifoldModel(param);
+    else
+    {
+      usage(progname);
+      return 1;
+    }
+
+    while (!a.empty())
+    {
+      std::list<Aln>::iterator aln = a.begin();
+      std::string consensus(aln->consensus());
+      en->calculate_posterior(aln->seq(), bp, offset);
+      ipknot.solve(consensus.size(), bp, offset, r, bpseq);
+      if (!use_bpseq && th.size()<n_support_parens)
+      {
+        std::cout << ">" << aln->name().front() << std::endl
+                  << consensus << std::endl << r << std::endl;
+      }
+      else
+      {
+        std::cout << "# " << aln->name().front() << std::endl;
+        for (uint i=0; i!=bpseq.size(); ++i)
+          std::cout << i+1 << " " << consensus[i] << " " << bpseq[i]+1 << std::endl;
+      }
+      a.erase(aln);
+    }
+
+    if (en) delete en;
+    if (en_s) delete en_s;
   }
 
   return 0;

@@ -70,6 +70,8 @@ AC_ARG_WITH([vienna-rna], AS_HELP_STRING([--with-vienna-rna], [support Vienna RN
   fi
 )
 AC_CHECK_LIB(RNA, init_pf_fold)
+AC_CHECK_HEADER([ViennaRNA/ribo.h],
+		[AC_DEFINE([HAVE_VIENNA18], [], [have the Vienna RNA package version 1.8 or above])])
 
 
 AC_CONFIG_FILES([Makefile src/Makefile])
