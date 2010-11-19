@@ -70,13 +70,17 @@ class InferenceEngine
     std::vector<int> FCt, F5t, FMt, FM1t;            // traceback
     std::vector<RealT> FCv, F5v, FMv, FM1v;          // Viterbi  
     std::vector<RealT> FCi, F5i, FMi, FM1i;          // inside
+    std::vector<RealT> FCj, F5j, FMj, FM1j;          // inside2
     std::vector<RealT> FCo, F5o, FMo, FM1o;          // outside
+    std::vector<RealT> FCp, F5p, FMp, FM1p;          // outside2
     
 #if PARAMS_HELIX_LENGTH || PARAMS_ISOLATED_BASE_PAIR
     std::vector<int> FEt, FNt;
     std::vector<RealT> FEv, FNv;
     std::vector<RealT> FEi, FNi;
+    std::vector<RealT> FEj, FNj;
     std::vector<RealT> FEo, FNo;
+    std::vector<RealT> FEp, FNp;
 #endif
     
     std::vector<RealT> posterior, posterior2;
@@ -243,9 +247,12 @@ public:
 
     // MEA inference
     void ComputeInside();
+    void ComputeInside2(const std::vector<float>& weight);
     RealT ComputeLogPartitionCoefficient() const;
     void ComputeOutside();
+    void ComputeOutside2(const std::vector<float>& weight);
     std::vector<RealT> ComputeFeatureCountExpectations();
+    std::vector<RealT> ComputeFeatureCountExpectations2(const std::vector<float>& weight);
     void ComputePosterior();
     std::vector<int> PredictPairingsPosterior(const RealT gamma) const;
 

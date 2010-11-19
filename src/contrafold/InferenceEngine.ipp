@@ -3721,6 +3721,416 @@ void InferenceEngine<RealT>::ComputeInside()
 #endif
 }
 
+template<class RealT>
+void InferenceEngine<RealT>::ComputeInside2(const std::vector<float>& weight)
+{
+    InitializeCache();
+        
+#if SHOW_TIMINGS
+    double starting_time = GetSystemTime();
+#endif
+    
+    // initialization
+
+    F5j.clear(); F5j.resize(L+1, RealT(NEG_INF));
+    FCj.clear(); FCj.resize(SIZE, RealT(NEG_INF));
+    FMj.clear(); FMj.resize(SIZE, RealT(NEG_INF));
+    FM1j.clear(); FM1j.resize(SIZE, RealT(NEG_INF));
+    
+#if PARAMS_HELIX_LENGTH || PARAMS_ISOLATED_BASE_PAIR
+    FEj.clear(); FEj.resize(SIZE, RealT(NEG_INF));
+    FNj.clear(); FNj.resize(SIZE, RealT(NEG_INF));
+#endif
+
+    for (int i = L; i >= 0; i--)
+    {
+        int L2 = max_bp_dist==0 ? L : std::min(L,i+max_bp_dist);
+        for (int j = i; j <= L2; j++)
+        {
+            int off_ij = offset[i]+j;
+
+            // FM2[i,j] = SUM (i<k<j : FM1[i,k] + FM[k,j])
+            
+            RealT FM2j = RealT(NEG_INF);
+            
+#if SIMPLE_FM2
+            
+            for (int k = i+1; k < j; k++)
+            {
+                int off_l = offset[i]+k, off_r = offset[k]+j;
+                Fast_LogPlusEquals(FM2j, FM1j[off_l] + FMi[off_r]);
+                Fast_LogPlusEquals(FM2j, FM1i[off_l] + FMj[off_r]);
+            }
+            
+#else
+            if (max_bp_dist==0)
+            {
+                if (i+2 <= j)
+                {
+                    const RealT *p1i = &(FM1i[offset[i]+i+1]);
+                    const RealT *p2i = &(FMi[offset[i+1]+j]);
+                    const RealT *p1j = &(FM1j[offset[i]+i+1]);
+                    const RealT *p2j = &(FMj[offset[i+1]+j]);
+                    for (register int k = i+1; k < j; k++)
+                    {
+                        Fast_LogPlusEquals(FM2j, (*p1i) + (*p2j));
+                        Fast_LogPlusEquals(FM2j, (*p1j) + (*p2i));
+                        ++p1i; ++p1j;
+                        p2i += L-k; p2j += L-k;
+                    }
+                }
+            }
+            else
+            {
+                for (int k = i+1; k < j; k++)
+                {
+                    int off_l = offset[i]+k, off_r = offset[k]+j;
+                    Fast_LogPlusEquals(FM2j, FM1i[off_l] + FMj[off_r]);
+                    Fast_LogPlusEquals(FM2j, FM1j[off_l] + FMi[off_r]);
+                }
+            }
+#endif
+            
+#if PARAMS_HELIX_LENGTH || PARAMS_ISOLATED_BASE_PAIR
+
+            // FN[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //           and the next interaction is not a stacking pair
+            //
+            //         = SUM [ScoreHairpin(i,j),
+            //                SUM (i<=p<p+2<=q<=j, p-i+j-q>0 : ScoreSingle(i,j,p,q) + FC[p+1,q-1]),
+            //                ScoreJunctionA(i,j) + a + c + SUM (i<k<j : FM1[i,k] + FM[k,j])]
+            //
+            //           (assuming 0 < i <= j < L)
+            //
+            // Multi-branch loops are scored as [a + b * (# unpaired) + c * (# branches)]
+            
+            if (0 < i && j < L && allow_paired[offset[i]+j+1])
+            {
+                
+                RealT sum_j = RealT(NEG_INF);
+                
+                // compute ScoreHairpin(i,j)
+                
+                // compute SUM (i<=p<p+2<=q<=j, p-i+j-q>0 : ScoreSingle(i,j,p,q) + FC[p+1,q-1])
+                
+#if !FAST_SINGLE_BRANCH_LOOPS
+                
+                for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                {
+                    if (p > i && !allow_unpaired_position[p]) break;
+                    int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                    for (int q = j; q >= q_min; q--)
+                    {
+                        if (q < j && !allow_unpaired_position[q+1]) break;
+                        int off_bp = offset[p+1]+q;
+                        if (!allow_paired[off_bp]) continue;
+                        if (i == p && j == q) continue;
+                        
+                        RealT temp = ScoreSingle(i,j,p,q);
+                        int off = offset[p+1]+q-1;
+                        Fast_LogPlusEquals(sum_j, temp + FCj[off]);
+                        Fast_LogPlusEquals(sum_j, temp + weight[off_bp] + FCi[off]);
+                    }
+                }
+                
+#else
+
+                if (i+2 <= j)                
+                {
+                    RealT score_other = ScoreJunctionB(i,j);
+                    
+                    for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                    {
+                        if (p > i && !allow_unpaired_position[p]) break;
+                        int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                        const RealT *FCptr = &(FCi[offset[p+1]-1]);
+                        for (int q = j; q >= q_min; q--)
+                        {
+                            if (q < j && !allow_unpaired_position[q+1]) break;
+                            if (!allow_paired[offset[p+1]+q]) continue;
+                            if (i == p && j == q) continue;
+                            
+                            RealT score = (score_other + cache_score_single[p-i][j-q].first + FCptr[q] + ScoreBasePair(p+1,q) +
+                                           ScoreJunctionB(q,p) + ScoreSingleNucleotides(i,j,p,q));
+                            
+                            Fast_LogPlusEquals(sum_i, score);
+                        }
+                    }
+                }
+#endif
+                
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j] + ScoreJunctionA(i,j) + a + c)
+                
+                Fast_LogPlusEquals(sum_j, FM2j + ScoreJunctionA(i,j) + ScoreMultiPaired() + ScoreMultiBase());
+                
+                FNj[off_ij] = sum_j;
+            }
+            
+            // FE[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) ... (i-D+1,j+D) are 
+            //           already base-paired
+            //
+            //         = SUM [ScoreBP(i+1,j) + ScoreHelixStacking(i,j+1) + FE[i+1,j-1]   if i+2<=j,
+            //                FN(i,j)]
+            //
+            //           (assuming 0 < i <= j < L)
+            
+            if (0 < i && j < L && allow_paired[offset[i]+j+1])
+            {
+                RealT sum_j = RealT(NEG_INF);
+                
+                // compute ScoreBP(i+1,j) + ScoreHelixStacking(i,j+1) + FE[i+1,j-1]
+
+                int off_bp = offset[i+1]+j;
+                if (i+2 <= j && allow_paired[off_bp])
+                {
+                    RealT temp = ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1);
+                    int off = offset[i+1]+j-1;
+                    Fast_LogPlusEquals(sum_j, temp + FEj[off]);
+                    Fast_LogPlusEquals(sum_j, temp + weight[off_bp] + FEi[off]);
+                }
+                
+                // compute FN(i,j)
+
+                Fast_LogPlusEquals(sum_j, FNj[off_ij]);
+                
+                FEj[off_ij] = sum_j;
+            }
+            
+            // FC[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //           but (i-1,j+2) are not
+            //
+            //         = SUM [ScoreIsolated() + FN(i,j),
+            //                SUM (2<=k<D : FN(i+k-1,j-k+1) + ScoreHelix(i-1,j+1,k)),
+            //                FE(i+D-1,j-D+1) + ScoreHelix(i-1,j+1,D)]
+            //
+            //           (assuming 0 < i <= j < L)
+            
+            if (0 < i && j < L && allow_paired[offset[i]+j+1])
+            {
+                RealT sum_j = RealT(NEG_INF);
+                
+                // compute ScoreIsolated() + FN(i,j)
+                
+                Fast_LogPlusEquals(sum_j, ScoreIsolated() + FNj[off_ij]);
+                
+                // compute SUM (2<=k<D : FN(i+k-1,j-k+1) + ScoreHelix(i-1,j+1,k))
+                
+                bool allowed = true;
+                for (int k = 2; k < D_MAX_HELIX_LENGTH; k++)
+                {
+                    if (i + 2*k - 2 > j) break;
+                    int off_bp = offset[i+k-1]+j-k+2;
+                    if (!allow_paired[off_bp]) { allowed = false; break; }
+                    RealT temp = ScoreHelix(i-1,j+1,k);
+                    int off = offset[i+k-1]+j-k+1;
+                    Fast_LogPlusEquals(sum_j, temp + FNj[off]);
+                    Fast_LogPlusEquals(sum_j, temp + weight[offset[off_bp] + FNi[off]);
+                }
+                
+                // compute FE(i+D-1,j-D+1) + ScoreHelix(i-1,j+1,D)]
+                
+                if (i + 2*D_MAX_HELIX_LENGTH-2 <= j)
+                {
+                    int off_bp = offset[i+D_MAX_HELIX_LENGTH-1]+j-D_MAX_HELIX_LENGTH+2;
+                    if (allowed && allow_paired[off_bp])
+                    {
+                        RealT temp = ScoreHelix(i-1,j+1,D_MAX_HELIX_LENGTH);
+                        int off = offset[i+D_MAX_HELIX_LENGTH-1]+j-D_MAX_HELIX_LENGTH+1;
+                        Fast_LogPlusEquals(sum_j, temp + FEj[off]);
+                        Fast_LogPlusEquals(sum_j, temp + weight[off_bp] + FEi[off]);
+                    }
+                }
+                
+                FCj[off_ij] = sum_j;
+            }
+            
+#else
+            
+            // FC[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //
+            //         = SUM [ScoreHairpin(i,j),
+            //                SUM (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) + FC[p+1,q-1]),
+            //                ScoreJunctionA(i,j) + a + c + SUM (i<k<j : FM1[i,k] + FM[k,j])]
+            //
+            //           (assuming 0 < i <= j < L)
+            //
+            // Multi-branch loops are scored as [a + b * (# unpaired) + c * (# branches)]
+            
+            if (0 < i && j < L2 && allow_paired[offset[i]+j+1])
+            {
+                RealT sum_j = RealT(NEG_INF);
+                
+                // compute ScoreHairpin(i,j)
+                
+                // compute SUM (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) + FC[p+1,q-1])
+                
+#if !FAST_SINGLE_BRANCH_LOOPS
+                
+                for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                {
+                    if (p > i && !allow_unpaired_position[p]) break;
+                    int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                    for (int q = j; q >= q_min; q--)
+                    {
+                        if (q < j && !allow_unpaired_position[q+1]) break;
+                        int off_bp = offset[p+1]+q;
+                        if (!allow_paired[off_bp]) continue;
+
+                        RealT temp = (p == i && q == j ? ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1) : ScoreSingle(i,j,p,q));
+                        int off = offset[p+1]+q-1;
+                        Fast_LogPlusEquals(sum_j, FCj[off] + temp);
+                        Fast_LogPlusEquals(sum_j, weight[off_bp] + FCi[off] + temp);
+                    }
+                }
+                
+#else
+
+                {
+                    RealT score_helix = (i+2 <= j ? ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1) : 0);
+                    RealT score_other = ScoreJunctionB(i,j);
+                    
+                    for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                    {
+                        if (p > i && !allow_unpaired_position[p]) break;
+                        int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                        const RealT *FCptr = &(FCi[offset[p+1]-1]);
+                        for (int q = j; q >= q_min; q--)
+                        {
+                            if (q < j && !allow_unpaired_position[q+1]) break;
+                            if (!allow_paired[offset[p+1]+q]) continue;
+                            
+                            RealT score = (p == i && q == j) ?
+                                (score_helix + FCptr[q]) :
+                                (score_other + cache_score_single[p-i][j-q].first + FCptr[q] + ScoreBasePair(p+1,q) +
+                                 ScoreJunctionB(q,p) + ScoreSingleNucleotides(i,j,p,q));
+                            
+                            Fast_LogPlusEquals(sum_i, score);
+                        }
+                    }
+                }
+#endif
+
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j] + ScoreJunctionA(i,j) + a + c)
+                
+                Fast_LogPlusEquals(sum_j, FM2j + ScoreJunctionA(i,j) + ScoreMultiPaired() + ScoreMultiBase());
+                
+                FCj[off_ij] = sum_j;
+            }
+            
+#endif
+            
+            // FM1[i,j] = optimal energy for substructure belonging to a
+            //            multibranch loop containing a (k+1,j) base pair
+            //            preceded by 5' unpaired nucleotides from i to k
+            //            for some i <= k <= j-2
+            //
+            //          = SUM [FC[i+1,j-1] + ScoreJunctionA(j,i) + c + ScoreBP(i+1,j)  if i+2<=j,
+            //                 FM1[i+1,j] + b                                          if i+2<=j]
+            //
+            //            (assuming 0 < i < i+2 <= j < L)
+            
+            if (0 < i && i+2 <= j && j < L2)
+            {
+                
+                RealT sum_j = RealT(NEG_INF);
+                
+                // compute FC[i+1,j-1] + ScoreJunctionA(j,i) + c + ScoreBP(i+1,j)
+
+                int off_bp = offset[i+1]+j;
+                if (allow_paired[off_bp])
+                {
+                    RealT temp = ScoreJunctionA(j,i) + ScoreMultiPaired() + ScoreBasePair(i+1,j);
+                    int off = offset[i+1]+j-1;
+                    Fast_LogPlusEquals(sum_j, FCj[off] + temp);
+                    Fast_LogPlusEquals(sum_j, weight[off_bp] + FCi[off] + temp);
+                }
+
+                // compute FM1[i+1,j] + b
+                
+                if (allow_unpaired_position[i+1])
+                    Fast_LogPlusEquals(sum_j, FM1j[offset[i+1]+j] + ScoreMultiUnpaired(i+1));
+                
+                FM1j[off_ij] = sum_j;
+            }
+            
+            // FM[i,j] = optimal energy for substructure belonging to a
+            //           multibranch loop which contains at least one 
+            //           helix
+            //
+            //         = SUM [SUM (i<k<j : FM1[i,k] + FM[k,j]),
+            //                FM[i,j-1] + b,
+            //                FM1[i,j]]
+            //
+            //            (assuming 0 < i < i+2 <= j < L)
+            
+            if (0 < i && i+2 <= j && j < L2)
+            {
+                
+                RealT sum_j = RealT(NEG_INF);
+                
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j])
+                
+                Fast_LogPlusEquals(sum_j, FM2j);
+                
+                // compute FM[i,j-1] + b
+                
+                if (allow_unpaired_position[j])
+                    Fast_LogPlusEquals(sum_j, FMj[offset[i]+j-1] + ScoreMultiUnpaired(j));
+                
+                // compute FM1[i,j]
+                
+                Fast_LogPlusEquals(sum_j, FM1j[off_ij]);
+                
+                FMj[off_ij] = sum_j;
+            }
+        }
+    }
+    
+    F5j[0] = RealT(0);
+    for (int j = 1; j <= L; j++)
+    {
+        
+        // F5[j] = optimal energy for substructure between positions 0 and j
+        //         (or 0 if j = 0)
+        //
+        //       = SUM [F5[j-1] + ScoreExternalUnpaired(),
+        //              SUM (0<=k<j : F5[k] + FC[k+1,j-1] + ScoreExternalPaired() + ScoreBP(k+1,j) + ScoreJunctionA(j,k))]
+        
+        RealT sum_j = RealT(NEG_INF);
+        
+        // compute F5[j-1] + ScoreExternalUnpaired()
+        
+        if (allow_unpaired_position[j])
+            Fast_LogPlusEquals(sum_j, F5j[j-1] + ScoreExternalUnpaired(j));
+        
+        // compute SUM (0<=k<j : F5[k] + FC[k+1,j-1] + ScoreExternalPaired() + ScoreBP(k+1,j) + ScoreJunctionA(j,k))
+        
+        int l = max_bp_dist==0 ? 0 : std::max(0,j-max_bp_dist);
+        for (int k = l; k < j; k++)
+        {
+            int off_bp = offset[k+1]+j;
+            if (allow_paired[off_bp])
+            {
+                RealT temp = ScoreExternalPaired() + ScoreBasePair(k+1,j) + ScoreJunctionA(j,k);
+                int off = offset[k+1]+j-1;
+                Fast_LogPlusEquals(sum_j, F5j[k] + FCi[off] + temp);
+                Fast_LogPlusEquals(sum_j, F5i[k] + FCj[off] + temp);
+                Fast_LogPlusEquals(sum_j, weight[off_bp] + F5i[k] + FCi[off] + temp);
+            }
+        }
+        
+        F5j[j] = sum_j;
+    }
+
+#if SHOW_TIMINGS
+    std::cerr << "Inside score: " << F5j[L] << " (" << GetSystemTime() - starting_time << " seconds)" << std::endl;
+#endif
+}
+
 //////////////////////////////////////////////////////////////////////
 // InferenceEngine::ComputeOutside()
 //
@@ -4076,6 +4486,404 @@ void InferenceEngine<RealT>::ComputeOutside()
     
 #if SHOW_TIMINGS
     std::cerr << "Outside score: " << F5o[0] << " (" << GetSystemTime() - starting_time << " seconds)" << std::endl;
+#endif
+}
+
+template<class RealT>
+void InferenceEngine<RealT>::ComputeOutside2(const std::vector<float>& weight)
+{
+    InitializeCache();
+    
+#if SHOW_TIMINGS    
+    double starting_time = GetSystemTime();
+#endif
+    
+    // initialization
+    
+    F5p.clear(); F5p.resize(L+1, RealT(NEG_INF));
+    FCp.clear(); FCp.resize(SIZE, RealT(NEG_INF));
+    FMp.clear(); FMp.resize(SIZE, RealT(NEG_INF));
+    FM1p.clear(); FM1p.resize(SIZE, RealT(NEG_INF));
+    
+#if PARAMS_HELIX_LENGTH || PARAMS_ISOLATED_BASE_PAIR
+    FEp.clear(); FEp.resize(SIZE, RealT(NEG_INF));
+    FNp.clear(); FNp.resize(SIZE, RealT(NEG_INF));
+#endif
+    
+    F5p[L] = RealT(0);  
+    for (int j = L; j >= 1; j--)
+    {
+        
+        // F5[j] = optimal energy for substructure between positions 0 and j
+        //         (or 0 if j = 0)
+        //
+        //       = SUM [F5[j-1] + ScoreExternalUnpaired(),
+        //              SUM (0<=k<j : F5[k] + FC[k+1,j-1] + ScoreExternalPaired() + ScoreBP(k+1,j) + ScoreJunctionA(j,k))]
+        
+        // compute F5[j-1] + ScoreExternalUnpaired()
+        
+        if (allow_unpaired_position[j])
+            Fast_LogPlusEquals(F5p[j-1], F5p[j] + ScoreExternalUnpaired(j));
+        
+        // compute SUM (0<=k<j : F5[k] + FC[k+1,j-1] + ScoreExternalPaired() + ScoreBP(k+1,j) + ScoreJunctionA(j,k))
+        
+        {
+            int l = max_bp_dist==0 ? 0 : std::max(0,j-max_bp_dist);
+            for (int k = l; k < j; k++)
+            {
+                int off_bp = offset[k+1]+j;
+                if (allow_paired[off_bp])
+                {
+                    RealT temp = ScoreExternalPaired() + ScoreBasePair(k+1,j) + ScoreJunctionA(j,k);
+                    int off = offset[k+1]+j-1;
+                    Fast_LogPlusEquals(F5j[k], F5p[j] + FCi[off] + temp);
+                    Fast_LogPlusEquals(F5j[k], F5o[j] + FCj[off] + temp);
+                    Fast_LogPlusEquals(FCj[off], F5p[j] + F5i[k] + temp);
+                    Fast_LogPlusEquals(FCj[off], F5o[j] + F5j[k] + temp);
+                }
+            }
+        }
+    }
+    
+    for (int i = 0; i <= L; i++)
+    {
+        int L2 = max_bp_dist==0 ? L : std::min(L,i+max_bp_dist);
+        for (int j = L2; j >= i; j--)
+        {
+            int off_ij = offset[i]+j;
+
+            RealT FM2o = RealT(NEG_INF);
+            RealT FM2p = RealT(NEG_INF);
+            
+            // FM[i,j] = optimal energy for substructure belonging to a
+            //           multibranch loop which contains at least one 
+            //           helix
+            //
+            //         = SUM [SUM (i<k<j : FM1[i,k] + FM[k,j]),
+            //                FM[i,j-1] + b,
+            //                FM1[i,j]]
+            //
+            //            (assuming 0 < i < i+2 <= j < L)
+            
+            if (0 < i && i+2 <= j && j < L2)
+            {
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j])
+                
+                Fast_LogPlusEquals(FM2o, FMo[off_ij]);
+                Fast_LogPlusEquals(FM2p, FMp[off_ij]);
+                
+                // compute FM[i,j-1] + b
+                
+                if (allow_unpaired_position[j])
+                    Fast_LogPlusEquals(FMp[offset[i]+j-1], FMp[off_ij] + ScoreMultiUnpaired(j));
+                
+                // compute FM1[i,j]
+                
+                Fast_LogPlusEquals(FM1p[off_ij], FMp[off_ij]);
+            }
+            
+            // FM1[i,j] = optimal energy for substructure belonging to a
+            //            multibranch loop containing a (k+1,j) base pair
+            //            preceded by 5' unpaired nucleotides from i to k
+            //            for some i <= k <= j-2
+            //
+            //          = SUM [FC[i+1,j-1] + ScoreJunctionA(j,i) + c + ScoreBP(i+1,j)  if i+2<=j,
+            //                 FM1[i+1,j] + b                                          if i+2<=j]
+            //
+            //            (assuming 0 < i < i+2 <= j < L)
+            
+            if (0 < i && i+2 <= j && j < L2)
+            {
+                // compute FC[i+1,j-1] + ScoreJunctionA(j,i) + c + ScoreBP(i+1,j)
+
+                int off_bp = offset[i+1]+j;
+                if (allow_paired[off_bp])
+                {
+                    RealT temp = ScoreJunctionA(j,i) + ScoreMultiPaired() + ScoreBasePair(i+1,j);
+                    int off = offset[i+1]+j-1;
+                    Fast_LogPlusEquals(FCp[off], FM1p[off_ij] + temp);
+                    Fast_LogPlusEquals(FCp[off], FM1o[off_ij] + weight[off_bp] + temp);
+                }
+                
+                // compute FM1[i+1,j] + b
+                
+                if (allow_unpaired_position[i+1])
+                    Fast_LogPlusEquals(FM1p[offset[i+1]+j], FM1p[off_ij] + ScoreMultiUnpaired(i+1));
+                
+            }
+            
+#if PARAMS_HELIX_LENGTH || PARAMS_ISOLATED_BASE_PAIR
+            
+            // FC[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //           but (i-1,j+2) are not
+            //
+            //         = SUM [ScoreIsolated() + FN(i,j),
+            //                SUM (2<=k<D : FN(i+k-1,j-k+1) + ScoreHelix(i-1,j+1,k)),
+            //                FE(i+D-1,j-D+1) + ScoreHelix(i-1,j+1,D)]
+            //
+            //           (assuming 0 < i <= j < L)
+
+            if (0 < i && j < L && allow_paired[off_bp])
+            {
+                
+                // compute ScoreIsolated() + FN(i,j)
+                
+                Fast_LogPlusEquals(FNp[off_ij], ScoreIsolated() + FCp[off_ij]);
+                
+                // compute SUM (2<=k<D : FN(i+k-1,j-k+1) + ScoreHelix(i-1,j+1,k))
+                
+                bool allowed = true;
+                for (int k = 2; k < D_MAX_HELIX_LENGTH; k++)
+                {
+                    if (i + 2*k - 2 > j) break;
+                    int off_bp = offset[i+k-1]+j-k+2;
+                    if (!allow_paired[off_bp]) { allowed = false; break; }
+                    RealT temp = ScoreHelix(i-1,j+1,k) ;
+                    int off = offset[i+k-1]+j-k+1;
+                    Fast_LogPlusEquals(FNp[off], FCp[off_ij] + temp);
+                    Fast_LogPlusEquals(FNp[off], FCo[off_ij] + weight[off_bp] + temp);
+                }
+                
+                // compute FE(i+D-1,j-D+1) + ScoreHelix(i-1,j+1,D)]
+                
+                if (i + 2*D_MAX_HELIX_LENGTH-2 <= j)
+                {
+                    int off_bp = offset[i+D_MAX_HELIX_LENGTH-1]+j-D_MAX_HELIX_LENGTH+2;
+                    if (allowed && allow_paired[off_bp])
+                    {
+                        RealT temp = ScoreHelix(i-1,j+1,D_MAX_HELIX_LENGTH);
+                        int off = i+D_MAX_HELIX_LENGTH-1]+j-D_MAX_HELIX_LENGTH+1;
+                        Fast_LogPlusEquals(FEp[off], FCp[off_ij + temp);
+                        Fast_LogPlusEquals(FEp[off], FCo[off] + weight[off_bp] + temp);
+                    }
+                }
+            }
+            
+            // FE[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) ... (i-D+1,j+D) are 
+            //           already base-paired
+            //
+            //         = SUM [ScoreBP(i+1,j) + ScoreHelixStacking(i,j+1) + FE[i+1,j-1]   if i+2<=j,
+            //                FN(i,j)]
+            //
+            //           (assuming 0 < i <= j < L)
+            
+            if (0 < i && j < L && allow_paired[offset[i]+j+1])
+            {
+                
+                // compute ScoreBP(i+1,j) + ScoreHelixStacking(i,j+1) + FE[i+1,j-1]
+
+                int off_bp = offset[i+1]+j;
+                if (i+2 <= j && allow_paired[off_bp])
+                {
+                    RealT temp = ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1);
+                    int off = offset[i+1]+j-1;
+                    Fast_LogPlusEquals(FEp[off], FEp[off_ij] + temp);
+                    Fast_LogPlusEquals(FEp[off], FEo[off_ij] + weight[off_bp] + temp);
+                }
+                
+                // compute FN(i,j)
+                
+                Fast_LogPlusEquals(FNp[off_ij], FEp[off_ij]);
+            }
+            
+            // FN[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //           and the next interaction is not a stacking pair
+            //
+            //         = SUM [ScoreHairpin(i,j),
+            //                SUM (i<=p<p+2<=q<=j, p-i+j-q>0 : ScoreSingle(i,j,p,q) + FC[p+1,q-1]),
+            //                ScoreJunctionA(i,j) + a + c + SUM (i<k<j : FM1[i,k] + FM[k,j])]
+            //
+            //           (assuming 0 < i <= j < L)
+            //
+            // Multi-branch loops are scored as [a + b * (# unpaired) + c * (# branches)]
+            
+            if (0 < i && j < L && allow_paired[offset[i]+j+1])
+            {
+                
+                // compute ScoreHairpin(i,j) -- do nothing
+                
+                // compute SUM (i<=p<p+2<=q<=j, p-i+j-q>0 : ScoreSingle(i,j,p,q) + FC[p+1,q-1])
+                
+#if !FAST_SINGLE_BRANCH_LOOPS
+                {
+                    for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                    {
+                        if (p > i && !allow_unpaired_position[p]) break;
+                        int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                        for (int q = j; q >= q_min; q--)
+                        {
+                            if (q < j && !allow_unpaired_position[q+1]) break;
+                            int off_bp = offset[p+1]+q;
+                            if (!allow_paired[off_bp]) continue;
+                            if (i == p && j == q) continue;
+
+                            RealT temp = ScoreSingle(i,j,p,q);
+                            int off = offset[p+1]+q-1;
+                            Fast_LogPlusEquals(FCp[off], FNp[off_ij] + temp);
+                            Fast_LogPlusEquals(FCp[off], FNo[off_ij] + weight[off_bp] + temp);
+                        }
+                    }
+                }
+#else
+                
+                {
+                    RealT score_other = FNo[offset[i]+j] + ScoreJunctionB(i,j);
+                    
+                    for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                    {
+                        if (p > i && !allow_unpaired_position[p]) break;
+                        int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                        RealT *FCptr = &(FCo[offset[p+1]-1]);
+                        for (int q = j; q >= q_min; q--)
+                        {
+                            if (q < j && !allow_unpaired_position[q+1]) break;
+                            if (!allow_paired[offset[p+1]+q]) continue;
+                            if (i == p && j == q) continue;
+                            
+                            Fast_LogPlusEquals(FCptr[q], score_other + cache_score_single[p-i][j-q].first + ScoreBasePair(p+1,q) + ScoreJunctionB(q,p) + ScoreSingleNucleotides(i,j,p,q));
+                        }
+                    }
+                }
+#endif
+                
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j] + ScoreJunctionA(i,j) + a + c)
+                RealT temp = ScoreJunctionA(i,j) + ScoreMultiPaired() + ScoreMultiBase();
+                Fast_LogPlusEquals(FM2o, FNo[off_ij] + temp);
+                Fast_LogPlusEquals(FM2p, FNp[off_ij] + temp);
+                
+            }
+            
+#else
+            
+            // FC[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //
+            //         = SUM [ScoreHairpin(i,j),
+            //                SUM (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) + FC[p+1,q-1]),
+            //                ScoreJunctionA(i,j) + a + c + SUM (i<k<j : FM1[i,k] + FM[k,j])]
+            //
+            //           (assuming 0 < i <= j < L)
+            //
+            // Multi-branch loops are scored as [a + b * (# unpaired) + c * (# branches)]
+            
+            if (0 < i && j < L2 && allow_paired[offset[i]+j+1])
+            {
+                // compute ScoreHairpin(i,j) -- do nothing
+                
+                // compute SUM (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) + FC[p+1,q-1])
+
+#if !FAST_SINGLE_BRANCH_LOOPS
+                {
+                    for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                    {
+                        if (p > i && !allow_unpaired_position[p]) break;
+                        int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                        for (int q = j; q >= q_min; q--)
+                        {
+                            if (q < j && !allow_unpaired_position[q+1]) break;
+                            int off_bp = offset[p+1]+q;
+                            if (!allow_paired[off_bp]) continue;
+
+                            RealT temp = (p == i && q == j ? ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1) : ScoreSingle(i,j,p,q));
+                            int off = offset[p+1]+q-1;
+                            Fast_LogPlusEquals(FCp[off], FCp[off_ij] + temp);
+                            Fast_LogPlusEquals(FCp[off], FCo[off_ij] + weight[off_bp] + temp);
+                        }
+                    }
+                }
+#else
+                
+                {
+                    RealT score_helix = (i+2 <= j ? FCo[offset[i]+j] + ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1) : 0);
+                    RealT score_other = FCo[offset[i]+j] + ScoreJunctionB(i,j);
+                    
+                    for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                    {
+                        if (p > i && !allow_unpaired_position[p]) break;
+                        int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                        RealT *FCptr = &(FCo[offset[p+1]-1]);
+                        for (int q = j; q >= q_min; q--)
+                        {
+                            if (q < j && !allow_unpaired_position[q+1]) break;
+                            if (!allow_paired[offset[p+1]+q]) continue;
+                            
+                            Fast_LogPlusEquals(FCptr[q], 
+                                               (p == i && q == j) ?
+                                               score_helix :
+                                               score_other + cache_score_single[p-i][j-q].first + ScoreBasePair(p+1,q) + ScoreJunctionB(q,p) + ScoreSingleNucleotides(i,j,p,q));
+                        }
+                    }
+                }
+#endif
+                
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j] + ScoreJunctionA(i,j) + a + c)
+                RealT temp = ScoreJunctionA(i,j) + ScoreMultiPaired() + ScoreMultiBase();
+                Fast_LogPlusEquals(FM2o, FCo[off_ij] + temp);
+                Fast_LogPlusEquals(FM2p, FCp[off_ij] + temp);
+                
+            }
+            
+#endif
+            
+            // FM2[i,j] = SUM (i<k<j : FM1[i,k] + FM[k,j])
+            
+#if SIMPLE_FM2
+            
+            for (int k = i+1; k < j; k++)
+            {
+                int off_l = offset[i]+k, off_r = offset[k]+j;
+                Fast_LogPlusEquals(FM1p[off_l], FM2p + FMi[off_r]);
+                Fast_LogPlusEquals(FM1p[off_l], FM2o + FMj[off_r]);
+                Fast_LogPlusEquals(FMp[off_r], FM2p + FM1i[off_l]);
+                Fast_LogPlusEquals(FMp[off_rj], FM2o + FM1j[off_l]);
+            }
+
+#else
+            if (max_bp_dist==0)
+            {
+                if (i+2 <= j)
+                {
+                    RealT *p1i = &(FM1i[offset[i]+i+1]);
+                    RealT *p2i = &(FMi[offset[i+1]+j]);
+                    RealT *p1o = &(FM1o[offset[i]+i+1]);
+                    RealT *p2o = &(FMo[offset[i+1]+j]);
+                    RealT *p1j = &(FM1j[offset[i]+i+1]);
+                    RealT *p2j = &(FMj[offset[i+1]+j]);
+                    RealT *p1p = &(FM1p[offset[i]+i+1]);
+                    RealT *p2p = &(FMp[offset[i+1]+j]);
+                    for (register int k = i+1; k < j; k++)
+                    {
+                        Fast_LogPlusEquals(*p1p, FM2p + *p2i);
+                        Fast_LogPlusEquals(*p1p, FM2o + *p2j);
+                        Fast_LogPlusEquals(*p2p, FM2p + *p1i);
+                        Fast_LogPlusEquals(*p2p, FM2o + *p1j);
+                        ++p1i; ++p1j;
+                        ++p1o; ++p1p;
+                        p2i += L-k; p2j += L-k; 
+                        p2o += L-k; p2p += L-k;
+                    }
+                }
+            }
+            else
+            {
+                for (int k = i+1; k < j; k++)
+                {
+                    int off_l = offset[i]+k, off_r = offset[k]+j;
+                    Fast_LogPlusEquals(FM1p[off_l], FM2p + FMi[off_r]);
+                    Fast_LogPlusEquals(FM1p[off_l], FM2o + FMj[off_r]);
+                    Fast_LogPlusEquals(FMp[off_r], FM2p + FM1i[off_l]);
+                    Fast_LogPlusEquals(FMp[off_r], FM2o + FM1j[off_l]);
+                }
+            }
+#endif
+        }
+    }
+    
+#if SHOW_TIMINGS
+    std::cerr << "Outside score: " << F5p[0] << " (" << GetSystemTime() - starting_time << " seconds)" << std::endl;
 #endif
 }
 
@@ -4471,6 +5279,462 @@ std::vector<RealT> InferenceEngine<RealT>::ComputeFeatureCountExpectations()
             if (allow_paired[offset[k+1]+j])
             {
                 RealT value = Fast_Exp(outside + F5i[k] + FCi[offset[k+1]+j-1] + ScoreExternalPaired() + ScoreBasePair(k+1,j) + ScoreJunctionA(j,k));
+                CountExternalPaired(value);
+                CountBasePair(k+1,j,value);
+                CountJunctionA(j,k,value);
+            }      
+        }
+    }
+    
+    FinalizeCounts();
+
+#if SHOW_TIMINGS
+    std::cerr << "Feature expectations (" << GetSystemTime() - starting_time << " seconds)" << std::endl;
+#endif
+
+    return GetCounts();
+}
+
+template<class RealT>
+std::vector<RealT> InferenceEngine<RealT>::ComputeFeatureCountExpectations2(const std::vector<float>& weight)
+{
+#if SHOW_TIMINGS
+    double starting_time = GetSystemTime();
+#endif
+
+    //std::cerr << "Inside score: " << F5i[L].GetLogRepresentation() << std::endl;
+    //std::cerr << "Outside score: " << F5o[0].GetLogRepresentation() << std::endl;
+    
+    const RealT Z = ComputeLogPartitionCoefficient();
+
+    ClearCounts();
+    
+    for (int i = L; i >= 0; i--)
+    {
+        int L2 = max_bp_dist==0 ? L : std::min(L,i+max_bp_dist);
+        for (int j = i; j <= L2; j++)
+        {
+            int off_ij = offset[i]+j;
+            
+            // FM2[i,j] = SUM (i<k<j : FM1[i,k] + FM[k,j])
+            
+            RealT FM2i = RealT(NEG_INF);
+            RealT FM2j = RealT(NEG_INF);
+            
+#if SIMPLE_FM2
+            
+            for (int k = i+1; k < j; k++)
+            {
+                int off_l = offset[i]+k, off_r = offset[k]+j;
+                Fast_LogPlusEquals(FM2i, FM1i[off_l] + FMi[off_r]);
+                Fast_LogPlusEquals(FM2j, FM1j[off_l] + FMi[off_r]);
+                Fast_LogPlusEquals(FM2j, FM1i[off_l] + FMj[off_r]);
+            }
+            
+#else
+            if (max_bp_dist==0)
+            {
+                if (i+2 <= j)
+                {
+                    const RealT *p1i = &(FM1i[offset[i]+i+1]);
+                    const RealT *p2i = &(FMi[offset[i+1]+j]);
+                    const RealT *p1j = &(FM1j[offset[i]+i+1]);
+                    const RealT *p2j = &(FMj[offset[i+1]+j]);
+                    for (register int k = i+1; k < j; k++)
+                    {
+                        Fast_LogPlusEquals(FM2i, (*p1i) + (*p2i));
+                        Fast_LogPlusEquals(FM2j, (*p1i) + (*p2j));
+                        Fast_LogPlusEquals(FM2j, (*p1j) + (*p2i));
+                        ++p1i; ++p1j;
+                        p2i += L-k; p2j += L-k;
+                    }
+                }
+            }
+            else
+            {
+                for (int k = i+1; k < j; k++)
+                {
+                    int off_l = offset[i]+k, off_r = offset[k]+j;
+                    Fast_LogPlusEquals(FM2i, FM1i[off_l] + FMi[off_r]);
+                    Fast_LogPlusEquals(FM2j, FM1j[off_l] + FMi[off_r]);
+                    Fast_LogPlusEquals(FM2j, FM1i[off_l] + FMj[off_r]);
+                }
+            }
+#endif
+            
+#if PARAMS_HELIX_LENGTH || PARAMS_ISOLATED_BASE_PAIR
+            
+            // FN[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //           and the next interaction is not a stacking pair
+            //
+            //         = SUM [ScoreHairpin(i,j),
+            //                SUM (i<=p<p+2<=q<=j, p-i+j-q>0 : ScoreSingle(i,j,p,q) + FC[p+1,q-1]),
+            //                ScoreJunctionA(i,j) + a + c + SUM (i<k<j : FM1[i,k] + FM[k,j])]
+            //
+            //           (assuming 0 < i <= j < L)
+            //
+            // Multi-branch loops are scored as [a + b * (# unpaired) + c * (# branches)]
+            
+            if (0 < i && j < L && allow_paired[offset[i]+j+1])
+            {
+                
+                // compute ScoreHairpin(i,j)
+                
+                if (allow_unpaired[offset[i]+j] && j-i >= C_MIN_HAIRPIN_LENGTH)
+                    CountHairpin(i,j,Fast_Exp(FNp[offset[i]+j] + ScoreHairpin(i,j)));
+                
+                // compute SUM (i<=p<p+2<=q<=j, p-i+j-q>0 : ScoreSingle(i,j,p,q) + FC[p+1,q-1])
+                
+#if !FAST_SINGLE_BRANCH_LOOPS
+                for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                {
+                    if (p > i && !allow_unpaired_position[p]) break;
+                    int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                    for (int q = j; q >= q_min; q--)
+                    {
+                        if (q < j && !allow_unpaired_position[q+1]) break;
+                        int off_bp = offset[p+1]+q;
+                        if (!allow_paired[off_bp]) continue;
+                        if (i == p && j == q) continue;
+
+                        Real temp = ScoreSingle(i,j,p,q) - Z ;
+                        int off = offset[p+1]+q-1;
+                        RealT value = Fast_Exp(FNp[off_ij] + FCi[off] + temp)
+                            + Fast_Exp(FNo[off_ij] + FCj[off] + temp)
+                            + Fast_Exp(FNo[off_ij] + FCi[off] + weight[off_bp] + temp);
+                        CountSingle(i,j,p,q,value);
+                    }
+                }
+                
+#else
+                
+                {
+                    RealT score_other = outside + ScoreJunctionB(i,j);
+                    
+                    for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                    {
+                        if (p > i && !allow_unpaired_position[p]) break;
+                        int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                        const RealT *FCptr = &(FCi[offset[p+1]-1]);
+                        for (int q = j; q >= q_min; q--)
+                        {
+                            if (q < j && !allow_unpaired_position[q+1]) break;
+                            if (!allow_paired[offset[p+1]+q]) continue;
+                            if (i == p && j == q) continue;
+                            
+                            RealT value = Fast_Exp(score_other + cache_score_single[p-i][j-q].first + FCptr[q] + ScoreBasePair(p+1,q) + ScoreJunctionB(q,p) + ScoreSingleNucleotides(i,j,p,q));
+                            cache_score_single[p-i][j-q].second += value;
+                            CountBasePair(p+1,q,value);
+                            CountJunctionB(i,j,value);
+                            CountJunctionB(q,p,value);
+                            CountSingleNucleotides(i,j,p,q,value);
+                        }
+                    }
+                }
+#endif
+                
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j] + ScoreJunctionA(i,j) + a + c)
+                
+                {
+                    RealT temp = ScoreJunctionA(i,j) + ScoreMultiPaired() + ScoreMultiBase() - Z;
+                    RealT value = Fast_Exp(FNp[off_ij] + FM2i + temp)
+                        + Fast_Exp(FNo[off_ij] + FM2j + temp);
+                    CountJunctionA(i,j,value);
+                    CountMultiPaired(value);
+                    CountMultiBase(value);
+                }
+            }
+            
+            // FE[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) ... (i-D+1,j+D) are 
+            //           already base-paired
+            //
+            //         = SUM [ScoreBP(i+1,j) + ScoreHelixStacking(i,j+1) + FE[i+1,j-1]   if i+2<=j,
+            //                FN(i,j)]
+            //
+            //           (assuming 0 < i <= j < L)
+            
+            if (0 < i && j < L && allow_paired[offset[i]+j+1])
+            {
+                
+                // compute ScoreBP(i+1,j) + ScoreHelixStacking(i,j+1) + FE[i+1,j-1]
+
+                int off_bp = offset[i+1]+j;
+                if (i+2 <= j && allow_paired[off_bp])
+                {
+                    RealT temp = ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1) - Z;
+                    int off = offset[i+1]+j-1;
+                    RealT value = Fast_Exp(FEp[off_ij] + FEi[off] + temp)
+                        + Fast_Exp(FEo[off_ij] + FEj[off] + temp)
+                        + Fast_Exp(FEo[off_ij] + FEi[off] + weight[off_bp] + temp);
+                    CountBasePair(i+1,j,value);
+                    CountHelixStacking(i,j+1,value);
+                }
+                
+                // compute FN(i,j) -- do nothing
+                
+            }
+            
+            // FC[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //           but (i-1,j+2) are not
+            //
+            //         = SUM [ScoreIsolated() + FN(i,j),
+            //                SUM (2<=k<D : FN(i+k-1,j-k+1) + ScoreHelix(i-1,j+1,k)),
+            //                FE(i+D-1,j-D+1) + ScoreHelix(i-1,j+1,D)]
+            //
+            //           (assuming 0 < i <= j < L)
+            
+            if (0 < i && j < L && allow_paired[offset[i]+j+1])
+            {
+                
+                // compute ScoreIsolated() + FN(i,j)
+                RealT temp = ScoreIsolated() - Z;
+                CountIsolated(Fast_Exp(FCo[off_ij] + FNj[off_ij] + temp));
+                CountIsolated(Fast_Exp(FCp[off_ij] + FNi[off_ij] + temp));
+                
+                // compute SUM (2<=k<D : FN(i+k-1,j-k+1) + ScoreHelix(i-1,j+1,k))
+                
+                bool allowed = true;
+                for (int k = 2; k < D_MAX_HELIX_LENGTH; k++)
+                {
+                    if (i + 2*k - 2 > j) break;
+                    int off_bp = offset[i+k-1]+j-k+2;
+                    if (!allow_paired[off_bp]) { allowed = false; break; }
+                    RealT temp = ScoreHelix(i-1,j+1,k) - Z;
+                    int off = offset[i+k-1]+j-k+1;
+                    RealT value = Fast_Exp(FCp[off_ij] + FNi[off] + temp)
+                        + Fast_Exp(FCo[off_ij] + FNj[off] + temp)
+                        + Fast_Exp(FCo[off_ij] + FNi[off] + weight[off_bp] + temp);
+                    CountHelix(i-1,j+1,k,value);
+                }
+                
+                // compute FE(i+D-1,j-D+1) + ScoreHelix(i-1,j+1,D)]
+                
+                if (i + 2*D_MAX_HELIX_LENGTH-2 <= j)
+                {
+                    int off_bp = offset[i+D_MAX_HELIX_LENGTH-1]+j-D_MAX_HELIX_LENGTH+2;
+                    if (allowed && allow_paired[off_bp])
+                    {
+                        RealT temp = ScoreHelix(i-1,j+1,D_MAX_HELIX_LENGTH) - Z;
+                        int off = offset[i+D_MAX_HELIX_LENGTH-1]+j-D_MAX_HELIX_LENGTH+1;
+                        RealT value = Fast_Exp(FCp[offset[i]+j] + FEi[off] + temp)
+                            + Fast_Exp(FCo[off_ij] + FEj[off] + temp)
+                            + Fast_Exp(FCo[off_ij] + FEi[off] + weight[off_bp] + temp);
+                        CountHelix(i-1,j+1,D_MAX_HELIX_LENGTH,value);
+                    }
+                }
+            }
+
+#else
+            
+            // FC[i,j] = optimal energy for substructure between positions
+            //           i and j such that letters (i,j+1) are base-paired
+            //
+            //         = SUM [ScoreHairpin(i,j),
+            //                SUM (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) + FC[p+1,q-1]),
+            //                ScoreJunctionA(i,j) + a + c + SUM (i<k<j : FM1[i,k] + FM[k,j])]
+            //
+            //           (assuming 0 < i <= j < L)
+            //
+            // Multi-branch loops are scored as [a + b * (# unpaired) + c * (# branches)]
+            
+            if (0 < i && j < L2 && allow_paired[offset[i]+j+1])
+            {
+                // compute ScoreHairpin(i,j)
+                
+                if (allow_unpaired[offset[i]+j] && j-i >= C_MIN_HAIRPIN_LENGTH)
+                    CountHairpin(i,j,Fast_Exp(FCp[off_ij] + ScoreHairpin(i,j) - Z));
+                
+                // compute SUM (i<=p<p+2<=q<=j : ScoreSingle(i,j,p,q) + FC[p+1,q-1])
+                
+#if !FAST_SINGLE_BRANCH_LOOPS
+                for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                {
+                    if (p > i && !allow_unpaired_position[p]) break;
+                    int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                    for (int q = j; q >= q_min; q--)
+                    {
+                        if (q < j && !allow_unpaired_position[q+1]) break;
+                        int off_bp = offset[p+1]+q;
+                        if (!allow_paired[off_bp]) continue;
+
+                        int off = offset[p+1]+q-1;
+                        if (p == i && q == j)
+                        {
+                            RealT temp = ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1) - Z;
+                            RealT value = Fast_Exp(FCp[off_ij] + FCi[off] + temp)
+                                + Fast_Exp(FCo[off_ij] + FCj[off] + temp)
+                                + Fast_Exp(FCo[off_ij] + FCi[off] + weight[off_bp] + temp);
+                            CountBasePair(i+1,j,value);
+                            CountHelixStacking(i,j+1,value);
+                        }
+                        else
+                        {
+                            RealT temp = ScoreSingle(i,j,p,q) - Z;
+                            RealT value = Fast_Exp(FCp[off_ij] + FCi[off] + temp)
+                                + Fast_Exp(FCo[off_ij] + FCj[off] + temp)
+                                + Fast_Exp(FCo[off_ij] + FCi[off] + weight[off_bp] + temp);
+                            CountSingle(i,j,p,q,value);
+                        }
+                    }
+                }
+                
+#else
+                
+                {
+                    RealT score_helix = (i+2 <= j ? outside + ScoreBasePair(i+1,j) + ScoreHelixStacking(i,j+1) : 0);
+                    RealT score_other = outside + ScoreJunctionB(i,j);
+                    
+                    for (int p = i; p <= std::min(i+C_MAX_SINGLE_LENGTH,j); p++)
+                    {
+                        if (p > i && !allow_unpaired_position[p]) break;
+                        int q_min = std::max(p+2,p-i+j-C_MAX_SINGLE_LENGTH);
+                        const RealT *FCptr = &(FCi[offset[p+1]-1]);
+                        for (int q = j; q >= q_min; q--)
+                        {
+                            if (q < j && !allow_unpaired_position[q+1]) break;
+                            if (!allow_paired[offset[p+1]+q]) continue;
+                            
+                            if (p == i && q == j)
+                            {
+                                RealT value = Fast_Exp(score_helix + FCptr[q]);
+                                cache_score_single[0][0].second += value;
+                                CountBasePair(i+1,j,value);
+                                CountHelixStacking(i,j+1,value);
+                            }
+                            else
+                            {
+                                RealT value = Fast_Exp(score_other + cache_score_single[p-i][j-q].first + FCptr[q] + ScoreBasePair(p+1,q) + 
+                                                       ScoreJunctionB(q,p) + ScoreSingleNucleotides(i,j,p,q));
+                                cache_score_single[p-i][j-q].second += value;
+                                CountBasePair(p+1,q,value);
+                                CountJunctionB(i,j,value);
+                                CountJunctionB(q,p,value);
+                                CountSingleNucleotides(i,j,p,q,value);
+                            }
+                        }
+                    }
+                }
+#endif
+                
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j] + ScoreJunctionA(i,j) + a + c)
+                
+                {
+                    RealT temp = ScoreJunctionA(i,j) + ScoreMultiPaired() + ScoreMultiBase() - Z;
+                    RealT value = Fast_Exp(FCp[off_ij] + FM2i + temp)
+                        + Fast_Exp(FCo[off_ij] + FM2j + temp);
+                    CountJunctionA(i,j,value);
+                    CountMultiPaired(value);
+                    CountMultiBase(value);
+                }
+            }
+            
+#endif
+            
+            // FM1[i,j] = optimal energy for substructure belonging to a
+            //            multibranch loop containing a (k+1,j) base pair
+            //            preceded by 5' unpaired nucleotides from i to k
+            //            for some i <= k <= j-2
+            //
+            //          = SUM [FC[i+1,j-1] + ScoreJunctionA(j,i) + c + ScoreBP(i+1,j)  if i+2<=j,
+            //                 FM1[i+1,j] + b                                          if i+2<=j]
+            //
+            //            (assuming 0 < i < i+2 <= j < L)
+            
+            if (0 < i && i+2 <= j && j < L2)
+            {
+                
+                // compute FC[i+1,j-1] + ScoreJunctionA(j,i) + c + ScoreBP(i+1,j)
+
+                int off_bp = offset[i+1]+j;
+                if (allow_paired[off_bp])
+                {
+                    RealT temp = ScoreJunctionA(j,i) + ScoreMultiPaired() + ScoreBasePair(i+1,j) - Z;
+                    int off = offset[i+1]+j-1;
+                    RealT value = Fast_Exp(FM1p[off_ij] + FCi[off] + temp)
+                        + Fast_Exp(FM1o[off_ij] + FCj[off] + temp)
+                        + Fast_Exp(FM1o[off_ij] + FCi[off] + weight[off_bp] + temp);
+                    CountJunctionA(j,i,value);
+                    CountMultiPaired(value);
+                    CountBasePair(i+1,j,value);
+                }
+                
+                // compute FM1[i+1,j] + b
+                
+                if (allow_unpaired_position[i+1])
+                {
+                    RealT temp = ScoreMultiUnpaired(i+1) - Z;
+                    int off = offset[i+1]+j;
+                    RealT value = Fast_Exp(FM1p[off_ij] + FM1i[off] + temp)
+                        + Fast_Exp(FM1o[off_ij] + FM1j[off] + temp);
+                    CountMultiUnpaired(i+1,value);
+                }
+            }
+            
+            // FM[i,j] = optimal energy for substructure belonging to a
+            //           multibranch loop which contains at least one 
+            //           helix
+            //
+            //         = SUM [SUM (i<k<j : FM1[i,k] + FM[k,j]),
+            //                FM[i,j-1] + b,
+            //                FM1[i,j]]
+            //
+            //            (assuming 0 < i < i+2 <= j < L)
+            
+            if (0 < i && i+2 <= j && j < L2)
+            {
+                
+                // compute SUM (i<k<j : FM1[i,k] + FM[k,j]) -- do nothing
+                
+                // compute FM[i,j-1] + b
+                
+                if (allow_unpaired_position[j])
+                {
+                    RealT temp = ScoreMultiUnpaired(j) - Z;
+                    int off = offset[i]+j-1;
+                    CountMultiUnpaired(j,Fast_Exp(FMp[off_ij] + FMi[off] + temp));
+                    CountMultiUnpaired(j,Fast_Exp(FMo[off_ij] + FMj[off] + temp));
+                }
+                
+                // compute FM1[i,j] -- do nothing
+            }
+        }
+    }
+    
+    for (int j = 1; j <= L; j++)
+    {
+        
+        // F5[j] = optimal energy for substructure between positions 0 and j
+        //         (or 0 if j = 0)
+        //
+        //       = SUM [F5[j-1] + ScoreExternalUnpaired(),
+        //              SUM (0<=k<j : F5[k] + FC[k+1,j-1] + ScoreExternalPaired() + ScoreBP(k+1,j) + ScoreJunctionA(j,k))]
+        
+        // compute F5[j-1] + ScoreExternalUnpaired()
+        
+        if (allow_unpaired_position[j])
+        {
+            RealT temp =  ScoreExternalUnpaired(j) - Z;
+            CountExternalUnpaired(j,Fast_Exp(F5p[j] + F5i[j-1] + temp));
+            CountExternalUnpaired(j,Fast_Exp(F5o[j] + F5j[j-1] + temp));
+        }
+        
+        // compute SUM (0<=k<j : F5[k] + FC[k+1,j-1] + ScoreExternalPaired() + ScoreBP(k+1,j) + ScoreJunctionA(j,k))
+        
+        int l = max_bp_dist==0 ? 0 : std::max(0,j-max_bp_dist);
+        for (int k = l; k < j; k++)
+        {
+            int off_bp = offset[k+1]+j;
+            if (allow_paired[off_bp])
+            {
+                RealT temp = ScoreExternalPaired() + ScoreBasePair(k+1,j) + ScoreJunctionA(j,k) - Z;
+                int off = offset[k+1]+j-1;
+                RealT value = Fast_Exp(F5p[j] + F5i[k] + FCi[off] + temp)
+                    + Fast_Exp(F5o[j] + F5j[k] + FCi[off] + temp)
+                    + Fast_Exp(F5o[j] + F5i[k] + FCj[off] + temp)
+                    + Fast_Exp(F5o[j] + F5i[k] + FCi[off] + weight[off_bp] + temp);
                 CountExternalPaired(value);
                 CountBasePair(k+1,j,value);
                 CountJunctionA(j,k,value);

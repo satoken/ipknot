@@ -33,7 +33,7 @@ const int SHARED_PARAMETER_SIZE = 5000;
 #define CANDIDATE_LIST                             1
 
 // use unrolled computation for single branch loops
-#define FAST_SINGLE_BRANCH_LOOPS                   1
+//#define FAST_SINGLE_BRANCH_LOOPS                   1
 
 // use caching algorithm for fast helix length scores
 #define FAST_HELIX_LENGTHS                         1

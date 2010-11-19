@@ -19,7 +19,6 @@
  * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
 */
 //#define CALIBRATION
-#define ORIGINAL_CONTRAFOLD
 
 #include "config.h"
 #include <unistd.h>
@@ -39,16 +38,9 @@
 #include "fa.h"
 #include "aln.h"
 
-#ifdef ORIGINAL_CONTRAFOLD
 #include "contrafold/SStruct.hpp"
 #include "contrafold/InferenceEngine.hpp"
 #include "contrafold/Defaults.ipp"
-#else
-#include "InferenceEngine.h"
-#include "ScoringModel.h"
-#include "Defaults.ipp"
-#include "log_value.h"
-#endif
 
 namespace Vienna {
 extern "C" {
@@ -88,6 +80,9 @@ public:
 
   virtual void calculate_posterior(const std::string& seq,
                                    std::vector<float>& bp, std::vector<int>& offset) const = 0;
+
+  virtual void calculate_posterior(const std::string& seq, const std::string& paren,
+                                   std::vector<float>& bp, std::vector<int>& offset) const = 0;
 };
 
 // The base class for calculating base-pairing probabilities of aligned sequences
@@ -99,6 +94,8 @@ public:
 
   virtual void calculate_posterior(const std::list<std::string>& aln,
                                    std::vector<float>& bp, std::vector<int>& offset) const = 0;
+  virtual void calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
+                                   std::vector<float>& bp, std::vector<int>& offset) const = 0;
 };
 
 class CONTRAfoldModel : public BPEngineSeq
@@ -106,29 +103,11 @@ class CONTRAfoldModel : public BPEngineSeq
 public:
   CONTRAfoldModel()
     : BPEngineSeq()
-#ifndef ORIGINAL_CONTRAFOLD
-    , en_(NULL)
-#endif
   {
-#ifndef ORIGINAL_CONTRAFOLD
-    en_ = new InferenceEngine<LogValue<float>,float,ScoringModel<LogValue<float>,float> >(false);
-    std::vector<float> v = GetDefaultComplementaryValues<float>();
-    std::vector<LogValue<float> > p(v.size());
-    for (uint i=0; i!=v.size(); ++i) p[i] = exp(v[i]);
-    en_->SetParameters(p);
-#endif
-  }
-
-  ~CONTRAfoldModel()
-  {
-#ifndef ORIGINAL_CONTRAFOLD
-    if (en_) delete en_;
-#endif
   }
 
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
   {
-#ifdef ORIGINAL_CONTRAFOLD
     SStruct ss("unknown", seq);
     ParameterManager<float> pm;
     InferenceEngine<float> en(false);
@@ -141,19 +120,25 @@ public:
     en.ComputeOutside();
     en.ComputePosterior();
     en.GetPosterior(0, bp, offset);
-#else
-    en_->LoadSequence(seq);
-    en_->ComputeInside();
-    en_->ComputeOutside();
-    en_->ComputePosterior();
-    en_->GetPosterior(bp, offset);
-#endif
   }
 
-private:
-#ifndef ORIGINAL_CONTRAFOLD
-  InferenceEngine<LogValue<float>,float,ScoringModel<LogValue<float>,float> >* en_;
-#endif
+  void calculate_posterior(const std::string& seq, const std::string& paren,
+                           std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    SStruct ss("unknown", seq, paren);
+    ParameterManager<float> pm;
+    InferenceEngine<float> en(false);
+    std::vector<float> w = GetDefaultComplementaryValues<float>();
+    bp.resize((seq.size()+1)*(seq.size()+2)/2, 0.0);
+    en.RegisterParameters(pm);
+    en.LoadValues(w);
+    en.LoadSequence(ss);
+    en.UseConstraints(ss.GetMapping());
+    en.ComputeInside();
+    en.ComputeOutside();
+    en.ComputePosterior();
+    en.GetPosterior(0, bp, offset);
+  }
 };
 
 class RNAfoldModel : public BPEngineSeq
@@ -164,6 +149,39 @@ public:
     if (param) Vienna::read_parameter_file(param);
   }
   
+  void calculate_posterior(const std::string& seq, const std::string& paren,
+                           std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    std::string p(paren);
+    std::replace(p.begin(), p.end(), '.', 'x');
+    std::replace(p.begin(), p.end(), '?', '.');
+
+    int bk = Vienna::fold_constrained;
+    Vienna::fold_constrained = 1;
+
+    uint L=seq.size();
+    bp.resize((L+1)*(L+2)/2);
+    offset.resize(L+1);
+    for (uint i=0; i<=L; ++i)
+      offset[i] = i*((L+1)+(L+1)-i-1)/2;
+#if 0
+    std::string str(seq.size()+1, '.');
+    float min_en = Vienna::fold(const_cast<char*>(seq.c_str()), &str[0]);
+    float sfact = 1.07;
+    float kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
+    Vienna::pf_scale = exp(-(sfact*min_en)/kT/seq.size());
+#else
+    Vienna::pf_scale = -1;
+#endif
+    Vienna::init_pf_fold(L);
+    Vienna::pf_fold(const_cast<char*>(seq.c_str()), &p[0]);
+    for (uint i=0; i!=L-1; ++i)
+      for (uint j=i+1; j!=L; ++j)
+        bp[offset[i+1]+(j+1)] = Vienna::pr[Vienna::iindx[i+1]-(j+1)];
+    Vienna::free_pf_arrays();
+    Vienna::fold_constrained = bk;
+  }
+    
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
   {
     uint L=seq.size();
@@ -197,9 +215,16 @@ public:
     if (param) Vienna::read_parameter_file(param);
   }
 
-  void calculate_posterior(const std::list<std::string>& aln,
+  void calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
                            std::vector<float>& bp, std::vector<int>& offset) const
   {
+    std::string p(paren);
+    std::replace(p.begin(), p.end(), '.', 'x');
+    std::replace(p.begin(), p.end(), '?', '.');
+
+    int bk = Vienna::fold_constrained;
+    Vienna::fold_constrained = 1;
+
     //uint N=aln.size();
     uint L=aln.front().size();
     bp.resize((L+1)*(L+2)/2, 0.0);
@@ -208,9 +233,9 @@ public:
       offset[i] = i*((L+1)+(L+1)-i-1)/2;
 
     char** seqs=alloc_aln(aln);
-    char* str2=new char[L+1];
+    std::string res(p);
     // scaling parameters to avoid overflow
-    double min_en = Vienna::alifold(seqs, str2);
+    double min_en = Vienna::alifold(seqs, &res[0]);
     double kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
     Vienna::pf_scale = exp(-(1.07*min_en)/kT/L);
     Vienna::free_alifold_arrays();
@@ -220,13 +245,46 @@ public:
 #else
     Vienna::pair_info* pi;
 #endif
-    Vienna::alipf_fold(seqs, str2, &pi);
+    Vienna::alipf_fold(seqs, &p[0], &pi);
     for (uint k=0; pi[k].i!=0; ++k)
       bp[offset[pi[k].i]+pi[k].j]=pi[k].p;
     free(pi);
 
     Vienna::free_alipf_arrays();
-    if (str2) delete[] str2;
+    free_aln(seqs);
+    Vienna::fold_constrained = bk;
+  }
+
+  void calculate_posterior(const std::list<std::string>& aln,
+                           std::vector<float>& bp, std::vector<int>& offset) const
+  {
+
+    //uint N=aln.size();
+    uint L=aln.front().size();
+    bp.resize((L+1)*(L+2)/2, 0.0);
+    offset.resize(L+1);
+    for (uint i=0; i<=L; ++i)
+      offset[i] = i*((L+1)+(L+1)-i-1)/2;
+
+    char** seqs=alloc_aln(aln);
+    std::string res(L+1, ' ');
+    // scaling parameters to avoid overflow
+    double min_en = Vienna::alifold(seqs, &res[0]);
+    double kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
+    Vienna::pf_scale = exp(-(1.07*min_en)/kT/L);
+    Vienna::free_alifold_arrays();
+
+#ifdef HAVE_VIENNA18
+    Vienna::plist* pi;
+#else
+    Vienna::pair_info* pi;
+#endif
+    Vienna::alipf_fold(seqs, NULL, &pi);
+    for (uint k=0; pi[k].i!=0; ++k)
+      bp[offset[pi[k].i]+pi[k].j]=pi[k].p;
+    free(pi);
+
+    Vienna::free_alipf_arrays();
     free_aln(seqs);
   }
 
@@ -287,6 +345,72 @@ public:
         for (uint j=i+1; j!=seq.size(); ++j)
           bp[offset[idx[i]+1]+(idx[j]+1)] += lbp[loffset[i+1]+(j+1)]/N;
     }
+  }
+
+  void calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
+                           std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    uint N=aln.size();
+    uint L=aln.front().size();
+    bp.resize((L+1)*(L+2)/2, 0.0);
+    offset.resize(L+1);
+    for (uint i=0; i<=L; ++i)
+      offset[i] = i*((L+1)+(L+1)-i-1)/2;
+    std::vector<int> p = bpseq(paren);
+    for (std::list<std::string>::const_iterator s=aln.begin(); s!=aln.end(); ++s)
+    {
+      std::vector<float> lbp;
+      std::vector<int> loffset;
+      std::string seq;
+      std::vector<int> idx;
+      std::vector<int> rev(s->size(), -1);
+      for (uint i=0; i!=s->size(); ++i)
+      {
+        if ((*s)[i]!='-')
+        {
+          seq.push_back((*s)[i]);
+          idx.push_back(i);
+          rev[i]=seq.size()-1;
+        }
+      }
+      std::string lparen(seq.size(), '.');
+      for (uint i=0; i!=p.size(); ++i)
+      {
+        if (rev[i]>=0)
+        {
+          if (p[i]<0 || rev[p[i]]>=0)
+            lparen[rev[i]] = paren[i];
+          else
+            lparen[rev[i]] = '.';
+        }
+      }
+      
+      en_->calculate_posterior(seq, lparen, lbp, loffset);
+      for (uint i=0; i!=seq.size()-1; ++i)
+        for (uint j=i+1; j!=seq.size(); ++j)
+          bp[offset[idx[i]+1]+(idx[j]+1)] += lbp[loffset[i+1]+(j+1)]/N;
+    }
+  }
+
+private:
+  std::vector<int> bpseq(const std::string& paren) const
+  {
+    std::vector<int> ret(paren.size(), -1);
+    std::stack<int> st;
+    for (uint i=0; i!=paren.size(); ++i)
+    {
+      if (paren[i]=='(')
+      {
+        st.push(i);
+      }
+      else if (paren[i]==')')
+      {
+        ret[st.top()]=i;
+        ret[i]=st.top();
+        st.pop();
+      }
+    }
+    return ret;
   }
 
 private:
