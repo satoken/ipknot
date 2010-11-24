@@ -2,6 +2,7 @@ bin_PROGRAMS = ipknot
 
 ipknot_SOURCES = \
 	ipknot.cpp ip.h ip.cpp fa.cpp fa.h aln.cpp aln.h \
+	new_param.c new_param.h \
  	contrafold/Config.hpp contrafold/LogSpace.hpp \
  	contrafold/InferenceEngine.hpp contrafold/InferenceEngine.ipp \
  	contrafold/ParameterManager.hpp contrafold/ParameterManager.ipp \

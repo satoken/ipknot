@@ -18,7 +18,6 @@
  * You should have received a copy of the GNU General Public License
  * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
 */
-//#define CALIBRATION
 
 #include "config.h"
 #include <unistd.h>
@@ -37,6 +36,9 @@
 #include "ip.h"
 #include "fa.h"
 #include "aln.h"
+extern "C" {
+#include "new_param.h"
+};
 
 #include "contrafold/SStruct.hpp"
 #include "contrafold/InferenceEngine.hpp"
@@ -61,7 +63,6 @@ const uint n_support_parens=4;
 const char* left_paren="([{<";
 const char* right_paren=")]}>";
 
-#ifdef CALIBRATION
 double
 timing()
 {
@@ -69,7 +70,6 @@ timing()
   getrusage(RUSAGE_SELF, &ru);
   return ru.ru_utime.tv_sec+ru.ru_utime.tv_usec*1e-6;
 }
-#endif
 
 // The base class for calculating base-pairing probabilities of an indivisual sequence
 class BPEngineSeq
@@ -146,6 +146,7 @@ class RNAfoldModel : public BPEngineSeq
 public:
   RNAfoldModel(const char* param)
   {
+    copy_new_parameters();
     if (param) Vienna::read_parameter_file(param);
   }
   
@@ -469,16 +470,121 @@ public:
   {
   }
 
-  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             std::string& r, std::vector<int>& bpseq) const
+  void set_parameters(uint pk_level, const float* th, const float* alpha,
+                      bool stacking_constraints)
   {
-    IP ip(IP::MAX, n_th_);
-    uint n=0;
-  
+    pk_level_ = pk_level;
+    th_.resize(pk_level_);
+    std::copy(th, th+pk_level_, th_.begin());
+    alpha_.resize(pk_level_);
+    std::copy(alpha, alpha+pk_level_, alpha_.begin());
+    stacking_constraints_ = stacking_constraints;
+  }
+
+  template < class SEQ, class EN >
+  void solve(const SEQ& seq, EN& en, std::string& r, std::vector<int>& bpseq, int fill=0) const
+  {
+    uint L=length(seq);
+    IP* ip = NULL;
     boost::multi_array<int, 3> v(boost::extents[pk_level_][L][L]);
     boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][L]);
     std::fill(v.data(), v.data()+v.num_elements(), -1);
 
+    std::vector<float> bp;
+    std::vector<int> offset;
+    en.calculate_posterior(seq, bp, offset);
+    ip = new IP(IP::MAX, n_th_);
+    solve(length(seq), bp, offset, *ip, v, w);
+
+    while (--fill>=0)
+    {
+      // re-calculate the base-pairing probability matrix
+      std::vector<float> bpl;
+      std::vector<int> offsetl;
+      std::fill(bp.begin(), bp.end(), 0.0);
+
+      for (uint l=0; l!=pk_level_; ++l)
+      {
+        std::string str(L, '?');
+        for (uint lv=0; lv!=pk_level_; ++lv)
+          for (uint i=0; i<L; ++i)
+            for (uint j=i+1; j<L; ++j)
+              if (v[lv][i][j]>=0 && ip->get_value(v[lv][i][j])>0.5)
+              {
+                str[i]= l==lv ? '(' : '.';
+                str[j]= l==lv ? ')' : '.';
+              }
+
+        std::fill(bpl.begin(), bpl.end(), 0.0);
+        en.calculate_posterior(seq, str, bpl, offsetl);
+        assert(bp.size()==bpl.size());
+        for (uint k=0; k!=bp.size(); ++k) bp[k]+=bpl[k];
+      }
+#ifndef NDEBUG
+      for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
+#endif
+      delete ip;
+      ip = new IP(IP::MAX, n_th_);
+
+      // solve IP under the updated base-pairing probability matrix
+      std::fill(v.data(), v.data()+v.num_elements(), -1);
+      std::fill(w.data(), w.data()+w.num_elements(), std::vector<int>());
+      solve(L, bp, offset, *ip, v, w);
+    }
+
+    // build the resultant structure
+    r.resize(L);
+    std::fill(r.begin(), r.end(), '.');
+    bpseq.resize(L);
+    std::fill(bpseq.begin(), bpseq.end(), -1);
+    for (uint lv=0; lv!=pk_level_; ++lv)
+      for (uint i=0; i<L; ++i)
+        for (uint j=i+1; j<L; ++j)
+          if (v[lv][i][j]>=0 && ip->get_value(v[lv][i][j])>0.5)
+          {
+            assert(r[i]=='.'); assert(r[j]=='.');
+            bpseq[i]=j; bpseq[j]=i;
+            if (lv<n_support_parens)
+            {
+              r[i]=left_paren[lv]; r[j]=right_paren[lv];
+            }
+          }
+    delete ip;
+  }
+
+  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
+             std::string& r, std::vector<int>& bpseq) const
+  {
+    IP ip(IP::MAX, n_th_);
+    boost::multi_array<int, 3> v(boost::extents[pk_level_][L][L]);
+    boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][L]);
+    std::fill(v.data(), v.data()+v.num_elements(), -1);
+
+    solve(L, bp, offset, ip, v, w);
+
+    // build the resultant structure
+    r.resize(L);
+    std::fill(r.begin(), r.end(), '.');
+    bpseq.resize(L);
+    std::fill(bpseq.begin(), bpseq.end(), -1);
+    for (uint lv=0; lv!=pk_level_; ++lv)
+      for (uint i=0; i<L; ++i)
+        for (uint j=i+1; j<L; ++j)
+          if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
+          {
+            assert(r[i]=='.'); assert(r[j]=='.');
+            bpseq[i]=j; bpseq[j]=i;
+            if (lv<n_support_parens)
+            {
+              r[i]=left_paren[lv]; r[j]=right_paren[lv];
+            }
+          }
+  }
+
+  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
+             IP& ip, boost::multi_array<int, 3>& v,
+             boost::multi_array<std::vector<int>, 2>& w) const
+  {
     // make objective variables with their weights
     for (uint j=1; j!=L; ++j)
     {
@@ -490,7 +596,6 @@ public:
           {
             v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
             w[lv][i].push_back(j);
-            n++;
           }
       }
     }
@@ -599,25 +704,11 @@ public:
 
     // execute optimization
     ip.solve();
-
-    // build the resultant structure
-    r.resize(L);
-    std::fill(r.begin(), r.end(), '.');
-    bpseq.resize(L);
-    std::fill(bpseq.begin(), bpseq.end(), -1);
-    for (uint lv=0; lv!=pk_level_; ++lv)
-      for (uint i=0; i<L; ++i)
-        for (uint j=i+1; j<L; ++j)
-          if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
-          {
-            assert(r[i]=='.'); assert(r[j]=='.');
-            bpseq[i]=j; bpseq[j]=i;
-            if (lv<n_support_parens)
-            {
-              r[i]=left_paren[lv]; r[j]=right_paren[lv];
-            }
-          }
   }
+
+private:
+  uint length(const std::string& seq) const { return seq.size(); }
+  uint length(const std::list<std::string>& aln) const { return aln.front().size(); }
 
 private:
   // options
@@ -627,6 +718,40 @@ private:
   bool stacking_constraints_;
   int n_th_;
 };
+
+void
+compute_expected_accuracy(const std::vector<int>& bpseq,
+                          const std::vector<float>& bp, const std::vector<int>& offset,
+                          double& sen, double& ppv, double& mcc)
+{
+  int L  = bpseq.size();
+  int L2 = L*(L-1)/2;
+  int N;
+
+  double sump = 0.0;
+  double etp  = 0.0;
+
+  for (uint i=0; i!=bp.size(); ++i) sump += bp[i];
+
+  for (uint i=0; i!=bpseq.size(); ++i)
+  {
+    if (bpseq[i]!=-1 && bpseq[i]>(int)i)
+    {
+      etp += bp[offset[i+1]+bpseq[i]+1];
+      N++;
+    }
+  }
+
+  double etn = L2 - N - sump + etp;
+  double efp = N - etp;
+  double efn = sump - etp;
+
+  sen = ppv = mcc = 0;
+  if (etp+efn!=0) sen = etp / (etp + efn);
+  if (etp+efp!=0) ppv = etp / (etp + efp);
+  if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
+    mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
+}
 
 void
 usage(const char* progname)
@@ -647,7 +772,6 @@ usage(const char* progname)
     ;
 }
 
-#ifndef CALIBRATION
 int
 main(int argc, char* argv[])
 {
@@ -660,14 +784,19 @@ main(int argc, char* argv[])
   char* model=NULL;
   bool use_bpseq=false;
   int n_th=1;
+  int n_fill=0;
   const char* param=NULL;
   bool aux=false;
-  while ((ch=getopt(argc, argv, "a:t:g:m:ibn:P:xh"))!=-1)
+  std::vector<float> temp;
+  while ((ch=getopt(argc, argv, "a:t:g:m:f:ibn:P:xh"))!=-1)
   {
     switch (ch)
     {
       case 'm':
         model=optarg;
+        break;
+      case 'f':
+        n_fill=atoi(optarg);
         break;
       case 'a':
         alpha.push_back(atof(optarg));
@@ -713,13 +842,11 @@ main(int argc, char* argv[])
   }
   if (alpha.empty())
   {
-    alpha.resize(th.size());
+    alpha.resize(2);
     for (uint i=0; i!=alpha.size(); ++i)
       alpha[i]=1.0/alpha.size();
   }
   IPknot ipknot(th.size(), &th[0], &alpha[0], !isolated_bp, n_th);
-  std::vector<float> bp;
-  std::vector<int> offset;
   std::string r;
   std::vector<int> bpseq;
   
@@ -727,6 +854,8 @@ main(int argc, char* argv[])
   std::list<Aln> a;
   if (aux)
   {
+    std::vector<float> bp;
+    std::vector<int> offset;
     AuxModel aux;
     std::string seq;
     aux.calculate_posterior(argv[0], seq, bp, offset);
@@ -746,9 +875,9 @@ main(int argc, char* argv[])
   else if (Fasta::load(f, argv[0])>0)
   {
     BPEngineSeq* en=NULL;
-    if (model==NULL || strcmp(model, "McCaskill")==0)
+    if (model==NULL || strcasecmp(model, "McCaskill")==0)
       en = new RNAfoldModel(param);
-    else if (strcmp(model, "CONTRAfold")==0)
+    else if (strcasecmp(model, "CONTRAfold")==0)
       en = new CONTRAfoldModel();
     else
     {
@@ -759,8 +888,7 @@ main(int argc, char* argv[])
     while (!f.empty())
     {
       std::list<Fasta>::iterator fa = f.begin();
-      en->calculate_posterior(fa->seq(), bp, offset);
-      ipknot.solve(fa->seq().size(), bp, offset, r, bpseq);
+      ipknot.solve(fa->seq(), *en, r, bpseq, n_fill);
       if (!use_bpseq && th.size()<n_support_parens)
       {
         std::cout << ">" << fa->name() << std::endl
@@ -768,6 +896,8 @@ main(int argc, char* argv[])
       }
       else
       {
+        //double sen, ppv, mcc;
+        //compute_expected_accuracy(bpseq, bp, offset, sen, ppv, mcc);
         std::cout << "# " << fa->name() << std::endl;
         for (uint i=0; i!=bpseq.size(); ++i)
           std::cout << i+1 << " " << fa->seq()[i] << " " << bpseq[i]+1 << std::endl;
@@ -781,17 +911,17 @@ main(int argc, char* argv[])
   {
     BPEngineAln* en=NULL;
     BPEngineSeq* en_s=NULL;
-    if (model==NULL || strcmp(model, "McCaskill")==0)
+    if (model==NULL || strcasecmp(model, "McCaskill")==0)
     {
       en_s = new RNAfoldModel(param);
       en = new AveragedModel(en_s);
     }
-    else if (strcmp(model, "CONTRAfold")==0)
+    else if (strcasecmp(model, "CONTRAfold")==0)
     {
       en_s = new CONTRAfoldModel();
       en = new AveragedModel(en_s);
     }
-    else if (strcmp(model, "Alifold")==0)
+    else if (strcasecmp(model, "Alifold")==0)
       en = new AlifoldModel(param);
     else
     {
@@ -803,8 +933,7 @@ main(int argc, char* argv[])
     {
       std::list<Aln>::iterator aln = a.begin();
       std::string consensus(aln->consensus());
-      en->calculate_posterior(aln->seq(), bp, offset);
-      ipknot.solve(consensus.size(), bp, offset, r, bpseq);
+      ipknot.solve(aln->seq(), *en, r, bpseq, n_fill);
       if (!use_bpseq && th.size()<n_support_parens)
       {
         std::cout << ">" << aln->name().front() << std::endl
@@ -825,141 +954,3 @@ main(int argc, char* argv[])
 
   return 0;
 }
-#else // CALIBRATION
-int
-main(int argc, char* argv[])
-{
-  char* progname=argv[0];
-  // parse options
-  char ch;
-  std::vector<float> th;
-  std::vector<float> alpha;
-  //bool isolated_bp=false;
-  bool use_contrafold=true;
-  //bool use_bpseq=false;
-  int n_th=1;
-  const char* param=NULL;
-  while ((ch=getopt(argc, argv, "mn:P:h"))!=-1)
-  {
-    switch (ch)
-    {
-      case 'm':
-        use_contrafold=false;
-        break;
-      case 'n':
-        n_th=atoi(optarg);
-        break;
-      case 'P':
-        param=optarg;
-        break;
-      case 'h': case '?': default:
-        usage(progname);
-        return 1;
-        break;
-    }
-  }
-  argc -= optind;
-  argv += optind;
-
-  if (argc!=2) { usage(progname); return 1; }
-  std::list<Fasta> f;
-  Fasta::load(f, argv[0]);
-
-  float a[] = { 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1 };
-  float g0[] = { 1, 2, 4, 8 }; //, 16, 32, 64, 128, 256, 512;
-  float g1[] = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512 };
-  bool iso[] = { false, true };
-  while (!f.empty())
-  {
-    std::list<Fasta>::iterator fa = f.begin();
-    std::vector<float> bp;
-    std::vector<int> offset;
-    float alpha[] = { 0.5, 0.5 };
-    float th[] = { 0.5, 0.5 };
-    IPknot ipknot(2, th, alpha, use_contrafold, false, param, n_th);
-    char fname[PATH_MAX];
-    double t1 = timing();
-    ipknot.calculate_posterior(fa->seq(), bp, offset);
-    double t2 = timing();
-    snprintf(fname, PATH_MAX, "%c", (use_contrafold ? 'c' : 'm'));
-    mkdir(fname, 0755);
-    for (uint i=0; i!=sizeof(a)/sizeof(a[0]); ++i)
-    {
-      snprintf(fname, PATH_MAX, "%c/%g",
-               (use_contrafold ? 'c' : 'm'), a[i]);
-      mkdir(fname, 0755);
-      alpha[0] = a[i]; alpha[1] = 1.0-a[i];
-      for (uint j=0; j!=sizeof(g0)/sizeof(g0[0]); ++j)
-      {
-        snprintf(fname, PATH_MAX, "%c/%g/%g",
-                 (use_contrafold ? 'c' : 'm'), a[i], g0[j]);
-        mkdir(fname, 0755);
-        th[0] = 1.0/(g0[j]+1.0);
-        if (alpha[1]!=0.0)
-        {
-          for (uint k=0; k!=sizeof(g1)/sizeof(g1[0]); ++k)
-          {
-            snprintf(fname, PATH_MAX, "%c/%g/%g/%g",
-                     (use_contrafold ? 'c' : 'm'), a[i], g0[j], g1[k]);
-            mkdir(fname, 0755);
-            th[1] = 1.0/(g1[k]+1.0);
-            for (uint l=0; l!=sizeof(iso)/sizeof(iso[0]); ++l)
-            {
-              snprintf(fname, PATH_MAX, "%c/%g/%g/%g/%d",
-                       (use_contrafold ? 'c' : 'm'),
-                       a[i], g0[j], g1[k], (iso[l] ? 1 : 0));
-              mkdir(fname, 0755);
-              IPknot ipknot(2, th, alpha, use_contrafold, iso[l], param, n_th);
-              std::string r;
-              std::vector<int> bpseq;
-              double t3 = timing();
-              ipknot.solve(fa->seq(), bp, offset, r, bpseq);
-              double t4 = timing();
-              snprintf(fname, PATH_MAX, "%c/%g/%g/%g/%d/%s.bpseq",
-                       (use_contrafold ? 'c' : 'm'),
-                       a[i], g0[j], g1[k], (iso[l] ? 1 : 0), argv[1]);
-              std::cout << fname << std::endl;
-              std::ofstream os(fname);
-              os << "# " << fa->name() << std::endl;
-              os << "#bp " << t2-t1 << "s" << std::endl;
-              os << "#ip " << t4-t3 << "s" << std::endl;
-              for (uint p=0; p!=bpseq.size(); ++p)
-                os << p+1 << " " << fa->seq()[p] << " " << bpseq[p]+1 << std::endl;
-            }
-          }
-        }
-        else
-        {
-          for (uint l=0; l!=sizeof(iso)/sizeof(iso[0]); ++l)
-          {
-            snprintf(fname, PATH_MAX, "%c/%g/%g/%d",
-                     (use_contrafold ? 'c' : 'm'),
-                     a[i], g0[j], (iso[l] ? 1 : 0));
-            mkdir(fname, 0755);
-            IPknot ipknot(1, th, alpha, use_contrafold, iso[l], param, n_th);
-            std::string r;
-            std::vector<int> bpseq;
-            double t3 = timing();
-            ipknot.solve(fa->seq(), bp, offset, r, bpseq);
-            double t4 = timing();
-            char fname[PATH_MAX];
-            snprintf(fname, PATH_MAX, "%c/%g/%g/%d/%s.bpseq",
-                     (use_contrafold ? 'c' : 'm'),
-                     a[i], g0[j], (iso[l] ? 1 : 0), argv[1]);
-            std::cout << fname << std::endl;
-            std::ofstream os(fname);
-            os << "# " << fa->name() << std::endl;
-            os << "#bp " << t2-t1 << "s" << std::endl;
-            os << "#ip " << t4-t3 << "s" << std::endl;
-            for (uint p=0; p!=bpseq.size(); ++p)
-              os << p+1 << " " << fa->seq()[p] << " " << bpseq[p]+1 << std::endl;
-          }
-        }
-      }
-    }
-    f.erase(fa);
-  }
-
-  return 0;
-}
-#endif // CALIBRATION
