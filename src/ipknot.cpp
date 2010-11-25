@@ -461,24 +461,14 @@ class IPknot
 {
 public:
   IPknot(uint pk_level, const float* th, const float* alpha,
-         bool stacking_constraints, int n_th)
+         bool levelwise, bool stacking_constraints, int n_th)
     : pk_level_(pk_level),
-      th_(th, th+pk_level),
-      alpha_(alpha, alpha+pk_level),
+      th_(th, th+pk_level_),
+      alpha_(alpha, alpha+pk_level_),
+      levelwise_(levelwise),
       stacking_constraints_(stacking_constraints),
       n_th_(n_th)
   {
-  }
-
-  void set_parameters(uint pk_level, const float* th, const float* alpha,
-                      bool stacking_constraints)
-  {
-    pk_level_ = pk_level;
-    th_.resize(pk_level_);
-    std::copy(th, th+pk_level_, th_.begin());
-    alpha_.resize(pk_level_);
-    std::copy(alpha, alpha+pk_level_, alpha_.begin());
-    stacking_constraints_ = stacking_constraints;
   }
 
   template < class SEQ, class EN >
@@ -533,22 +523,7 @@ public:
     }
 
     // build the resultant structure
-    r.resize(L);
-    std::fill(r.begin(), r.end(), '.');
-    bpseq.resize(L);
-    std::fill(bpseq.begin(), bpseq.end(), -1);
-    for (uint lv=0; lv!=pk_level_; ++lv)
-      for (uint i=0; i<L; ++i)
-        for (uint j=i+1; j<L; ++j)
-          if (v[lv][i][j]>=0 && ip->get_value(v[lv][i][j])>0.5)
-          {
-            assert(r[i]=='.'); assert(r[j]=='.');
-            bpseq[i]=j; bpseq[j]=i;
-            if (lv<n_support_parens)
-            {
-              r[i]=left_paren[lv]; r[j]=right_paren[lv];
-            }
-          }
+    make_result(L, *ip, v, w, r, bpseq);
     delete ip;
   }
 
@@ -560,25 +535,11 @@ public:
     boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][L]);
     std::fill(v.data(), v.data()+v.num_elements(), -1);
 
+    // solve the IP problem
     solve(L, bp, offset, ip, v, w);
 
     // build the resultant structure
-    r.resize(L);
-    std::fill(r.begin(), r.end(), '.');
-    bpseq.resize(L);
-    std::fill(bpseq.begin(), bpseq.end(), -1);
-    for (uint lv=0; lv!=pk_level_; ++lv)
-      for (uint i=0; i<L; ++i)
-        for (uint j=i+1; j<L; ++j)
-          if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
-          {
-            assert(r[i]=='.'); assert(r[j]=='.');
-            bpseq[i]=j; bpseq[j]=i;
-            if (lv<n_support_parens)
-            {
-              r[i]=left_paren[lv]; r[j]=right_paren[lv];
-            }
-          }
+    make_result(L, ip, v, w, r, bpseq);
   }
 
   void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
@@ -616,51 +577,54 @@ public:
       }
     }
 
-    // constraint 2: disallow pseudoknots in x[lv]
-    for (uint lv=0; lv!=pk_level_; ++lv)
-      for (uint i=0; i<w[lv].size(); ++i)
-        for (uint p=0; p<w[lv][i].size(); ++p)
-        {
-          uint j=w[lv][i][p];
-          for (uint k=i+1; k<j; ++k)
-            for (uint q=0; q<w[lv][k].size(); ++q)
-            {
-              uint l=w[lv][k][q];
-              if (j<l)
-              {
-                int row = ip.make_constraint(IP::UP, 0, 1);
-                ip.add_constraint(row, v[lv][i][j], 1);
-                ip.add_constraint(row, v[lv][k][l], 1);
-              }
-            }
-        }
-
-    // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
-    for (uint lv=1; lv!=pk_level_; ++lv)
-      for (uint k=0; k<w[lv].size(); ++k)
-        for (uint q=0; q<w[lv][k].size(); ++q)
-        {
-          uint l=w[lv][k][q];
-          for (uint plv=0; plv!=lv; ++plv)
+    if (levelwise_)
+    {
+      // constraint 2: disallow pseudoknots in x[lv]
+      for (uint lv=0; lv!=pk_level_; ++lv)
+        for (uint i=0; i<w[lv].size(); ++i)
+          for (uint p=0; p<w[lv][i].size(); ++p)
           {
-            int row = ip.make_constraint(IP::LO, 0, 0);
-            ip.add_constraint(row, v[lv][k][l], -1);
-            for (uint i=0; i<k; ++i)
-              for (uint p=0; p<w[plv][i].size(); ++p)
+            uint j=w[lv][i][p];
+            for (uint k=i+1; k<j; ++k)
+              for (uint q=0; q<w[lv][k].size(); ++q)
               {
-                uint j=w[plv][i][p];
-                if (k<j && j<l)
-                  ip.add_constraint(row, v[plv][i][j], 1);
-              }
-            for (uint i=k+1; i<l; ++i)
-              for (uint p=0; p<w[plv][i].size(); ++p)
-              {
-                uint j=w[plv][i][p];
-                if (l<j)
-                  ip.add_constraint(row, v[plv][i][j], 1);
+                uint l=w[lv][k][q];
+                if (j<l)
+                {
+                  int row = ip.make_constraint(IP::UP, 0, 1);
+                  ip.add_constraint(row, v[lv][i][j], 1);
+                  ip.add_constraint(row, v[lv][k][l], 1);
+                }
               }
           }
-        }
+
+      // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
+      for (uint lv=1; lv!=pk_level_; ++lv)
+        for (uint k=0; k<w[lv].size(); ++k)
+          for (uint q=0; q<w[lv][k].size(); ++q)
+          {
+            uint l=w[lv][k][q];
+            for (uint plv=0; plv!=lv; ++plv)
+            {
+              int row = ip.make_constraint(IP::LO, 0, 0);
+              ip.add_constraint(row, v[lv][k][l], -1);
+              for (uint i=0; i<k; ++i)
+                for (uint p=0; p<w[plv][i].size(); ++p)
+                {
+                  uint j=w[plv][i][p];
+                  if (k<j && j<l)
+                    ip.add_constraint(row, v[plv][i][j], 1);
+                }
+              for (uint i=k+1; i<l; ++i)
+                for (uint p=0; p<w[plv][i].size(); ++p)
+                {
+                  uint j=w[plv][i][p];
+                  if (l<j)
+                    ip.add_constraint(row, v[plv][i][j], 1);
+                }
+            }
+          }
+    }
 
     if (stacking_constraints_)
     {
@@ -706,6 +670,137 @@ public:
     ip.solve();
   }
 
+  struct cmp_by_degree : public std::less<int>
+  {
+    cmp_by_degree(const std::vector< std::vector<int> >& g) : g_(g) {}
+    bool operator()(int x, int y) const { return g_[y].size()<g_[x].size(); }
+    const std::vector< std::vector<int> >& g_;
+  };
+
+  struct cmp_by_count : public std::less<int>
+  {
+    cmp_by_count(const std::vector<int>& count) : count_(count) { }
+    bool operator()(int x, int y) const { return count_[y]<count_[x]; }
+    const std::vector<int>& count_;
+  };
+
+  void make_result(uint L, const IP& ip, boost::multi_array<int, 3>& v,
+                   boost::multi_array<std::vector<int>, 2>& w,
+                   std::string& r, std::vector<int>& bpseq) const
+  {
+    r.resize(L);
+    std::fill(r.begin(), r.end(), '.');
+    bpseq.resize(L);
+    std::fill(bpseq.begin(), bpseq.end(), -1);
+
+    if (levelwise_)
+    {
+      for (uint lv=0; lv!=pk_level_; ++lv)
+      {
+        for (uint i=0; i<L; ++i)
+          for (uint j=i+1; j<L; ++j)
+            if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
+            {
+              assert(r[i]=='.'); assert(r[j]=='.');
+              bpseq[i]=j; bpseq[j]=i;
+              if (lv<n_support_parens)
+              {
+                r[i]=left_paren[lv];
+                r[j]=right_paren[lv];
+              }
+              else if (lv<n_support_parens+26)
+              {
+                r[i]='A'+lv-n_support_parens;
+                r[j]='a'+lv-n_support_parens;
+              }
+            }
+      }
+    }
+    else
+    {
+      // make BPSEQ
+      for (uint lv=0; lv!=pk_level_; ++lv)
+        for (uint i=0; i<L; ++i)
+          for (uint j=i+1; j<L; ++j)
+            if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
+            {
+              bpseq[i]=j; bpseq[j]=i;
+            }
+
+      // resolve the symbol of parenthsis by the graph coloring problem
+      // make an adjacent graph, in which pseudoknotted base-pairs are connected.
+      std::vector< std::vector<int> > g(bpseq.size());
+      for (uint i=0; i!=bpseq.size(); ++i)
+      {
+        if (bpseq[i]<0 || bpseq[i]<=(int)i) continue;
+        uint j=bpseq[i];
+        for (uint k=i+1; k!=bpseq.size(); ++k)
+        {
+          uint l=bpseq[k];
+          if (bpseq[k]<0 || bpseq[k]<=(int)k) continue;
+          if (k<j && j<l)
+          {
+            g[i].push_back(k);
+            g[k].push_back(i);
+          }
+        }
+      }
+      // sort vertices by degree
+      std::vector<int> v;
+      for (uint i=0; i!=bpseq.size(); ++i)
+        if (bpseq[i]>=0 && (int)i<bpseq[i]) 
+          v.push_back(i);
+      std::sort(v.begin(), v.end(), cmp_by_degree(g));
+
+      // determine colors
+      std::vector<int> c(g.size(), -1);
+      int max_color=0;
+      for (uint i=0; i!=v.size(); ++i)
+      {
+        std::vector<int> used;
+        for (uint j=0; j!=g[v[i]].size(); ++j)
+          if (c[g[v[i]][j]]>=0) used.push_back(c[g[v[i]][j]]);
+        std::sort(used.begin(), used.end());
+        used.erase(std::unique(used.begin(), used.end()), used.end());
+        int j=0;
+        for (j=0; j!=(int)used.size(); ++j)
+          if (used[j]!=j) break;
+        c[v[i]]=j;
+        max_color=std::max(max_color, j);
+      }
+
+      // renumber colors in decentant order by the number of base-pairs for each color
+      std::vector<int> count(max_color+1, 0);
+      for (uint i=0; i!=c.size(); ++i)
+        if (c[i]>=0) count[c[i]]++;
+      std::vector<int> idx(count.size());
+      for (uint i=0; i!=idx.size(); ++i) idx[i]=i;
+      sort(idx.begin(), idx.end(), cmp_by_count(count));
+      std::vector<int> rev(idx.size());
+      for (uint i=0; i!=rev.size(); ++i) rev[idx[i]]=i;
+      for (uint i=0; i!=c.size(); ++i)
+        if (c[i]>=0) c[i]=rev[c[i]];
+
+      // make the parenthsis string
+      for (uint i=0; i!=bpseq.size(); ++i)
+      {
+        if (bpseq[i]<0 || bpseq[i]<(int)i) continue;
+        uint j=bpseq[i];
+        assert(r[i]=='.'); assert(r[j]=='.');
+        if (c[i]<(int)n_support_parens)
+        {
+          r[i]=left_paren[c[i]];
+          r[j]=right_paren[c[i]];
+        }
+        else if (c[i]<(int)n_support_parens+26)
+        {
+          r[i]='A'+c[i]-n_support_parens;
+          r[j]='a'+c[i]-n_support_parens;
+        }
+      }
+    }
+  }
+
 private:
   uint length(const std::string& seq) const { return seq.size(); }
   uint length(const std::list<std::string>& aln) const { return aln.front().size(); }
@@ -715,6 +810,7 @@ private:
   uint pk_level_;
   std::vector<float> th_;
   std::vector<float> alpha_;
+  bool levelwise_;
   bool stacking_constraints_;
   int n_th_;
 };
@@ -762,7 +858,7 @@ usage(const char* progname)
             << " -t th:    threshold of base-pairing probabilities for each level" << std::endl
             << " -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)" << std::endl
             << "           (default: -g 4 -g 8)" << std::endl
-            << " -m model: probaility distribution model" << std::endl
+            << " -m model: probabilistic model (default: McCaskill)" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
             << " -b:       output the prediction via BPSEQ format" << std::endl
             << " -P param: read the energy parameter file for the Vienna RNA package" << std::endl
@@ -781,14 +877,14 @@ main(int argc, char* argv[])
   std::vector<float> th;
   std::vector<float> alpha;
   bool isolated_bp=false;
-  char* model=NULL;
-  bool use_bpseq=false;
+  const char* model="McCaskill";
+  bool output_bpseq=false;
   int n_th=1;
   int n_fill=0;
   const char* param=NULL;
   bool aux=false;
-  std::vector<float> temp;
-  while ((ch=getopt(argc, argv, "a:t:g:m:f:ibn:P:xh"))!=-1)
+  bool levelwise=true;
+  while ((ch=getopt(argc, argv, "a:t:g:m:f:ibn:P:xuh"))!=-1)
   {
     switch (ch)
     {
@@ -811,7 +907,7 @@ main(int argc, char* argv[])
         isolated_bp=true;
         break;
       case 'b':
-        use_bpseq=true;
+        output_bpseq=true;
         break;
       case 'n':
         n_th=atoi(optarg);
@@ -821,6 +917,9 @@ main(int argc, char* argv[])
         break;
       case 'x':
         aux=true;
+        break;
+      case 'u':
+        levelwise=false;
         break;
       case 'h': case '?': default:
         usage(progname);
@@ -837,16 +936,17 @@ main(int argc, char* argv[])
   if (th.empty())
   {
     th.resize(2);
-    th[0]=1/(4.0+1);
-    th[1]=1/(8.0+1);
+    th[0]=1/(4.0+1);            // -g 4
+    th[1]=1/(8.0+1);            // -g 8
   }
   if (alpha.empty())
   {
-    alpha.resize(2);
+    alpha.resize(th.size());
     for (uint i=0; i!=alpha.size(); ++i)
       alpha[i]=1.0/alpha.size();
   }
-  IPknot ipknot(th.size(), &th[0], &alpha[0], !isolated_bp, n_th);
+
+  IPknot ipknot(th.size(), &th[0], &alpha[0], levelwise, !isolated_bp, n_th);
   std::string r;
   std::vector<int> bpseq;
   
@@ -860,7 +960,7 @@ main(int argc, char* argv[])
     std::string seq;
     aux.calculate_posterior(argv[0], seq, bp, offset);
     ipknot.solve(seq.size(), bp, offset, r, bpseq);
-    if (!use_bpseq && th.size()<n_support_parens)
+    if (!output_bpseq && th.size()<n_support_parens)
     {
       std::cout << ">" << argv[0] << std::endl
                 << seq << std::endl << r << std::endl;
@@ -875,7 +975,7 @@ main(int argc, char* argv[])
   else if (Fasta::load(f, argv[0])>0)
   {
     BPEngineSeq* en=NULL;
-    if (model==NULL || strcasecmp(model, "McCaskill")==0)
+    if (strcasecmp(model, "McCaskill")==0)
       en = new RNAfoldModel(param);
     else if (strcasecmp(model, "CONTRAfold")==0)
       en = new CONTRAfoldModel();
@@ -889,7 +989,7 @@ main(int argc, char* argv[])
     {
       std::list<Fasta>::iterator fa = f.begin();
       ipknot.solve(fa->seq(), *en, r, bpseq, n_fill);
-      if (!use_bpseq && th.size()<n_support_parens)
+      if (!output_bpseq && th.size()<n_support_parens)
       {
         std::cout << ">" << fa->name() << std::endl
                   << fa->seq() << std::endl << r << std::endl;
@@ -911,7 +1011,7 @@ main(int argc, char* argv[])
   {
     BPEngineAln* en=NULL;
     BPEngineSeq* en_s=NULL;
-    if (model==NULL || strcasecmp(model, "McCaskill")==0)
+    if (strcasecmp(model, "McCaskill")==0)
     {
       en_s = new RNAfoldModel(param);
       en = new AveragedModel(en_s);
@@ -934,7 +1034,7 @@ main(int argc, char* argv[])
       std::list<Aln>::iterator aln = a.begin();
       std::string consensus(aln->consensus());
       ipknot.solve(aln->seq(), *en, r, bpseq, n_fill);
-      if (!use_bpseq && th.size()<n_support_parens)
+      if (!output_bpseq && th.size()<n_support_parens)
       {
         std::cout << ">" << aln->name().front() << std::endl
                   << consensus << std::endl << r << std::endl;
