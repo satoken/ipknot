@@ -1,5 +1,5 @@
 /*
- * $Id: log_value.h 164 2008-03-13 08:46:57Z satoken $
+ * $Id$
  *
  * PHMMTS -- an implementation of Pair Hidden Markov Models on Tree Structures,
  *           which is based on "Pair Hidden Markov Models on Tree Structures",

@@ -1,5 +1,5 @@
 /*
- * $Id: fa.cpp 94 2010-03-06 08:40:48Z sato-kengo $
+ * $Id$
  *
  * Copyright (C) 2008-2010 Kengo Sato
  *
