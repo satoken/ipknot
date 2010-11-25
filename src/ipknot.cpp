@@ -554,7 +554,7 @@ main(int argc, char* argv[])
     std::string seq;
     aux.calculate_posterior(argv[0], seq, bp, offset);
     ipknot.solve(seq.size(), bp, offset, r, bpseq);
-    if (!output_bpseq && th.size()<n_support_parens)
+    if (!output_bpseq /*&& th.size()<n_support_parens*/)
     {
       std::cout << ">" << argv[0] << std::endl
                 << seq << std::endl << r << std::endl;
@@ -583,7 +583,7 @@ main(int argc, char* argv[])
     {
       std::list<Fasta>::iterator fa = f.begin();
       ipknot.solve(fa->seq(), *en, r, bpseq, n_fill);
-      if (!output_bpseq && th.size()<n_support_parens)
+      if (!output_bpseq /*&& th.size()<n_support_parens*/)
       {
         std::cout << ">" << fa->name() << std::endl
                   << fa->seq() << std::endl << r << std::endl;
@@ -628,7 +628,7 @@ main(int argc, char* argv[])
       std::list<Aln>::iterator aln = a.begin();
       std::string consensus(aln->consensus());
       ipknot.solve(aln->seq(), *en, r, bpseq, n_fill);
-      if (!output_bpseq && th.size()<n_support_parens)
+      if (!output_bpseq /*&& th.size()<n_support_parens*/)
       {
         std::cout << ">" << aln->name().front() << std::endl
                   << consensus << std::endl << r << std::endl;
