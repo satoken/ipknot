@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/resource.h>
+#include <strings.h>
 #include <ctime>
 #include <iostream>
 #include <fstream>
