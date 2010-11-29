@@ -45,6 +45,9 @@ typedef unsigned int uint;
 class IPknot
 {
 public:
+  template < class T > class EnumParam;
+
+public:
   IPknot(uint pk_level, const float* alpha,
          bool levelwise, bool stacking_constraints, int n_th)
     : pk_level_(pk_level),
@@ -56,8 +59,7 @@ public:
   }
 
   void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             const std::vector<float>& th, const std::vector<float>& alpha,
-             std::vector<int>& bpseq, std::vector<int>& plevel) const
+             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel) const
   {
     IP ip(IP::MAX, n_th_);
     boost::multi_array<int, 3> v(boost::extents[pk_level_][L][L]);
@@ -73,7 +75,7 @@ public:
         for (uint lv=0; lv!=pk_level_; ++lv)
           if (p>th[lv])
           {
-            v[lv][i][j] = ip.make_variable(p*alpha[lv]);
+            v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
             w[lv][i].push_back(j);
           }
       }
@@ -207,6 +209,75 @@ public:
       decompose_plevel(bpseq, plevel);
   }
 
+  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
+             EnumParam<float>& ep, std::vector<int>& bpseq, std::vector<int>& plevel) const
+  {
+    std::vector<float> th(ep.size());
+    std::vector<int> bpseq_temp;
+    std::vector<int> plevel_temp;
+    float max_mcc=-100.0;
+    std::cerr << "Search for the best thresholds by pseudo expected MCC:" << std::endl;
+    do {
+      ep.get(th);
+      std::cerr << "th=";
+      std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
+      solve(L, bp, offset, th, bpseq_temp, plevel_temp);
+      float sen, ppv, mcc;
+      compute_expected_accuracy(bpseq_temp, bp, offset, sen, ppv, mcc);
+      std::cerr << " pMCC=" << mcc << std::endl;
+      if (mcc>max_mcc)
+      {
+        max_mcc = mcc;
+        bpseq = bpseq_temp;
+        plevel = plevel_temp;
+      }
+    } while (!ep.succ());
+    std::cerr << "max pMCC=" << max_mcc << std::endl << std::endl;
+  }
+
+public:
+  template < class T >
+  class EnumParam
+  {
+  public:
+    EnumParam(const std::vector<std::vector<T> >& p)
+      : p_(p), m_(p.size()), v_(p.size(), 0)
+    {
+      for (uint i=0; i!=p.size(); ++i)
+        m_[i] = p[i].size();
+    }
+
+    uint size() const { return m_.size(); }
+    
+    void get(std::vector<T>& q) const
+    {
+      for (uint i=0; i!=v_.size(); ++i)
+        q[i] = p_[i][v_[i]];
+    }
+  
+    bool succ()
+    {
+      return succ(m_.size(), &m_[0], &v_[0]);
+    }
+
+  private:
+    static bool succ(int n, const int* m, int* v)
+    {
+      if (n==0) return true;
+      if (++(*v)==*m)
+      {
+        *v=0;
+        return succ(n-1, ++m, ++v);
+      }
+      return false;
+    }
+
+  private:
+    const std::vector<std::vector<T> >& p_;
+    std::vector<int> m_;
+    std::vector<int> v_;
+  };
+
 private:
   struct cmp_by_degree : public std::less<int>
   {
@@ -285,6 +356,40 @@ private:
       plevel[i]= c[i]>=0 ? rev[c[i]] : -1;
   }
 
+  static void
+  compute_expected_accuracy(const std::vector<int>& bpseq,
+                            const std::vector<float>& bp, const std::vector<int>& offset,
+                            float& sen, float& ppv, float& mcc)
+  {
+    int L  = bpseq.size();
+    int L2 = L*(L-1)/2;
+    int N = 0;
+
+    float sump = 0.0;
+    float etp  = 0.0;
+
+    for (uint i=0; i!=bp.size(); ++i) sump += bp[i];
+
+    for (uint i=0; i!=bpseq.size(); ++i)
+    {
+      if (bpseq[i]!=-1 && bpseq[i]>(int)i)
+      {
+        etp += bp[offset[i+1]+bpseq[i]+1];
+        N++;
+      }
+    }
+
+    float etn = L2 - N - sump + etp;
+    float efp = N - etp;
+    float efn = sump - etp;
+
+    sen = ppv = mcc = 0;
+    if (etp+efn!=0) sen = etp / (etp + efn);
+    if (etp+efp!=0) ppv = etp / (etp + efp);
+    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
+      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
+  }
+
   static uint length(const std::string& seq) { return seq.size(); }
   static uint length(const std::list<std::string>& aln) { return aln.front().size(); }
 
@@ -331,40 +436,6 @@ timing()
   struct rusage ru;
   getrusage(RUSAGE_SELF, &ru);
   return ru.ru_utime.tv_sec+ru.ru_utime.tv_usec*1e-6;
-}
-
-void
-compute_expected_accuracy(const std::vector<int>& bpseq,
-                          const std::vector<float>& bp, const std::vector<int>& offset,
-                          float& sen, float& ppv, float& mcc)
-{
-  int L  = bpseq.size();
-  int L2 = L*(L-1)/2;
-  int N = 0;
-
-  float sump = 0.0;
-  float etp  = 0.0;
-
-  for (uint i=0; i!=bp.size(); ++i) sump += bp[i];
-
-  for (uint i=0; i!=bpseq.size(); ++i)
-  {
-    if (bpseq[i]!=-1 && bpseq[i]>(int)i)
-    {
-      etp += bp[offset[i+1]+bpseq[i]+1];
-      N++;
-    }
-  }
-
-  float etn = L2 - N - sump + etp;
-  float efp = N - etp;
-  float efn = sump - etp;
-
-  sen = ppv = mcc = 0;
-  if (etp+efn!=0) sen = etp / (etp + efn);
-  if (etp+efp!=0) ppv = etp / (etp + efp);
-  if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
-    mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
 }
 
 template < class SEQ, class EN >
@@ -439,18 +510,6 @@ parse_csv_line(const char* l)
   return r;
 }
 
-bool
-succ(int n, const int* m, int* v)
-{
-  if (n==0) return true;
-  if (++(*v)==*m)
-  {
-    *v=0;
-    return succ(n-1, ++m, ++v);
-  }
-  return false;
-}
-
 void
 usage(const char* progname)
 {
@@ -460,7 +519,8 @@ usage(const char* progname)
             << " -t th:    threshold of base-pairing probabilities for each level" << std::endl
             << " -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)" << std::endl
             << "           (default: -g 4 -g 8)" << std::endl
-            << " -m model: probabilistic model (default: McCaskill)" << std::endl
+            << " -m:       select thresholds that maxmize pseudo MCC" << std::endl
+            << " -e model: probabilistic model (default: McCaskill)" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
             << " -b:       output the prediction by BPSEQ format" << std::endl
             << " -P param: read the energy parameter file for the Vienna RNA package" << std::endl
@@ -487,11 +547,12 @@ main(int argc, char* argv[])
   const char* param=NULL;
   bool aux=false;
   bool levelwise=true;
-  while ((ch=getopt(argc, argv, "a:t:g:m:f:ibn:P:xuh"))!=-1)
+  bool max_pmcc=false;
+  while ((ch=getopt(argc, argv, "a:t:g:me:f:ibn:P:xuh"))!=-1)
   {
     switch (ch)
     {
-      case 'm':
+      case 'e':
         model.push_back(optarg);
         break;
       case 'f':
@@ -499,6 +560,9 @@ main(int argc, char* argv[])
         break;
       case 'a':
         alpha.push_back(atof(optarg));
+        break;
+      case 'm':
+        max_pmcc=true;
         break;
       case 't':
         th.push_back(parse_csv_line<float>(optarg));
@@ -561,11 +625,9 @@ main(int argc, char* argv[])
   std::vector<int> bpseq;
   std::vector<int> plevel;
 
+  IPknot::EnumParam<float> ep(th);
   std::vector<float> t(th.size());
-  for (uint i=0; i!=th.size(); ++i) t[i]=th[i][0];
-  std::vector<int> m(th.size());
-  for (uint i=0; i!=m.size(); ++i) m[i]=th[i].size();
-  std::vector<int> n(th.size(), 0);
+  ep.get(t);
   
   std::list<Fasta> f;
   std::list<Aln> a;
@@ -574,7 +636,10 @@ main(int argc, char* argv[])
     AuxModel aux;
     std::string seq;
     aux.calculate_posterior(argv[0], seq, bp, offset);
-    ipknot.solve(seq.size(), bp, offset, t, alpha, bpseq, plevel);
+    if (max_pmcc)
+      ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel);
+    else
+      ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel);
     output(output_bpseq, argv[0], seq, bpseq, plevel);
   }    
   else if (Fasta::load(f, argv[0])>0)
@@ -594,22 +659,19 @@ main(int argc, char* argv[])
     {
       std::list<Fasta>::iterator fa = f.begin();
       en->calculate_posterior(fa->seq(), bp, offset);
-      do {
-        for (uint i=0; i!=n.size(); ++i) t[i]=th[i][n[i]];
-        std::copy(t.begin(), t.end(), std::ostream_iterator<float>(std::cout, " "));
-        std::cout << std::endl;
-        ipknot.solve(fa->size(), bp, offset, t, alpha, bpseq, plevel);
-      } while (!succ(m.size(), &m[0], &n[0]));
+      if (max_pmcc)
+        ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel);
+      else
+        ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
       for (int i=0; i!=n_fill; ++i)
       {
         update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
-        ipknot.solve(fa->size(), bp, offset, t, alpha, bpseq, plevel);
+        if (max_pmcc)
+          ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel);
+        else
+          ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
       }
-
-      float sen, ppv, mcc;
-      compute_expected_accuracy(bpseq, bp, offset, sen, ppv, mcc);
       output(output_bpseq, fa->name(), fa->seq(), bpseq, plevel);
-      std::cout << mcc << std::endl;
 
       f.erase(fa);
     }
@@ -664,11 +726,17 @@ main(int argc, char* argv[])
     {
       std::list<Aln>::iterator aln = a.begin();
       en->calculate_posterior(aln->seq(), bp, offset);
-      ipknot.solve(aln->size(), bp, offset, t, alpha, bpseq, plevel);
+      if (max_pmcc)
+        ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel);
+      else
+        ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
       for (int i=0; i!=n_fill; ++i)
       {
         update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, bp, offset);
-        ipknot.solve(aln->size(), bp, offset, t, alpha, bpseq, plevel);
+        if (max_pmcc)
+          ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel);
+        else
+          ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
       }
       output(output_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
 

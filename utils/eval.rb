@@ -14,7 +14,7 @@ def read_bpseq(f)
   [bpseq,len]
 end
 
-def get_acc(tp, tn, fp, fn)
+def calc_acc(tp, tn, fp, fn)
   ppv=sen=fval=mcc=0.0
   ppv=tp.to_f/(tp+fp) if tp+fp>0
   sen=tp.to_f/(tp+fn) if tp+fn>0
@@ -29,5 +29,5 @@ tp=(ans&res).size
 fp=res.size-tp
 fn=ans.size-tp
 tn=len*(len-1)/2-fp
-acc=get_acc(tp,tn,fp,fn).map{|v| sprintf("%5.4f", v)}
+acc=calc_acc(tp,tn,fp,fn).map{|v| sprintf("%5.4f", v)}
 puts (acc+[tp,tn,fp,fn,len]).join(",")
