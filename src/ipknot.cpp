@@ -32,6 +32,8 @@
 #include <string>
 #include <vector>
 #include <boost/multi_array.hpp>
+#include <boost/algorithm/string.hpp>
+#include <boost/lexical_cast.hpp>
 
 #include "ip.h"
 #include "fa.h"
@@ -40,25 +42,12 @@
 
 typedef unsigned int uint;
 
-const uint n_support_parens=4;
-const char* left_paren="([{<";
-const char* right_paren=")]}>";
-
-double
-timing()
-{
-  struct rusage ru;
-  getrusage(RUSAGE_SELF, &ru);
-  return ru.ru_utime.tv_sec+ru.ru_utime.tv_usec*1e-6;
-}
-
 class IPknot
 {
 public:
-  IPknot(uint pk_level, const float* th, const float* alpha,
+  IPknot(uint pk_level, const float* alpha,
          bool levelwise, bool stacking_constraints, int n_th)
     : pk_level_(pk_level),
-      th_(th, th+pk_level_),
       alpha_(alpha, alpha+pk_level_),
       levelwise_(levelwise),
       stacking_constraints_(stacking_constraints),
@@ -66,81 +55,15 @@ public:
   {
   }
 
-  template < class SEQ, class EN >
-  void solve(const SEQ& seq, EN& en, std::string& r, std::vector<int>& bpseq, int fill=0) const
-  {
-    uint L=length(seq);
-    IP* ip = NULL;
-    boost::multi_array<int, 3> v(boost::extents[pk_level_][L][L]);
-    boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][L]);
-    std::fill(v.data(), v.data()+v.num_elements(), -1);
-
-    std::vector<float> bp;
-    std::vector<int> offset;
-    en.calculate_posterior(seq, bp, offset);
-    ip = new IP(IP::MAX, n_th_);
-    solve(length(seq), bp, offset, *ip, v, w);
-
-    while (--fill>=0)
-    {
-      // re-calculate the base-pairing probability matrix
-      std::vector<float> bpl;
-      std::vector<int> offsetl;
-      std::fill(bp.begin(), bp.end(), 0.0);
-
-      for (uint l=0; l!=pk_level_; ++l)
-      {
-        std::string str(L, '?');
-        for (uint lv=0; lv!=pk_level_; ++lv)
-          for (uint i=0; i<L; ++i)
-            for (uint j=i+1; j<L; ++j)
-              if (v[lv][i][j]>=0 && ip->get_value(v[lv][i][j])>0.5)
-              {
-                str[i]= l==lv ? '(' : '.';
-                str[j]= l==lv ? ')' : '.';
-              }
-
-        std::fill(bpl.begin(), bpl.end(), 0.0);
-        en.calculate_posterior(seq, str, bpl, offsetl);
-        assert(bp.size()==bpl.size());
-        for (uint k=0; k!=bp.size(); ++k) bp[k]+=bpl[k];
-      }
-#ifndef NDEBUG
-      for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
-#endif
-      delete ip;
-      ip = new IP(IP::MAX, n_th_);
-
-      // solve IP under the updated base-pairing probability matrix
-      std::fill(v.data(), v.data()+v.num_elements(), -1);
-      std::fill(w.data(), w.data()+w.num_elements(), std::vector<int>());
-      solve(L, bp, offset, *ip, v, w);
-    }
-
-    // build the resultant structure
-    make_result(L, *ip, v, w, r, bpseq);
-    delete ip;
-  }
-
   void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             std::string& r, std::vector<int>& bpseq) const
+             const std::vector<float>& th, const std::vector<float>& alpha,
+             std::vector<int>& bpseq, std::vector<int>& plevel) const
   {
     IP ip(IP::MAX, n_th_);
     boost::multi_array<int, 3> v(boost::extents[pk_level_][L][L]);
     boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][L]);
     std::fill(v.data(), v.data()+v.num_elements(), -1);
-
-    // solve the IP problem
-    solve(L, bp, offset, ip, v, w);
-
-    // build the resultant structure
-    make_result(L, ip, v, w, r, bpseq);
-  }
-
-  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             IP& ip, boost::multi_array<int, 3>& v,
-             boost::multi_array<std::vector<int>, 2>& w) const
-  {
+    
     // make objective variables with their weights
     for (uint j=1; j!=L; ++j)
     {
@@ -148,9 +71,9 @@ public:
       {
         const float& p=bp[offset[i+1]+(j+1)];
         for (uint lv=0; lv!=pk_level_; ++lv)
-          if (p>th_[lv])
+          if (p>th[lv])
           {
-            v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
+            v[lv][i][j] = ip.make_variable(p*alpha[lv]);
             w[lv][i].push_back(j);
           }
       }
@@ -263,8 +186,28 @@ public:
 
     // execute optimization
     ip.solve();
+
+    // build the result
+    bpseq.resize(L);
+    std::fill(bpseq.begin(), bpseq.end(), -1);
+    plevel.resize(L);
+    std::fill(plevel.begin(), plevel.end(), -1);
+    for (uint lv=0; lv!=pk_level_; ++lv)
+    {
+      for (uint i=0; i<L; ++i)
+        for (uint j=i+1; j<L; ++j)
+          if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
+          {
+            bpseq[i]=j; bpseq[j]=i;
+            plevel[i]=plevel[j]=lv;
+          }
+    }
+
+    if (!levelwise_)
+      decompose_plevel(bpseq, plevel);
   }
 
+private:
   struct cmp_by_degree : public std::less<int>
   {
     cmp_by_degree(const std::vector< std::vector<int> >& g) : g_(g) {}
@@ -279,148 +222,128 @@ public:
     const std::vector<int>& count_;
   };
 
-  void make_result(uint L, const IP& ip, boost::multi_array<int, 3>& v,
-                   boost::multi_array<std::vector<int>, 2>& w,
-                   std::string& r, std::vector<int>& bpseq) const
+  static void
+  decompose_plevel(const std::vector<int>& bpseq, std::vector<int>& plevel)
   {
-    r.resize(L);
-    std::fill(r.begin(), r.end(), '.');
-    bpseq.resize(L);
-    std::fill(bpseq.begin(), bpseq.end(), -1);
-
-    if (levelwise_)
+    // resolve the symbol of parenthsis by the graph coloring problem
+    uint L=bpseq.size();
+    
+    // make an adjacent graph, in which pseudoknotted base-pairs are connected.
+    std::vector< std::vector<int> > g(L);
+    for (uint i=0; i!=L; ++i)
     {
-      for (uint lv=0; lv!=pk_level_; ++lv)
+      if (bpseq[i]<0 || bpseq[i]<=(int)i) continue;
+      uint j=bpseq[i];
+      for (uint k=i+1; k!=L; ++k)
       {
-        for (uint i=0; i<L; ++i)
-          for (uint j=i+1; j<L; ++j)
-            if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
-            {
-              assert(r[i]=='.'); assert(r[j]=='.');
-              bpseq[i]=j; bpseq[j]=i;
-              if (lv<n_support_parens)
-              {
-                r[i]=left_paren[lv];
-                r[j]=right_paren[lv];
-              }
-              else if (lv<n_support_parens+26)
-              {
-                r[i]='A'+lv-n_support_parens;
-                r[j]='a'+lv-n_support_parens;
-              }
-            }
-      }
-    }
-    else
-    {
-      // make BPSEQ
-      for (uint lv=0; lv!=pk_level_; ++lv)
-        for (uint i=0; i<L; ++i)
-          for (uint j=i+1; j<L; ++j)
-            if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
-            {
-              bpseq[i]=j; bpseq[j]=i;
-            }
-
-      // resolve the symbol of parenthsis by the graph coloring problem
-      // make an adjacent graph, in which pseudoknotted base-pairs are connected.
-      std::vector< std::vector<int> > g(bpseq.size());
-      for (uint i=0; i!=bpseq.size(); ++i)
-      {
-        if (bpseq[i]<0 || bpseq[i]<=(int)i) continue;
-        uint j=bpseq[i];
-        for (uint k=i+1; k!=bpseq.size(); ++k)
+        uint l=bpseq[k];
+        if (bpseq[k]<0 || bpseq[k]<=(int)k) continue;
+        if (k<j && j<l)
         {
-          uint l=bpseq[k];
-          if (bpseq[k]<0 || bpseq[k]<=(int)k) continue;
-          if (k<j && j<l)
-          {
-            g[i].push_back(k);
-            g[k].push_back(i);
-          }
-        }
-      }
-      // sort vertices by degree
-      std::vector<int> v;
-      for (uint i=0; i!=bpseq.size(); ++i)
-        if (bpseq[i]>=0 && (int)i<bpseq[i]) 
-          v.push_back(i);
-      std::sort(v.begin(), v.end(), cmp_by_degree(g));
-
-      // determine colors
-      std::vector<int> c(g.size(), -1);
-      int max_color=0;
-      for (uint i=0; i!=v.size(); ++i)
-      {
-        std::vector<int> used;
-        for (uint j=0; j!=g[v[i]].size(); ++j)
-          if (c[g[v[i]][j]]>=0) used.push_back(c[g[v[i]][j]]);
-        std::sort(used.begin(), used.end());
-        used.erase(std::unique(used.begin(), used.end()), used.end());
-        int j=0;
-        for (j=0; j!=(int)used.size(); ++j)
-          if (used[j]!=j) break;
-        c[v[i]]=j;
-        max_color=std::max(max_color, j);
-      }
-
-      // renumber colors in decentant order by the number of base-pairs for each color
-      std::vector<int> count(max_color+1, 0);
-      for (uint i=0; i!=c.size(); ++i)
-        if (c[i]>=0) count[c[i]]++;
-      std::vector<int> idx(count.size());
-      for (uint i=0; i!=idx.size(); ++i) idx[i]=i;
-      sort(idx.begin(), idx.end(), cmp_by_count(count));
-      std::vector<int> rev(idx.size());
-      for (uint i=0; i!=rev.size(); ++i) rev[idx[i]]=i;
-      for (uint i=0; i!=c.size(); ++i)
-        if (c[i]>=0) c[i]=rev[c[i]];
-
-      // make the parenthsis string
-      for (uint i=0; i!=bpseq.size(); ++i)
-      {
-        if (bpseq[i]<0 || bpseq[i]<(int)i) continue;
-        uint j=bpseq[i];
-        assert(r[i]=='.'); assert(r[j]=='.');
-        if (c[i]<(int)n_support_parens)
-        {
-          r[i]=left_paren[c[i]];
-          r[j]=right_paren[c[i]];
-        }
-        else if (c[i]<(int)n_support_parens+26)
-        {
-          r[i]='A'+c[i]-n_support_parens;
-          r[j]='a'+c[i]-n_support_parens;
+          g[i].push_back(k);
+          g[k].push_back(i);
         }
       }
     }
+    // vertices are indexed by the position of the left base
+    std::vector<int> v;
+    for (uint i=0; i!=bpseq.size(); ++i)
+      if (bpseq[i]>=0 && (int)i<bpseq[i]) 
+        v.push_back(i);
+    // sort vertices by degree
+    std::sort(v.begin(), v.end(), cmp_by_degree(g));
+
+    // determine colors
+    std::vector<int> c(L, -1);
+    int max_color=0;
+    for (uint i=0; i!=v.size(); ++i)
+    {
+      // find the smallest color that is unused
+      std::vector<int> used;
+      for (uint j=0; j!=g[v[i]].size(); ++j)
+        if (c[g[v[i]][j]]>=0) used.push_back(c[g[v[i]][j]]);
+      std::sort(used.begin(), used.end());
+      used.erase(std::unique(used.begin(), used.end()), used.end());
+      int j=0;
+      for (j=0; j!=(int)used.size(); ++j)
+        if (used[j]!=j) break;
+      c[v[i]]=j;
+      max_color=std::max(max_color, j);
+    }
+
+    // renumber colors in decentant order by the number of base-pairs for each color
+    std::vector<int> count(max_color+1, 0);
+    for (uint i=0; i!=c.size(); ++i)
+      if (c[i]>=0) count[c[i]]++;
+    std::vector<int> idx(count.size());
+    for (uint i=0; i!=idx.size(); ++i) idx[i]=i;
+    sort(idx.begin(), idx.end(), cmp_by_count(count));
+    std::vector<int> rev(idx.size());
+    for (uint i=0; i!=rev.size(); ++i) rev[idx[i]]=i;
+    plevel.resize(L);
+    for (uint i=0; i!=c.size(); ++i)
+      plevel[i]= c[i]>=0 ? rev[c[i]] : -1;
   }
 
-private:
-  uint length(const std::string& seq) const { return seq.size(); }
-  uint length(const std::list<std::string>& aln) const { return aln.front().size(); }
+  static uint length(const std::string& seq) { return seq.size(); }
+  static uint length(const std::list<std::string>& aln) { return aln.front().size(); }
 
 private:
   // options
   uint pk_level_;
-  std::vector<float> th_;
   std::vector<float> alpha_;
   bool levelwise_;
   bool stacking_constraints_;
   int n_th_;
 };
 
+std::string
+make_parenthsis(const std::vector<int>& bpseq, const std::vector<int>& plevel)
+{
+  const int n_support_parens=4;
+  const char* left_paren="([{<";
+  const char* right_paren=")]}>";
+
+  std::string r(bpseq.size(), '.');
+  for (int i=0; i!=(int)bpseq.size(); ++i)
+  {
+    if (bpseq[i]>=0 && i<bpseq[i])
+    {
+      int j=bpseq[i];
+      if (plevel[i]<n_support_parens)
+      {
+        r[i]=left_paren[plevel[i]];
+        r[j]=right_paren[plevel[i]];
+      }
+      else if (plevel[i]<n_support_parens+'Z'-'A'+1)
+      {
+        r[i]='A'+plevel[i]-n_support_parens;
+        r[j]='a'+plevel[i]-n_support_parens;
+      }
+    }
+  }
+  return r;
+}
+
+double
+timing()
+{
+  struct rusage ru;
+  getrusage(RUSAGE_SELF, &ru);
+  return ru.ru_utime.tv_sec+ru.ru_utime.tv_usec*1e-6;
+}
+
 void
 compute_expected_accuracy(const std::vector<int>& bpseq,
                           const std::vector<float>& bp, const std::vector<int>& offset,
-                          double& sen, double& ppv, double& mcc)
+                          float& sen, float& ppv, float& mcc)
 {
   int L  = bpseq.size();
   int L2 = L*(L-1)/2;
-  int N;
+  int N = 0;
 
-  double sump = 0.0;
-  double etp  = 0.0;
+  float sump = 0.0;
+  float etp  = 0.0;
 
   for (uint i=0; i!=bp.size(); ++i) sump += bp[i];
 
@@ -433,15 +356,99 @@ compute_expected_accuracy(const std::vector<int>& bpseq,
     }
   }
 
-  double etn = L2 - N - sump + etp;
-  double efp = N - etp;
-  double efn = sump - etp;
+  float etn = L2 - N - sump + etp;
+  float efp = N - etp;
+  float efn = sump - etp;
 
   sen = ppv = mcc = 0;
   if (etp+efn!=0) sen = etp / (etp + efn);
   if (etp+efp!=0) ppv = etp / (etp + efp);
   if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
     mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
+}
+
+template < class SEQ, class EN >
+void
+update_bpm(uint pk_level, const SEQ& seq, EN& en,
+           const std::vector<int>& bpseq, const std::vector<int>& plevel,
+           std::vector<float>& bp, std::vector<int>& offset)
+{
+  // update the base-pairing probability matrix by the previous result
+  uint L=bpseq.size();
+  //bp.resize(L);
+  std::fill(bp.begin(), bp.end(), 0.0);
+  for (uint i=0; i<=L; ++i)
+    offset[i] = i*((L+1)+(L+1)-i-1)/2;
+  
+  std::vector<float> bpl;
+  std::vector<int> offsetl;
+  for (uint l=0; l!=pk_level; ++l)
+  {
+    // make the constraint string
+    std::string str(L, '?');
+    for (uint i=0; i!=bpseq.size(); ++i)
+      if (bpseq[i]>=0 && (int)i<bpseq[i])
+        if ((int)l==plevel[i])
+        {
+          str[i]='('; str[bpseq[i]]=')';
+        }
+        else
+        {
+          str[i]=str[bpseq[i]]='.';
+        }
+
+    // re-folding the seq with the constraint
+    std::fill(bpl.begin(), bpl.end(), 0.0);
+    en.calculate_posterior(seq, str, bpl, offsetl);
+    assert(bp.size()==bpl.size());
+    // update the base-pairing probability matrix
+    for (uint k=0; k!=bp.size(); ++k) bp[k]+=bpl[k];
+  }
+#ifndef NDEBUG
+  for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
+#endif
+}
+
+void
+output(bool output_bpseq, const std::string& desc, const std::string& seq,
+       const std::vector<int>& bpseq, const std::vector<int>& plevel)
+{
+  if (!output_bpseq)
+  {
+    std::cout << ">" << desc << std::endl
+              << seq << std::endl
+              << make_parenthsis(bpseq, plevel) << std::endl;
+  }
+  else
+  {
+    std::cout << "# " << desc << std::endl;
+    for (uint i=0; i!=bpseq.size(); ++i)
+      std::cout << i+1 << " " << seq[i] << " " << bpseq[i]+1 << std::endl;
+  }
+}
+
+template <class T>
+std::vector<T>
+parse_csv_line(const char* l)
+{
+  std::vector<std::string> v;
+  boost::algorithm::split(v, l, boost::is_any_of(","));
+  std::vector<T> r(v.size());
+  for (uint i=0; i!=v.size(); ++i)
+    r[i] = boost::lexical_cast<T>(v[i]);
+  return r;
+}
+
+bool
+succ(int n, const int* m, int* v)
+{
+  if (n==0) return true;
+  if (++(*v)==*m)
+  {
+    *v=0;
+    return succ(n-1, ++m, ++v);
+  }
+  return false;
 }
 
 void
@@ -455,7 +462,7 @@ usage(const char* progname)
             << "           (default: -g 4 -g 8)" << std::endl
             << " -m model: probabilistic model (default: McCaskill)" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
-            << " -b:       output the prediction via BPSEQ format" << std::endl
+            << " -b:       output the prediction by BPSEQ format" << std::endl
             << " -P param: read the energy parameter file for the Vienna RNA package" << std::endl
 #ifndef WITH_GLPK
             << " -n n_th:  specify the number of threads (default: 1)" << std::endl
@@ -468,8 +475,9 @@ main(int argc, char* argv[])
 {
   char* progname=argv[0];
   // parse options
+  uint pk_level=0;
   char ch;
-  std::vector<float> th;
+  std::vector< std::vector<float> > th;
   std::vector<float> alpha;
   bool isolated_bp=false;
   std::vector<const char*> model;
@@ -493,11 +501,16 @@ main(int argc, char* argv[])
         alpha.push_back(atof(optarg));
         break;
       case 't':
-        th.push_back(atof(optarg));
+        th.push_back(parse_csv_line<float>(optarg));
         break;
       case 'g':
-        th.push_back(1/(atof(optarg)+1));
+      {
+        std::vector<float> temp = parse_csv_line<float>(optarg);
+        for (uint i=0; i!=temp.size(); ++i)
+          temp[i] = 1/(temp[i]+1);
+        th.push_back(temp);
         break;
+      }
       case 'i':
         isolated_bp=true;
         break;
@@ -531,8 +544,8 @@ main(int argc, char* argv[])
   if (th.empty())
   {
     th.resize(2);
-    th[0]=1/(4.0+1);            // -g 4
-    th[1]=1/(8.0+1);            // -g 8
+    th[0].resize(1, 1/(4.0+1)); // -g 4
+    th[1].resize(1, 1/(8.0+1)); // -g 8
   }
   if (alpha.empty())
   {
@@ -540,32 +553,29 @@ main(int argc, char* argv[])
     for (uint i=0; i!=alpha.size(); ++i)
       alpha[i]=1.0/alpha.size();
   }
+  pk_level=alpha.size();
 
-  IPknot ipknot(th.size(), &th[0], &alpha[0], levelwise, !isolated_bp, n_th);
-  std::string r;
+  IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th);
+  std::vector<float> bp;
+  std::vector<int> offset;
   std::vector<int> bpseq;
+  std::vector<int> plevel;
+
+  std::vector<float> t(th.size());
+  for (uint i=0; i!=th.size(); ++i) t[i]=th[i][0];
+  std::vector<int> m(th.size());
+  for (uint i=0; i!=m.size(); ++i) m[i]=th[i].size();
+  std::vector<int> n(th.size(), 0);
   
   std::list<Fasta> f;
   std::list<Aln> a;
   if (aux)
   {
-    std::vector<float> bp;
-    std::vector<int> offset;
     AuxModel aux;
     std::string seq;
     aux.calculate_posterior(argv[0], seq, bp, offset);
-    ipknot.solve(seq.size(), bp, offset, r, bpseq);
-    if (!output_bpseq /*&& th.size()<n_support_parens*/)
-    {
-      std::cout << ">" << argv[0] << std::endl
-                << seq << std::endl << r << std::endl;
-    }
-    else
-    {
-      std::cout << "# " << argv[0] << std::endl;
-      for (uint i=0; i!=bpseq.size(); ++i)
-        std::cout << i+1 << " " << seq[i] << " " << bpseq[i]+1 << std::endl;
-    }
+    ipknot.solve(seq.size(), bp, offset, t, alpha, bpseq, plevel);
+    output(output_bpseq, argv[0], seq, bpseq, plevel);
   }    
   else if (Fasta::load(f, argv[0])>0)
   {
@@ -583,20 +593,24 @@ main(int argc, char* argv[])
     while (!f.empty())
     {
       std::list<Fasta>::iterator fa = f.begin();
-      ipknot.solve(fa->seq(), *en, r, bpseq, n_fill);
-      if (!output_bpseq /*&& th.size()<n_support_parens*/)
+      en->calculate_posterior(fa->seq(), bp, offset);
+      do {
+        for (uint i=0; i!=n.size(); ++i) t[i]=th[i][n[i]];
+        std::copy(t.begin(), t.end(), std::ostream_iterator<float>(std::cout, " "));
+        std::cout << std::endl;
+        ipknot.solve(fa->size(), bp, offset, t, alpha, bpseq, plevel);
+      } while (!succ(m.size(), &m[0], &n[0]));
+      for (int i=0; i!=n_fill; ++i)
       {
-        std::cout << ">" << fa->name() << std::endl
-                  << fa->seq() << std::endl << r << std::endl;
+        update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
+        ipknot.solve(fa->size(), bp, offset, t, alpha, bpseq, plevel);
       }
-      else
-      {
-        //double sen, ppv, mcc;
-        //compute_expected_accuracy(bpseq, bp, offset, sen, ppv, mcc);
-        std::cout << "# " << fa->name() << std::endl;
-        for (uint i=0; i!=bpseq.size(); ++i)
-          std::cout << i+1 << " " << fa->seq()[i] << " " << bpseq[i]+1 << std::endl;
-      }
+
+      float sen, ppv, mcc;
+      compute_expected_accuracy(bpseq, bp, offset, sen, ppv, mcc);
+      output(output_bpseq, fa->name(), fa->seq(), bpseq, plevel);
+      std::cout << mcc << std::endl;
+
       f.erase(fa);
     }
 
@@ -644,23 +658,20 @@ main(int argc, char* argv[])
       if (en_a.size()>1)
         mix_en = new MixtureModel(en_a);
     }
+    BPEngineAln* en= mix_en ? mix_en : en_a[0];
 
     while (!a.empty())
     {
       std::list<Aln>::iterator aln = a.begin();
-      std::string consensus(aln->consensus());
-      ipknot.solve(aln->seq(), (mix_en ? *mix_en : *en_a[0]), r, bpseq, n_fill);
-      if (!output_bpseq /*&& th.size()<n_support_parens*/)
+      en->calculate_posterior(aln->seq(), bp, offset);
+      ipknot.solve(aln->size(), bp, offset, t, alpha, bpseq, plevel);
+      for (int i=0; i!=n_fill; ++i)
       {
-        std::cout << ">" << aln->name().front() << std::endl
-                  << consensus << std::endl << r << std::endl;
+        update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, bp, offset);
+        ipknot.solve(aln->size(), bp, offset, t, alpha, bpseq, plevel);
       }
-      else
-      {
-        std::cout << "# " << aln->name().front() << std::endl;
-        for (uint i=0; i!=bpseq.size(); ++i)
-          std::cout << i+1 << " " << consensus[i] << " " << bpseq[i]+1 << std::endl;
-      }
+      output(output_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
+
       a.erase(aln);
     }
 
