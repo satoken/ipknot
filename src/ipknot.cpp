@@ -472,7 +472,7 @@ main(int argc, char* argv[])
   std::vector<float> th;
   std::vector<float> alpha;
   bool isolated_bp=false;
-  const char* model="McCaskill";
+  std::vector<const char*> model;
   bool output_bpseq=false;
   int n_th=1;
   int n_fill=0;
@@ -484,7 +484,7 @@ main(int argc, char* argv[])
     switch (ch)
     {
       case 'm':
-        model=optarg;
+        model.push_back(optarg);
         break;
       case 'f':
         n_fill=atoi(optarg);
@@ -570,9 +570,9 @@ main(int argc, char* argv[])
   else if (Fasta::load(f, argv[0])>0)
   {
     BPEngineSeq* en=NULL;
-    if (strcasecmp(model, "McCaskill")==0)
+    if (model.empty() || strcasecmp(model[0], "McCaskill")==0)
       en = new RNAfoldModel(param);
-    else if (strcasecmp(model, "CONTRAfold")==0)
+    else if (strcasecmp(model[0], "CONTRAfold")==0)
       en = new CONTRAfoldModel();
     else
     {
@@ -604,31 +604,52 @@ main(int argc, char* argv[])
   }
   else if (Aln::load(a, argv[0])>0)
   {
-    BPEngineAln* en=NULL;
-    BPEngineSeq* en_s=NULL;
-    if (strcasecmp(model, "McCaskill")==0)
+    BPEngineAln* mix_en=NULL;
+    std::vector<BPEngineSeq*> en_s;
+    std::vector<BPEngineAln*> en_a;
+    if (model.empty())
     {
-      en_s = new RNAfoldModel(param);
-      en = new AveragedModel(en_s);
+      BPEngineSeq* e = new RNAfoldModel(param);
+      en_s.push_back(e);
+      en_a.push_back(new AveragedModel(e));
+      en_a.push_back(new AlifoldModel(param));
+      mix_en = new MixtureModel(en_a);
     }
-    else if (strcasecmp(model, "CONTRAfold")==0)
-    {
-      en_s = new CONTRAfoldModel();
-      en = new AveragedModel(en_s);
-    }
-    else if (strcasecmp(model, "Alifold")==0)
-      en = new AlifoldModel(param);
     else
     {
-      usage(progname);
-      return 1;
+      for (uint i=0; i!=model.size(); ++i)
+      {
+        if (strcasecmp(model[i], "McCaskill")==0)
+        {
+          BPEngineSeq* e = new RNAfoldModel(param);
+          en_s.push_back(e);
+          en_a.push_back(new AveragedModel(e));
+        }
+        else if (strcasecmp(model[0], "CONTRAfold")==0)
+        {
+          BPEngineSeq* e = new CONTRAfoldModel();
+          en_s.push_back(e);
+          en_a.push_back(new AveragedModel(e));
+        }
+        else if (strcasecmp(model[0], "Alifold")==0)
+        {
+          en_a.push_back(new AlifoldModel(param));
+        }
+        else
+        {
+          usage(progname);
+          return 1;
+        }
+      }
+      if (en_a.size()>1)
+        mix_en = new MixtureModel(en_a);
     }
 
     while (!a.empty())
     {
       std::list<Aln>::iterator aln = a.begin();
       std::string consensus(aln->consensus());
-      ipknot.solve(aln->seq(), *en, r, bpseq, n_fill);
+      ipknot.solve(aln->seq(), (mix_en ? *mix_en : *en_a[0]), r, bpseq, n_fill);
       if (!output_bpseq /*&& th.size()<n_support_parens*/)
       {
         std::cout << ">" << aln->name().front() << std::endl
@@ -643,8 +664,9 @@ main(int argc, char* argv[])
       a.erase(aln);
     }
 
-    if (en) delete en;
-    if (en_s) delete en_s;
+    if (mix_en) delete mix_en;
+    for (uint i=0; i!=en_s.size(); ++i) delete en_s[i];
+    for (uint i=0; i!=en_a.size(); ++i) delete en_a[i];
   }
 
   return 0;

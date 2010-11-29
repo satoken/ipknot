@@ -102,6 +102,25 @@ private:
   BPEngineSeq* en_;
 };
 
+class MixtureModel : public BPEngineAln
+{
+public:
+  MixtureModel(std::vector<BPEngineAln*> en)
+    : en_(en),
+      w_(en_.size(), 1.0/en_.size())
+  { }
+
+  void calculate_posterior(const std::list<std::string>& aln,
+                           std::vector<float>& bp, std::vector<int>& offset) const;
+
+  void calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
+                           std::vector<float>& bp, std::vector<int>& offset) const;
+
+private:
+  std::vector<BPEngineAln*> en_;
+  std::vector<float> w_;
+};
+
 class AuxModel
 {
 public:

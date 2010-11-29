@@ -366,8 +366,52 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
   }
 }
 
-// Aux model
+// MixtureModel
+void
+MixtureModel::
+calculate_posterior(const std::list<std::string>& aln,
+                    std::vector<float>& bp, std::vector<int>& offset) const
+{
+  uint L=aln.front().size();
+  bp.resize((L+1)*(L+2)/2);
+  std::fill(bp.begin(), bp.end(), 0.0);
+  offset.resize(L+1);
+  for (uint i=0; i<=L; ++i)
+    offset[i] = i*((L+1)+(L+1)-i-1)/2;
+  assert(en_.size()==w_.size());
+  for (uint i=0; i!=en_.size(); ++i)
+  {
+    std::vector<float> lbp;
+    std::vector<int> loffset;
+    en_[i]->calculate_posterior(aln, lbp, loffset);
+    for (uint j=0; j!=bp.size(); ++j)
+      bp[j] += lbp[j]*w_[i];
+  }
+}
 
+void
+MixtureModel::
+calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
+                    std::vector<float>& bp, std::vector<int>& offset) const
+{
+  uint L=aln.front().size();
+  bp.resize((L+1)*(L+2)/2);
+  std::fill(bp.begin(), bp.end(), 0.0);
+  offset.resize(L+1);
+  for (uint i=0; i<=L; ++i)
+    offset[i] = i*((L+1)+(L+1)-i-1)/2;
+  assert(en_.size()==w_.size());
+  for (uint i=0; i!=en_.size(); ++i)
+  {
+    std::vector<float> lbp;
+    std::vector<int> loffset;
+    en_[i]->calculate_posterior(aln, paren, lbp, loffset);
+    for (uint j=0; j!=bp.size(); ++j)
+      bp[j] += lbp[j]*w_[i];
+  }
+}
+
+// Aux model
 bool
 AuxModel::
 calculate_posterior(const char* filename, std::string& seq,
