@@ -45,3 +45,7 @@ private:
 };
 
 #endif  // __INC_IP_H__
+
+// Local Variables:
+// mode: C++
+// End:

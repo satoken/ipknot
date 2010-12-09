@@ -4,15 +4,22 @@
 #define __INC_NUPACK_H__
 
 #include <vector>
+#include <string>
 
 template < class PF_TYPE >
 class Nupack
 {
 public:
   typedef PF_TYPE pf_type;
+
+private:  
+  class DPTable2;
+  class DPTable4;
+  class DPTableX;
+
 public:
   Nupack();
-  void load_sequence();
+  void load_sequence(const std::string& s);
   void load_parameters();
   pf_type calculate_partition_function();
   void calcualt_posterior();
@@ -36,3 +43,7 @@ private:
 };
 
 #endif // __INC_NUPACK_H__
+
+// Local Variables:
+// mode: C++
+// End:
