@@ -212,10 +212,12 @@ calculate_partition_function()
                 Qb(i,j) +=
                   Qm(i+1,d-1) *
                   Qb(d,e) *
-                  exp( -(alpha1 + 2*alpha2 + alpha3*(j-e-1))/RT ) *
-                  exp( -score_at_penalty(i,j)/RT ) *
-                  exp( -score_at_penalty(d,e)/RT ) *
-                  exp( -score_dangle(e+1,j-1)/RT );
+                  exp( -( score_multiloop() +
+                          score_multiloop_paired(2) +
+                          score_multiloop_unpaired(j-e-1) +
+                          score_at_penalty(i,j) +
+                          score_at_penalty(d,e) +
+                          score_dangle(e+1,j-1) )/RT ) ;
               }
             }
           }
@@ -228,18 +230,24 @@ calculate_partition_function()
             for (int e=d+5; e<=j-1; ++e)
             {
               Qb(i,j) +=
-                exp( -(alpha1 + beta1m + 3*alpha2 + (j-e-1 + d-i-1)*alpha3)/RT ) *
-                exp( -score_at_penalty(i,j)/RT ) *
-                exp( -score_dangle(e+1,j-1)/RT ) *
-                exp( -score_dangle(i+1,d-1)/RT ) *
+                exp( -( score_multiloop() +
+                        score_pk_multiloop() +
+                        score_multiloop_paired(3) +
+                        score_multiloop_unpaired(j-e-1 + d-i-1) +
+                        score_at_penalty(i,j) +
+                        score_dangle(e+1,j-1) +
+                        score_dangle(i+1,d-1) )/RT ) *
                 Qp(d,e);
 
               Qb(i,j) +=
                 Qm(i+1,d-1) *
                 Qp(d,e) *
-                exp( -(alpha1 + beta1m + 3*alpha2 + (j-e-1)*alpha3)/RT) *
-                exp( -score_at_penalty(i,j)/RT ) *
-                exp( -score_dangle(e+1,j-1)/RT );
+                exp( -( score_multiloop() +
+                        score_pk_multiloop() +
+                        score_multiloop_paired(3) +
+                        score_multiloop_unpaired(j-e-1) +
+                        score_at_penalty(i,j) +
+                        score_dangle(e+1,j-1) )/RT );
             }
           }
         }
@@ -276,10 +284,12 @@ calculate_partition_function()
             {
               Qg(i,d,e,j) +=
                 Qm(i+1,d-1) *
-                exp( -(alpha1 + 2*alpha2 + alpha3*(j-e-1))/RT ) *
-                exp( -score_at_penalty(i,j)/RT ) *
-                exp( -score_at_penalty(d,e)/RT ) *
-                exp( -score_dangle(e+1, j-1)/RT );
+                exp( -( score_multiloop() +
+                        score_multiloop_paired(2) +
+                        score_multiloop_unpaired(j-e-1) + 
+                        score_at_penalty(i,j) +
+                        score_at_penalty(d,e) +
+                        score_dangle(e+1, j-1) )/RT );
             }
           }
         }
@@ -292,10 +302,12 @@ calculate_partition_function()
             if (allow_paired(d,e) && wc_pair(d,e))
             {
               Qg(i,d,e,j) +=
-                exp( -(alpha1 + 2*alpha2 + alpha3*(d-i-1))/RT ) *
-                exp( -score_at_penalty(i,j)/RT ) *
-                exp( -score_at_penalty(d,e)/RT ) *
-                exp( -score_dangle(i+1, d-1)/RT ) *
+                exp( -( score_multiloop() +
+                        score_multiloop_paired(2) +
+                        score_multiloop_unpaired(d-i-1) +
+                        score_at_penalty(i,j) +
+                        score_at_penalty(d,e) +
+                        score_dangle(i+1, d-1) )/RT ) *
                 Qm(e+1,j-1);
             }
           }
@@ -310,9 +322,10 @@ calculate_partition_function()
             {
               Qg(i,d,e,j) +=
                 Qm(i+1,d-1) *
-                exp( -(alpha1 + 2*alpha2)/RT ) *
-                exp( -score_at_penalty(i,j)/RT ) *
-                exp( -score_at_penalty(d,e)/RT ) *
+                exp( -( score_multiloop() +
+                        score_multiloop_paired(2) +
+                        score_at_penalty(i,j) +
+                        score_at_penalty(d,e) )/RT ) *
                 Qm(e+1,j-1);
             }
           }
@@ -329,9 +342,11 @@ calculate_partition_function()
               {
                 Qg(i,d,e,j) +=
                   Qgls(i+1,d,e,f) *
-                  exp( -(alpha1 + alpha2 + alpha3*(j-f-1))/RT ) *
-                  exp( -score_at_penalty(i,j)/RT ) *
-                  exp( -score_dangle(f+1, j-1)/RT );
+                  exp( -( score_multiloop() +
+                          score_multiloop_paired(1) +
+                          score_multiloop_unpaired(j-f-1) +
+                          score_at_penalty(i,j) +
+                          score_dangle(f+1,j-1) )/RT );
               }
             }
           }
@@ -347,9 +362,11 @@ calculate_partition_function()
               for (int c=i+1; c<=d-1; ++c)
               {
                 Qg(i,d,e,j) +=
-                  exp( -(alpha1 + alpha2 + alpha3*(c-i-1))/RT ) *
-                  exp( -score_at_penalty(i,j)/RT ) *
-                  exp( -score_dangle(i+1, c-1)/RT ) *
+                  exp( -( score_multiloop() +
+                          score_multiloop_paired(1) +
+                          score_multiloop_unpaired(c-i-1) +
+                          score_at_penalty(i,j) +
+                          score_dangle(i+1,c-1) )/RT ) *
                   Qgrs(c,d,e,j-1);
               }
             }
@@ -368,8 +385,9 @@ calculate_partition_function()
                 Qg(i,d,e,j) +=
                   Qm(i+1,c-1) *
                   Qgrs(c,d,e,j-1) *
-                  exp( -(alpha1 + alpha2)/RT ) *
-                  exp( -score_at_penalty(i,j)/RT );
+                  exp( -( score_multiloop() +
+                          score_multiloop_paired(1) +
+                          score_at_penalty(i,j) )/RT );
               }
             }
           }
@@ -388,8 +406,8 @@ calculate_partition_function()
               if (allow_paired(d,e))
               {
                 Qgls(i,d,e,j) +=
-                  exp( -alpha2/RT ) *
-                  exp( -score_at_penalty(c,j)/RT ) *
+                  exp( -( score_multiloop_paired(1) +
+                          score_at_penalty(c,j) )/RT ) *
                   Qm(i,c-1) *
                   Qg(c,d,e,j);
               }
@@ -412,8 +430,8 @@ calculate_partition_function()
                 Qgrs(i,d,e,j) +=
                   Qg(i,d,e,f) *
                   Qm(f+1,j) *
-                  exp( -alpha2/RT ) *
-                  exp( -score_at_penalty(i,f)/RT );
+                  exp( -( score_multiloop_paired(1) +
+                          score_at_penalty(i,f) )/RT );
               }
             }
           }
@@ -432,8 +450,8 @@ calculate_partition_function()
               Qgl(i,e,f,j) +=
                 Qg(i,d,f,j) *
                 Qz(d+1,e) *
-                exp( -beta2/RT ) *
-                exp( -score_at_penalty(d,f)/RT );
+                exp( -( score_pk_paired(1) +
+                        score_at_penalty(d,f) )/RT );
             }
           }
         }
@@ -473,11 +491,11 @@ calculate_partition_function()
                 Qp(i,j) +=
                   Qg(i,a,d,e) *
                   Qg(b,c,f,j) *
-                  exp( -(2*beta2)/RT ) *
-                  exp( -score_at_penalty(a,d)/RT ) *
-                  exp( -score_at_penalty(c,f)/RT ) *
-                  exp( -score_at_penalty(i,e)/RT ) *
-                  exp( -score_at_penalty(b,j)/RT ) *
+                  exp( -( score_pk_paired(2) +
+                          score_at_penalty(a,d) +
+                          score_at_penalty(c,f) +
+                          score_at_penalty(i,e) +
+                          score_at_penalty(b,j) )/RT ) *
                   Qz(e+1,f-1) *
                   Qz(c+1,d-1) *
                   Qz(a+1,b-1);
@@ -503,9 +521,9 @@ calculate_partition_function()
                   Qg(i,i,e,f) *
                   Qz(i+1,d-1) *
                   Qgr(d,e-1,f+1,j) *
-                  exp( -beta2/RT ) *
-                  exp( -score_at_penalty(d,j)/RT ) *
-                  exp( -score_at_penalty(i,f)*2/RT );
+                  exp( -( score_pk_paired(1) +
+                          score_at_penalty(d,j) +
+                          score_at_penalty(i,f)*2 )/RT );
               }
             }
           }
@@ -526,9 +544,9 @@ calculate_partition_function()
                     Qg(d,d,j,j) *
                     Qz(d+1,e-1) *
                     Qz(f+1,j-1)
-                    exp( -beta2/RT ) *
-                    exp( -score_at_penalty(d,j)*2/RT ) *
-                    exp( -score_at_penalty(i,f)/RT );
+                    exp( -( score_pk_paired(1) +
+                            score_at_penalty(d,j)*2 +
+                            score_at_penalty(i,f) )/RT );
                 }
               }
             }
@@ -552,8 +570,8 @@ calculate_partition_function()
                   Qp(i,j) +=
                     Qgl(i,d-1,e,f) *
                     Qgr(d,e-1,f+1,j) *
-                    exp( -score_at_penalty(d,j)/RT ) *
-                    exp( -score_at_penalty(i,j)/RT );
+                    exp( -( score_at_penalty(d,j) +
+                            score_at_penalty(i,j) )/RT );
                 }
               }
             }
@@ -567,8 +585,8 @@ calculate_partition_function()
       if (i!=0 && j!=N-1)
       {
         Qz(i,j) =
-          exp( -score_dangle(i,j)/RT ) *
-          exp( -beta3*(j-i+1)/RT );
+          exp( -( score_dangle(i,j) +
+                  score_pk_unpaired(j-i+1) )/RT );
       }
 
       for (int d=i; d<=j-4; ++d)
@@ -580,16 +598,17 @@ calculate_partition_function()
             Q(i,j) +=
               Q(i,d-1) *
               Qb(d,e) *
-              exp( -score_at_penalty(d,e)/RT ) *
-              exp( -score_dangle(e+1,j)/RT );
+              exp( -( score_at_penalty(d,e) +
+                      score_dangle(e+1,j) )/RT );
 
             if (i!=0 && j!=N-1)
             {
               Qm(i,j) +=
-                exp( -(alpha2 + alpha3*(d-i + j-e))/RT) *
-                exp( -score_at_penalty(d,e)/RT ) *
-                exp( -score_dangle(e+1,j)/RT) *
-                exp( -score_dangle(i,d-1)/RT) *
+                exp( -( score_multiloop_paired(1) +
+                        score_multiloop_unpaired(d-i + j-e) +
+                        score_at_penalty(d,e) +
+                        score_dangle(e+1,j) +
+                        score_dangle(i,d-1) )/RT ) *
                 Qb(d,e);
 
               if (d>=i+5)
@@ -597,17 +616,19 @@ calculate_partition_function()
                 Qm(i,j) +=
                   Qm(i,d-1) *
                   Qb(d,e) *
-                  exp( -(alpha2 + alpha3*(j-e))/RT ) *
-                  exp( -score_at_penalty(d,e)/RT ) *
-                  exp( -score_dangle(e+1,j)/RT );
+                  exp( -( score_multiloop_paired(1) +
+                          score_multiloop_unpaired(j-e) +
+                          score_at_penalty(d,e) +
+                          score_dangle(e+1,j) )/RT );
               }
                 
               Qz(i,j) +=
                 Qz(i,d-1) *
                 Qb(d,e) *
-                exp( -(beta2 + beta3*(j-e))/RT ) *
-                exp( -score_at_penalty(d,e)/RT ) *
-                exp( -score_dangle(e+1,j)/RT );
+                exp( -( score_pk_paired(1) +
+                        score_pk_unpaired(j-e) +
+                        score_at_penalty(d,e) +
+                        score_dangle(e+1,j) )/RT );
             }
           }
         }
@@ -620,31 +641,37 @@ calculate_partition_function()
           Q(i,j) +=
             Q(i,d-1) *
             Qp(d,e) *
-            exp( -beta1/RT ) *
-            exp( -score_dangle(e+1,j)/RT );
+            exp( -( score_pk() +
+                    score_dangle(e+1,j) )/RT );
 
           if (i!=0 && j!=N-1)
           {
             Qm(i,j) +=
-              exp( -(beta1m + 2*alpha2 + alpha3*(d-i + j-e))/RT ) *
-              Qp(d,e) *
-              exp( -score_dangle(e+1,j)/RT ) *
-              exp( -score_dangle(i,d-1)/RT );
+              exp( -( score_pk_multiloop() +
+                      score_multiloop_paired(2) +
+                      score_multiloop_unpaired(d-i + j-e) +
+                      score_dangle(e+1,j) +
+                      score_dangle(i,d-1) )/RT ) *
+              Qp(d,e);
 
             if (d>=i+5)
             {
               Qm(i,j) +=
                 Qm(i,d-1) *
                 Qp(d,e) *
-                exp( -(beta1m + 2*alpha2 + alpha3*(j-e))/RT ) *
-                exp( -score_dangle(e+1,j)/RT );
+                exp( -( score_pk_multiloop() +
+                        score_multiloop_paired(2) +
+                        score_multiloop_unpaired(j-e) +
+                        score_dangle(e+1,j) )/RT );
             }
 
             Qz(i,j) +=
               Qz(i,d-1) *
               Qp(d,e) *
-              exp( -(beta1p + 2*beta2 + beta3*(j-e))/RT ) *
-              exp( -score_dangle(e+1,j)/RT );
+              exp( -( score_pk_pk() +
+                      score_pk_paired(2) +
+                      score_pk_unpaired(j-e) +
+                      score_dangle(e+1,j) )/RT );
           }
         }
       }
@@ -677,8 +704,8 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
             if (allow_paired(c,f))
             {
               Qx(i,d,e,s) +=
-                exp( -score_interior_asymmetry(std::abs(l1-l2))/RT ) *
-                exp( -score_interior_mismatch(f,c,f+1,c-1)/RT ) *
+                exp( -( score_interior_asymmetry(std::abs(l1-l2)) +
+                        score_interior_mismatch(f,c,f+1,c-1) )/RT ) *
                 Qg(c,d,e,f);
             }
           }
@@ -694,8 +721,8 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
               if (allow_paired(c,f))
               {
                 Qx(i,d,e,s) +=
-                  exp( -score_interior_asymmetry(std::abs(l1-l2))/RT ) *
-                  exp( -score_interior_mismatch(f,c,f+1,c-1)/RT ) *
+                  exp( -( score_interior_asymmetry(std::abs(l1-l2)) +
+                          score_interior_mismatch(f,c,f+1,c-1) )/RT ) *
                   Qg(c,d,e,f);
               }
             }
@@ -760,7 +787,7 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
               if (allow_paired(c,f))
               {
                 Qg(i,d,e,j) +=
-                  exp(-score_interior(i,c,f,j)/RT) *
+                  exp( -score_interior(i,c,f,j)/RT ) *
                   Qg(c,d,e,f);
               }
             }

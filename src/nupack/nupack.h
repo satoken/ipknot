@@ -26,6 +26,24 @@ public:
   
 private:
   void fastiloop();
+  energy_t score_hairpin(int i, int j) const;
+  energy_t score_loop(int l) const;
+  energy_t score_interior(int i, int d, int e, int j) const;
+  energy_t score_interior_mismatch(int i, int j, int k, int l) const;
+  energy_t score_interior_asymmetry(int d) const;
+  energy_t score_multiloop() const;
+  energy_t score_multiloop_paired(int n) const;
+  energy_t score_multiloop_unpaired(int n) const;
+  energy_t score_at_penalty(int i, int j) const;
+  energy_t score_dangle(int i, int j) const;
+  energy_t score_pk() const;  
+  energy_t score_pk_multiloop() const;
+  energy_t score_pk_pk() const;  
+  energy_t score_pk_paired(int n) const;
+  energy_t score_pk_unpaired(int n) const;
+
+  bool allow_paired(int i, int j) const;
+  bool wc_pair(int i, int j) const;
 
 private:
   std::vector<int> seq;
