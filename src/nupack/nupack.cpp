@@ -2,6 +2,308 @@
 
 #include <cassert>
 #include <vector>
+#include <iostream>
+#include <fstream>
+#include <sstring>
+#include "dptable.h"
+
+template < class PF_TYPE >
+Nupack<PF_TYPE>::
+Nupack()
+  : hairpin37(30, 0.0),
+    bulge37(30, 0.0),
+    interior37(30, 0.0),
+    stack37(boost::extents[6][6]),
+    int11(boost::extents[6][6][4][4]),
+    int12(boost::extents[6][6][4][4][4]),
+    int22(boost::extents[6][6][4][4][4][4]),
+    dangle3_37(boost::extents[6][4]),
+    dangle5_37(boost::extents[6][4]),
+    triloop37(boost::extents[4][4][4][4][4]),
+    tetraloop37(boost::extents[4][4][4][4][4][4]),
+    mismatch_hairpin37(boost::extents[4][4][6]),
+    mismatch_interior37(boost::extents[4][4][6]),
+    asymmetry_penalty()
+{
+}
+
+template < class PF_TYPE >
+bool
+load_parameters(const char* file)
+{
+  int pair[] = { PAIR_AU, PAIR_CG, PAIR_GC, PAIR_UA, PAIR_GU, PAIR_UG};
+  int base[] = { BASE_A, BASE_C, BASE_G, BASE_U };
+  
+  std::ifstream is(file);
+  if (!is) return false;
+
+  int i, j, v;
+  std::string line;
+
+  // stack
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  for (i=0; i!=6; ++i)
+  {
+    std::istringstream ss(line);
+    for (j=0; j!=6; ++j)
+    {
+      ss >> v;
+      stack37[pair[i]][pair[j]] = v/100.0;
+    }
+    std::getline(is, line);
+  }
+  
+  // hairpin
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  for (i=0; i<30 && ss; ++i)
+  {
+    ss >> v;
+    hairpin37[i] = v/100.0;
+  }
+  for (j=i; j<30; ++j)
+    hairpin37[j] = hairpin37[i-1]+1.75*RT*log((j+1)/(1.0*i));
+
+  // bulge
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  for (i=0; i<30 && ss; ++i)
+  {
+    ss >> v;
+    bulge37[i] = v/100.0;
+  }
+  for (j=i; j<30; ++j)
+    bulge37[j] = bulge37[i-1]+1.75*RT*log((j+1)/(1.0*i));
+
+
+  // interior
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  for (i=0; i<30 && ss; ++i)
+  {
+    ss >> v;
+    interior37[i] = v/100.0;
+  }
+  for (j=i; j<30; ++j)
+    interior37[j] = interior37[i-1]+1.75*RT*log((j+1)/(1.0*i));
+
+  // asymmetry panelties
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  for (i=0; i<4; ++i)
+  {
+    ss >> v;
+    asymmetry_penalty[i] = v/100.0;
+  }
+  ss >> v;
+  max_asymmetry = v/100.0;
+
+  // triloops
+  std::fill(triloop37.data(), triloop37.data()+triloop37.num_elements(), 0.0);
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  while (line[0]!='>')
+  {
+    std::string loop;
+    ss.str(line);
+    ss >> loop >> v;
+    std::vector<boost::multi_array<energy_t,5>::index> idx(5);
+    for (i=0; i!=5; ++i) idx[i]=rbase(loop[i]);
+    triloop37[idx] = v/100.0;
+  }
+
+  // tetraloops
+  std::fill(tetraloop37.data(), tetraloop37.data()+tetraloop37.num_elements(), 0.0);
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  while (line[0]!='>')
+  {
+    std::string loop
+    ss.str(line);
+    ss >> loop >> v;
+    std::vector<boost::multi_array<energy_t,6>::index> idx(6);
+    for (i=0; i!=6; ++i) idx[i]=rbase(loop[i]);
+    tetraloop37[idx] = v/100.0;
+  }
+
+  // mismatch hairpin
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  for (i=0; i!=4; ++i)
+  {
+    for (j=0; j!=4; ++j)
+    {
+      ss.str(line);
+      for (k=0; k!=6; ++k)
+      {
+        ss >> v;
+        mismatch_hairpin37[base[i]][base[j]][pair[k]] = v/100.0;
+      }
+      std::getline(is, linne);
+    }
+  }      
+
+  // mismatch interior
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  for (i=0; i!=4; ++i)
+  {
+    for (j=0; j!=4; ++j)
+    {
+      ss.str(line);
+      for (k=0; k!=6; ++k)
+      {
+        ss >> v;
+        mismatch_interior37[base[i]][base[j]][pair[k]] = v/100.0;
+      }
+      std::getline(is, line);
+    }
+  }
+
+  // dangle5
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  for (i=0; i!=6; ++i)
+  {
+    ss.str(line);
+    for (j=0; j!=4; ++j)
+    {
+      ss >> v;
+      dangle5_37[pair[i]][base[j]] = v/100.0;
+    }
+    std::getline(is, line);
+  }
+
+  // dangle3
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  for (i=0; i!=6; ++i)
+  {
+    ss.str(line);
+    for (j=0; j!=4; ++j)
+    {
+      ss >> v;
+      dangle3_37[pair[i]][base[j]] = v/100.0;
+    }
+    std::getline(is, line);
+  }
+
+  // multiloop penalties
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  ss >> multiloop_penalty;
+  multiloop_penalty /= 100.0;
+  ss >> multiloop_paired_penalty;
+  multiloop_paired_penalty /= 100.0;
+  ss >> multiloop_unpaired_penalty;
+  multiloop_unpaired_penalty /= 100.0;
+  
+  // AT terminate penalties
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  ss >> at_penalty;
+  at_penalty /= 100.0;
+
+  // interior loops 1x1
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  for (i=0; i!=6; ++i)
+  {
+    for (j=0; j!=6; ++j)
+    {
+      for (int k=0; k!=4; ++k)
+      {
+        ss.str(line);
+        for (int l=0; l!=4; ++l)
+        {
+          ss >> v;
+          int11[pair(i)][pair(j)][base(k)][base(l)] = v/100.0;
+        }
+        std::getline(is, line);
+      }
+    }
+  }
+
+  // interior loops 2x2
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  for (i=0; i!=6; ++i)
+  {
+    for (j=0; j!=6; ++j)
+    {
+      for (int m=0; m!=4; ++m)
+      {
+        for (int n=0; n!=4; ++n)
+        {
+          for (int k=0; k!=4; ++k)
+          {
+            ss.str(line);
+            for (int l=0; l!=4; ++l)
+            {
+              ss >> v;
+              int22[pair(i)][pair(j)][base(m)][base(l)][base(n)][base(k)] = v/100.0;
+            }
+            std::getline(is, line);
+          }
+        }
+      }
+    }
+  }
+
+  // interior loops 1x2
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  for (i=0; i!=6; ++i)
+  {
+    for (j=0; j!=6; ++j)
+    {
+      for (int m=0; m!=4; ++m)
+      {
+        for (int k=0; k!=4; ++k)
+        {
+          ss.str(line);
+          for (int l=0; l!=4; ++l)
+          {
+            ss >> v;
+            int12[pair(i)][base(k)][base(m)][pair(j)][base(l)] = v/100.0;
+          }
+          std::getline(is, line);
+        }
+      }
+    }
+  }
+
+  // polyC hairpin parameters
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  ss >> v; polyC_penalty = v/100.0;
+  ss >> v; polyC_slope = v/100.0;
+  ss >> v; polyC_int = v/100.0;
+
+  // pseudoknot energy parameters
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  ss >> v; pk_penalty = v/100.0;
+  ss >> v; pk_paired_penalty = v/100.0;
+  ss >> v; pk_unpaired_penalty = v/100.0;
+  ss >> v; pk_multiloop_penalty = v/100.0;
+  ss >> v; pk_pk_penalty = v/100.0;
+
+  // BIMOLECULAR TERM
+  std::getline(is, line);
+  while (line[0]=='>') std::getline(is, line);
+  ss.str(line);
+  ss >> v; tinoco = v/100.0;
+}
 
 template < class PF_TYPE >
 Nupack<PF_TYPE>::pf_type
@@ -606,7 +908,7 @@ score_hairpin(int i, int j) const
   {
     if (seq[k]!=BASE_C)
     {
-      polyC=FALSE;
+      polyC = false;
       break;
     }
   }
@@ -628,18 +930,18 @@ score_hairpin(int i, int j) const
   {
     e += score_at_penalty(i,j);
     e += triloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-1]-1][seq[j]-1];
-    if (polyC) e += POLYC3;
+    if (polyC) e += polyC_penalty;
   }
   else if (size==4)
   {
     e += tetraloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-2]-1][seq[j-1]-1][seq[j]-1];
-    e += mismatch37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
-    if (polyC) e += POLYCSLOPE*size + POLYCINT;
+    e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
+    if (polyC) e += polyC_slope*size + polyC_int;
   }
   else /*if (size>4)*/
   {
-    e += mismatch37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
-    if (polyC) e += POLYCSLOPE*size + POLYCINT;
+    e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
+    if (polyC) e += polyC_slope*size + polyC_int;
   }
   return e;
 }
@@ -779,7 +1081,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_multiloop() const
 {
-
+  return multiloop_penalty;
 }
 
 template <class PF_TYPE>
@@ -787,7 +1089,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_multiloop_paired(int n) const
 {
-
+  return multiloop_paired_penalty*n;
 }
 
 template <class PF_TYPE>
@@ -795,23 +1097,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_multiloop_unpaired(int n) const
 {
-
-}
-
-template <class PF_TYPE>
-energy_t
-Nupack<PF_TYPE>::
-score_multiloop_paired(int n) const
-{
-
-}
-
-template <class PF_TYPE>
-energy_t
-Nupack<PF_TYPE>::
-score_multiloop_unpaired(int n) const
-{
-
+  reutrn multiloop_unpaired_panelty*n;
 }
 
 template <class PF_TYPE>
@@ -819,7 +1105,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_at_penalty(int i, int j) const
 {
-
+  return pair_type(i,j)==PAIR_AU || pair_type(i,j)==PAIR_UA ? at_penalty : 0;
 }
 
 template <class PF_TYPE>
@@ -840,7 +1126,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_pk() const
 {
-
+  return pk_penalty;
 }
 
 template <class PF_TYPE>
@@ -848,7 +1134,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_pk_multiloop() const
 {
-
+  return pk_multiloop_penalty;
 }
 
 template <class PF_TYPE>
@@ -856,7 +1142,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_pk_pk() const
 {
-
+  return pk_pk_penalty;
 }
 
 template <class PF_TYPE>
@@ -864,7 +1150,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_pk_paired(int n) const
 {
-
+  return pk_paired_penalty*n;
 }
 
 template <class PF_TYPE>
@@ -872,6 +1158,6 @@ energy_t
 Nupack<PF_TYPE>::
 score_pk_unpaired(int n) const
 {
-
+  return pk_unpaired_penalty*n;
 }
 
