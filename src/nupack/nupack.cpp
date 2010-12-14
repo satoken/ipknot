@@ -4,167 +4,6 @@
 #include <vector>
 
 template < class PF_TYPE >
-class Nupack<PF_TYPE>::DPTable2
-{
-public:
-  DPTable2() : V_(), N_(0)
-  {
-  }
-
-  void resize(int n)
-  {
-    N_=n;
-    V_.resize(N_*(N_+1)/2+(N_+1));
-  }
-
-  void fill(const PF_TYPE& v)
-  {
-    std::fill(V_.begin(), V_.end(), v);
-  }
-
-  PF_TYPE& operator()(int i, int j)
-  {
-    return V_[index(i, j)];
-  }
-
-  const PF_TYPE& operator()() const
-  {
-    return V_[index(i, j)];
-  }
-
-private:
-  int index(int i, int j) const
-  {
-    assert(i<=j);
-    assert(j<=N_);
-
-    return j==i-1 ? N_*(N_+1)/2 + i : i*N_+j-i*(1+i)/2;
-  }
-
-private:
-  std::vector<PF_TYPE> V_;
-  int N_;
-};
-
-template < class PF_TYPE >
-class Nupack<PF_TYPE>::DPTable4
-{
-public:
-  DPTable4() : V_(), N_(0)
-  {
-  }
-
-  void resize(int n)
-  {
-    N_=n;
-    V_.resize(N_*(N_-1)*(N_-2)*(N_-3)/2/3/4);
-  }
-
-  void fill(const PF_TYPE& v)
-  {
-    std::fill(V_.begin(), V_.end(), v);
-  }
-
-  PF_TYPE& operator()(int i, int d, int e, int j)
-  {
-    return V_[index(i, d, e, j)];
-  }
-
-  const PF_TYPE& operator()(int i, int d, int e, int j) const
-  {
-    return V_[index(i, d, e, j)];
-  }
-
-private:
-  int index(int h, int r, int m, int s) const
-  {
-    int h2 = h*h;
-    int h3 = h2*h;
-    int h4 = h3*h;
-    int m2 = m*m;
-    int n2 = n*n;
-    int n3 = n2*n;
-    int r2 = r*r;
-    int r3 = r2*r;
-
-    assert(h<=r);
-    assert(r<=m);
-    assert(m<=s);
-    assert(s<=N_);
-
-    return (h==r && m==s) ? V_.size()-1 :
-      (-24 - 50*h - 35*h2 - 10*h3 - h4 - 36*m -12*m2 +
-       12*n + 70*h*n + 30*h2*n + 4*h3*n + 24*m*n - 12*n2 -30*h*n2 -
-       6*h2*n2 + 4*h*n3 + 44*r - 48*n*r + 12*n2*r + 
-       24*r2 - 12*n*r2 +  4*r3 + 24*s)/24 ;
-  }
-
-private:
-  std::vector<PF_TYPE> V_;
-  int N_;
-};
-
-template < class PF_TYPE >
-class Nupack<PF_TYPE>::DPTableX
-{
-public:
-  DPTableX() : V_(), N_(0), D_(0)
-  {
-  }
-
-  void resize(int d, int n)
-  {
-    N_=n;
-    D_=d;
-    int max_sz=0;
-    for (int i=d; i<d+3; ++i)
-      max_sz = std::max(max_sz, (N_-i)*(i-5)*(i-1)*(i-2)/2);
-    V_.resize(max_sz);
-  }
-
-  void fill(const PF_TYPE& v)
-  {
-    std::fill(V_.begin(), V_.end(), v);
-  }
-
-  PF_TYPE& operator()(int i, int d, int e, int s)
-  {
-    return V_[index(i, d, e, s)];
-  }
-
-  const PF_TYPE& operator()(int i, int d, int e, int s) const
-  {
-    return V_[index(i, d, e, s)];
-  }
-
-  void swap(DPTableX& x)
-  {
-    std::swap(V_, x.V_);
-    std::swap(N_, x.N_);
-    std::swap(D_, x.D_);
-  }
-
-private:
-  int index(int i, int h1, int m1, int s) const
-  {
-    int d1d2 = (D_-1)*(D_-2);
-    int d5 = D_-5;
-    int h1_i_1 = h1-i-1;
-    assert(i+D_<N);
-    assert(d-6<=s);
-    assert(i<h1);
-    return i*d5*d1d2/2 + s*d1d2/2 + 
-      h1_i_1*(d-1) - h1_i_1*(h1-i)/2 + m1 - h1 - 1;
-  }
-
-private:
-  std::vector<PF_TYPE> V_;
-  int N_;
-  int D_;
-};
-
-
-template < class PF_TYPE >
 Nupack<PF_TYPE>::pf_type
 Nupack<PF_TYPE>::
 calculate_partition_function()
@@ -755,3 +594,284 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
     }
   }
 }
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_hairpin(int i, int j) const
+{
+  energy_t e=0.0;
+  bool polyC = true;
+  for (int k=i+1; k<j; ++k)
+  {
+    if (seq[k]!=BASE_C)
+    {
+      polyC=FALSE;
+      break;
+    }
+  }
+
+  int size=j-i-1;
+#if 0
+  if (size<3) return INF;
+  if (!allow_paired(i,j)) return INF;
+#else
+  assert(size>=3);
+  assert(allow_paired(i,j));
+#endif
+
+  e += size<=30 ?
+    hairpin37[size-1] : 
+    hairpin37[30 - 1] + 1.75*RT*log(size/30.0);
+
+  if (size==3)
+  {
+    e += score_at_penalty(i,j);
+    e += triloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-1]-1][seq[j]-1];
+    if (polyC) e += POLYC3;
+  }
+  else if (size==4)
+  {
+    e += tetraloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-2]-1][seq[j-1]-1][seq[j]-1];
+    e += mismatch37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
+    if (polyC) e += POLYCSLOPE*size + POLYCINT;
+  }
+  else /*if (size>4)*/
+  {
+    e += mismatch37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
+    if (polyC) e += POLYCSLOPE*size + POLYCINT;
+  }
+  return e;
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_loop(int l) const
+{
+  return l<=30 ?
+    interior37[l-1] :
+    interior37[30-1]+1.75*RT*log(l/30.0);
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_interior(int i, int h, int m, int j) const
+{
+  int l1 = h - i - 1;
+  int l2 = j - m - 1;
+  int size = l1 + l2;
+  energy_t e = 0;
+
+  // helix
+  if (size==0)
+  {
+    e += stack37[get_type(i,j)][get_type(h,m)];
+  }
+  
+  // bulge
+  else if (l1==0 || l2==0)
+  {
+    e += size<=30 ?
+      bulge37[size-1] :
+      bulge37[30-1] + 1.75*RT*log(size/30.0);
+
+    if (l1+l2==1)           //single bulge...treat as a stacked region
+    {
+      e += score_helix(i,h,m,j);
+      e -= SALT_CORRECTION;
+    }
+    else
+    {
+      e += score_at_penalty(i,j);
+      e += score_at_penalty(h,m);
+    }
+  }
+
+  // interior loop
+  else if (l1>0 && l2>0)
+  {
+    int asymmetry = std::abs(l1-l2);
+    if (asymmetry>1 || size>4)
+    {
+      e += score_interior_asymmetry(asymmetry);
+      if (l1>1 && l2>1)
+      {
+        e += score_interior_mismatch(m, h, m+1, h-1);
+        e += score_interior_mismatch(i, j, i+1, j-1);
+      }
+      else if (l1==1 || l2==1)
+      {                         // assume AA terminal mismatch?
+        e += score_interior_mismatch(m, h);
+        e += score_interior_mismatch(i, j);
+      }
+      else
+      {
+        assert(!"unclassified interior loop");
+        exit(1);
+      }
+    }
+    else if (l1==1 && l2==1)
+      e += int11[pair_type(i,j)][pair_type(h,m)][seq[i+1]-1][seq[j-1]-1];
+    else if (l1==2 && l2==2)
+      e += int22[pair_type(i,j)][pair_type(h,m)][seq[i+1]-1][seq[j-1]-1][seq[i+2]-1][seq[j-2]-1];
+    else if (l1==1 && l2==2)
+      e += int12[get_type(i,j)][seq[j-2]-1][seq[i+1]-1][get_type(h,m)][seq[j-1]-1];
+    else if (l1==2 && l2==1)
+      e += int12[get_type(m,h)][seq[i+1]-1][seq[j-1]-1][get_type(m,h)][seq[i+2]-1];
+    else
+    {
+      assert(!"error in tabulated interior loop");
+      exit(1);
+    }
+  }
+  else
+  {
+    assert(!"improperly classifed interior loop");
+    exit(1);
+  }
+  return e;
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_interior_mismatch(int i, int j, int k, int l) const
+{
+/*
+  Interior Mismatch calculation
+
+  This calculates the Mismatch interaction energies between positions
+  1 -> 5' i k 3'
+  2 -> 3' j l 5'
+  Interactions energies taken from file tstacki2.dgd.
+*/
+  return mismatch37[seq[k]-1][seq[l]-1][pair_type(i,j)];
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_interior_asymmetry(int l1, int l2) const
+{
+  energy_t e=0.0;
+  int size = l1+l2;
+  int asymmetry = std::abs(l1-l2);
+  e += size<=30 ?
+    interior37[size-1] :
+    interior37[30-1] + 1.75*RT*log(size/30.0);
+
+  //Asymmetry rountine copied from efn.f in Zuker's mfold package.
+  int asymmetry_index = 4;
+  if( l1 < asymmetry_index) asymmetry_index = l1;
+  if( l2 < asymmetry_index) asymmetry_index = l2;
+  if( asymmetry*asymmetry_penalty[ asymmetry_index - 1] < max_asymmetry )
+    e += asymmetry * asymmetry_penalty[ asymmetry_index - 1];
+  else
+    e += max_asymmetry; // MAX asymmetry penalty
+
+  return e;
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_multiloop() const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_multiloop_paired(int n) const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_multiloop_unpaired(int n) const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_multiloop_paired(int n) const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_multiloop_unpaired(int n) const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_at_penalty(int i, int j) const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_dangle(int i, int j) const
+{
+  energy_t d5=0.0, d3=0.0;
+  if (j!=N-1)
+    d3 = dangle3_27[pair_type(i-1,j+1)][seq[j]-1];
+  if (i!=0)
+    d5 = dangle5_27[pair_type(i-1,j+1)][seq[i]-1];
+  return d3+d5;
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_pk() const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_pk_multiloop() const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_pk_pk() const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_pk_paired(int n) const
+{
+
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_pk_unpaired(int n) const
+{
+
+}
+

@@ -5,17 +5,13 @@
 
 #include <vector>
 #include <string>
+#include "dptable.h"
 
 template < class PF_TYPE >
 class Nupack
 {
 public:
   typedef PF_TYPE pf_type;
-
-private:  
-  class DPTable2;
-  class DPTable4;
-  class DPTableX;
 
 public:
   Nupack();
@@ -58,6 +54,25 @@ private:
   DPTable4 Qgr;
   DPTable4 Qgls;
   DPTable4 Qgrs;
+
+  // energy parameters
+  energy_t hairpin37[];
+  energy_t bulge37[];
+  energy_t interior37[];
+  energy_t stack37[];
+  energy_t int11[];
+  energy_t int12[];
+  energy_t int22[];
+  energy_t dangle3_37[];
+  energy_t dangle5_37[];
+  energy_t triloop37[][][][][];
+  energy_t tetraloop37[][][][][][];
+  energy_t mismatch37[][][];
+  energy_t asymmetry_penalty[];
+  energy_t max_asymmetry;
+  energy_t POLYC3, POLYCSLOPE, POLYCINT;
+  energy_t SALT_CORRECTION;
+  energy_t AT_PENALTY;
 };
 
 #endif // __INC_NUPACK_H__
