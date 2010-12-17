@@ -17,7 +17,7 @@ public:
     V_.resize(N_*(N_+1)/2+(N_+1));
   }
 
-  void fill(const PF_TYPE& v)
+  void fill(const T& v)
   {
     std::fill(V_.begin(), V_.end(), v);
   }
@@ -27,7 +27,7 @@ public:
     return V_[index(i, j)];
   }
 
-  const T& operator()() const
+  const T& operator()(int i, int j) const
   {
     return V_[index(i, j)];
   }
@@ -35,7 +35,7 @@ public:
 private:
   int index(int i, int j) const
   {
-    assert(i<=j);
+    //assert(i<=j);
     assert(j<=N_);
 
     return j==i-1 ? N_*(N_+1)/2 + i : i*N_+j-i*(1+i)/2;
@@ -60,7 +60,7 @@ public:
     V_.resize(N_*(N_-1)*(N_-2)*(N_-3)/2/3/4);
   }
 
-  void fill(const PF_TYPE& v)
+  void fill(const T& v)
   {
     std::fill(V_.begin(), V_.end(), v);
   }
@@ -78,6 +78,7 @@ public:
 private:
   int index(int h, int r, int m, int s) const
   {
+    int n = N_;
     int h2 = h*h;
     int h3 = h2*h;
     int h4 = h3*h;
@@ -104,7 +105,7 @@ private:
   int N_;
 };
 
-template < class PF_TYPE >
+template < class T >
 class DPTableX
 {
 public:
@@ -122,7 +123,7 @@ public:
     V_.resize(max_sz);
   }
 
-  void fill(const PF_TYPE& v)
+  void fill(const T& v)
   {
     std::fill(V_.begin(), V_.end(), v);
   }
@@ -147,11 +148,12 @@ public:
 private:
   int index(int i, int h1, int m1, int s) const
   {
-    int d1d2 = (D_-1)*(D_-2);
-    int d5 = D_-5;
+    int d=D_;
+    int d1d2 = (d-1)*(d-2);
+    int d5 = d-5;
     int h1_i_1 = h1-i-1;
-    assert(i+D_<N);
-    assert(d-6<=s);
+    assert(i+d<N_);
+    assert(d-6>=s);
     assert(i<h1);
     return i*d5*d1d2/2 + s*d1d2/2 + 
       h1_i_1*(d-1) - h1_i_1*(h1-i)/2 + m1 - h1 - 1;

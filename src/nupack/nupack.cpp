@@ -1,230 +1,343 @@
 // $Id:$
 
+#include <cstdio>
 #include <cassert>
 #include <vector>
 #include <iostream>
 #include <fstream>
-#include <sstring>
+#include <boost/array.hpp>
 #include "dptable.h"
+
+typedef float energy_t;
+
+#include "nupack.h"
+
+enum { PAIR_AU=0, PAIR_CG, PAIR_GC, PAIR_UA, PAIR_GU, PAIR_UG };
+enum { BASE_N=0, BASE_A, BASE_C, BASE_G, BASE_U };
+
+#define EXP expl
+#define LOG logl
 
 template < class PF_TYPE >
 Nupack<PF_TYPE>::
 Nupack()
-  : hairpin37(30, 0.0),
-    bulge37(30, 0.0),
-    interior37(30, 0.0),
+  : base_map('z'-'a'+1),
+    pair_map(boost::extents[5][5]),
+    RT(kB*(ZERO_C_IN_KELVIN+37)),
+    hairpin37(30),
+    bulge37(30),
+    interior37(30),
     stack37(boost::extents[6][6]),
-    int11(boost::extents[6][6][4][4]),
-    int12(boost::extents[6][6][4][4][4]),
-    int22(boost::extents[6][6][4][4][4][4]),
+    int11_37(boost::extents[6][6][4][4]),
+    int12_37(boost::extents[6][4][4][6][4]),
+    int22_37(boost::extents[6][6][4][4][4][4]),
     dangle3_37(boost::extents[6][4]),
     dangle5_37(boost::extents[6][4]),
     triloop37(boost::extents[4][4][4][4][4]),
     tetraloop37(boost::extents[4][4][4][4][4][4]),
     mismatch_hairpin37(boost::extents[4][4][6]),
     mismatch_interior37(boost::extents[4][4][6]),
-    asymmetry_penalty()
+    asymmetry_penalty(4),
+    SALT_CORRECTION(0)
 {
+  std::fill(base_map.begin(), base_map.end(), (int)BASE_N);
+  base_map['a'-'a'] = BASE_A;
+  base_map['c'-'a'] = BASE_C;
+  base_map['g'-'a'] = BASE_G;
+  base_map['u'-'a'] = BASE_U;
+  base_map['t'-'a'] = BASE_U;
+
+  std::fill(pair_map.data(), pair_map.data()+pair_map.num_elements(), -1);
+  pair_map[BASE_A][BASE_U] = PAIR_AU;
+  pair_map[BASE_U][BASE_A] = PAIR_UA;
+  pair_map[BASE_C][BASE_G] = PAIR_CG;
+  pair_map[BASE_G][BASE_C] = PAIR_GC;
+  pair_map[BASE_G][BASE_U] = PAIR_GU;
+  pair_map[BASE_U][BASE_G] = PAIR_UG;
+}
+
+template < class PF_TYPE >
+int
+Nupack<PF_TYPE>::
+base(char x) const
+{
+  if (x>='a' && x<='z')
+    return base_map[x-'a'];
+  else if (x>='A' && x<='Z')
+    return base_map[x-'A'];
+  else
+    return BASE_N;
+}
+
+template < class PF_TYPE >
+int
+Nupack<PF_TYPE>::
+pair_type(int i, int j) const
+{
+  return pair_map[seq[i]][seq[j]];
+}
+
+template < class PF_TYPE >
+int
+Nupack<PF_TYPE>::
+pair_type(int i) const
+{
+  // assume Watson-Crick pairs
+  switch (seq[i])
+  {
+    case BASE_A: return PAIR_AU; break;
+    case BASE_C: return PAIR_CG; break;
+    case BASE_G: return PAIR_GC; break;
+    case BASE_U: return PAIR_UA; break;
+  }
+  return -1;
 }
 
 template < class PF_TYPE >
 bool
+Nupack<PF_TYPE>::
+wc_pair(int i, int j) const
+{
+  return pair_type(i, j)!=PAIR_GU && pair_type(i, j)!=PAIR_UG;
+}
+
+template < class PF_TYPE >
+bool
+Nupack<PF_TYPE>::
+allow_paired(int i, int j) const
+{
+  return j-i-1>=3 && pair_type(i,j)>=0;
+}
+
+template < class PF_TYPE >
+void
+Nupack<PF_TYPE>::
+load_sequence(const std::string& s)
+{
+  N=s.size();
+  seq.resize(N);
+  for (int i=0; i!=N; ++i) seq[i] = base(s[i]);
+}
+
+template < class PF_TYPE >
+bool
+Nupack<PF_TYPE>::
 load_parameters(const char* file)
 {
-  int pair[] = { PAIR_AU, PAIR_CG, PAIR_GC, PAIR_UA, PAIR_GU, PAIR_UG};
-  int base[] = { BASE_A, BASE_C, BASE_G, BASE_U };
+  int p[] = { PAIR_AU, PAIR_CG, PAIR_GC, PAIR_UA, PAIR_GU, PAIR_UG };
+  int b[] = { BASE_A-1, BASE_C-1, BASE_G-1, BASE_U-1 };
   
   std::ifstream is(file);
   if (!is) return false;
 
-  int i, j, v;
   std::string line;
 
   // stack
   std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  for (i=0; i!=6; ++i)
+  while (line[0]=='>')
+    std::getline(is, line);
+  for (int i=0; i!=6; ++i)
   {
     std::istringstream ss(line);
-    for (j=0; j!=6; ++j)
+    for (int j=0; j!=6; ++j)
     {
-      ss >> v;
-      stack37[pair[i]][pair[j]] = v/100.0;
+      int v; ss >> v;
+      stack37[p[i]][p[j]] = v/100.0;
     }
     std::getline(is, line);
   }
   
   // hairpin
   std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  for (i=0; i<30 && ss; ++i)
+  while (line[0]=='>')
+    std::getline(is, line);
   {
-    ss >> v;
-    hairpin37[i] = v/100.0;
+    int i, j, v;
+    std::istringstream ss(line);
+    for (i=0; i<30 && ss; ++i)
+    {
+      ss >> v;
+      hairpin37[i] = v/100.0;
+    }
+    for (j=i; j<30; ++j)
+      hairpin37[j] = hairpin37[i-1]+1.75*RT*LOG((j+1)/(1.0*i));
   }
-  for (j=i; j<30; ++j)
-    hairpin37[j] = hairpin37[i-1]+1.75*RT*log((j+1)/(1.0*i));
 
   // bulge
   std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  for (i=0; i<30 && ss; ++i)
+  while (line[0]=='>')
+    std::getline(is, line);
   {
-    ss >> v;
-    bulge37[i] = v/100.0;
+    int i, j, v;
+    std::istringstream ss(line);
+    for (i=0; i<30 && ss; ++i)
+    {
+      ss >> v;
+      bulge37[i] = v/100.0;
+    }
+    for (j=i; j<30; ++j)
+      bulge37[j] = bulge37[i-1]+1.75*RT*LOG((j+1)/(1.0*i));
   }
-  for (j=i; j<30; ++j)
-    bulge37[j] = bulge37[i-1]+1.75*RT*log((j+1)/(1.0*i));
 
 
   // interior
   std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  for (i=0; i<30 && ss; ++i)
+  while (line[0]=='>')
+    std::getline(is, line);
   {
-    ss >> v;
-    interior37[i] = v/100.0;
+    int i, j, v;
+    std::istringstream ss(line);
+    for (i=0; i<30 && ss; ++i)
+    {
+      ss >> v;
+      interior37[i] = v/100.0;
+    }
+    for (j=i; j<30; ++j)
+      interior37[j] = interior37[i-1]+1.75*RT*LOG((j+1)/(1.0*i));
   }
-  for (j=i; j<30; ++j)
-    interior37[j] = interior37[i-1]+1.75*RT*log((j+1)/(1.0*i));
 
   // asymmetry panelties
   std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  for (i=0; i<4; ++i)
+  while (line[0]=='>')
+    std::getline(is, line);
   {
-    ss >> v;
-    asymmetry_penalty[i] = v/100.0;
+    int v;
+    std::istringstream ss(line);
+    for (int i=0; i<4; ++i)
+    {
+      ss >> v;
+      asymmetry_penalty[i] = v/100.0;
+    }
+    ss >> v; max_asymmetry = v/100.0;
   }
-  ss >> v;
-  max_asymmetry = v/100.0;
 
   // triloops
   std::fill(triloop37.data(), triloop37.data()+triloop37.num_elements(), 0.0);
   std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
+  while (line[0]=='>')
+    std::getline(is, line);
   while (line[0]!='>')
   {
-    std::string loop;
-    ss.str(line);
-    ss >> loop >> v;
-    std::vector<boost::multi_array<energy_t,5>::index> idx(5);
-    for (i=0; i!=5; ++i) idx[i]=rbase(loop[i]);
-    triloop37[idx] = v/100.0;
+    int v;
+    char loop[256];
+    sscanf(line.c_str(), "%s %d", loop, &v);
+    std::vector<int> idx(5);
+    for (int i=0; i!=5; ++i) idx[i]=base(loop[i])-1;
+    triloop37(idx) = v/100.0;
+    std::getline(is, line);
   }
 
   // tetraloops
   std::fill(tetraloop37.data(), tetraloop37.data()+tetraloop37.num_elements(), 0.0);
   std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
+  while (line[0]=='>')
+    std::getline(is, line);
   while (line[0]!='>')
   {
-    std::string loop
-    ss.str(line);
-    ss >> loop >> v;
-    std::vector<boost::multi_array<energy_t,6>::index> idx(6);
-    for (i=0; i!=6; ++i) idx[i]=rbase(loop[i]);
-    tetraloop37[idx] = v/100.0;
+    int v;
+    char loop[256];
+    sscanf(line.c_str(), "%s %d", loop, &v);
+    std::vector<int> idx(6);
+    for (int i=0; i!=6; ++i) idx[i]=base(loop[i])-1;
+    tetraloop37(idx) = v/100.0;
+    std::getline(is, line);    
   }
 
   // mismatch hairpin
-  std::getline(is, line);
   while (line[0]=='>') std::getline(is, line);
-  for (i=0; i!=4; ++i)
+  for (int i=0; i!=4; ++i)
   {
-    for (j=0; j!=4; ++j)
+    for (int j=0; j!=4; ++j)
     {
-      ss.str(line);
-      for (k=0; k!=6; ++k)
+      std::istringstream ss(line);
+      for (int k=0; k!=6; ++k)
       {
-        ss >> v;
-        mismatch_hairpin37[base[i]][base[j]][pair[k]] = v/100.0;
+        int v; ss >> v;
+        mismatch_hairpin37[b[i]][b[j]][p[k]] = v/100.0;
       }
-      std::getline(is, linne);
+      std::getline(is, line);
     }
   }      
 
   // mismatch interior
-  std::getline(is, line);
   while (line[0]=='>') std::getline(is, line);
-  for (i=0; i!=4; ++i)
+  for (int i=0; i!=4; ++i)
   {
-    for (j=0; j!=4; ++j)
+    for (int j=0; j!=4; ++j)
     {
-      ss.str(line);
-      for (k=0; k!=6; ++k)
+      std::istringstream ss(line);
+      for (int k=0; k!=6; ++k)
       {
-        ss >> v;
-        mismatch_interior37[base[i]][base[j]][pair[k]] = v/100.0;
+        int v; ss >> v;
+        mismatch_interior37[b[i]][b[j]][p[k]] = v/100.0;
       }
       std::getline(is, line);
     }
   }
 
   // dangle5
-  std::getline(is, line);
   while (line[0]=='>') std::getline(is, line);
-  for (i=0; i!=6; ++i)
+  for (int i=0; i!=6; ++i)
   {
-    ss.str(line);
-    for (j=0; j!=4; ++j)
+    std::istringstream ss(line);
+    for (int j=0; j!=4; ++j)
     {
-      ss >> v;
-      dangle5_37[pair[i]][base[j]] = v/100.0;
+      int v; ss >> v;
+      dangle5_37[p[i]][b[j]] = v/100.0;
     }
     std::getline(is, line);
   }
 
   // dangle3
-  std::getline(is, line);
   while (line[0]=='>') std::getline(is, line);
-  for (i=0; i!=6; ++i)
+  for (int i=0; i!=6; ++i)
   {
-    ss.str(line);
-    for (j=0; j!=4; ++j)
+    std::istringstream ss(line);
+    for (int j=0; j!=4; ++j)
     {
-      ss >> v;
-      dangle3_37[pair[i]][base[j]] = v/100.0;
+      int v; ss >> v;
+      dangle3_37[p[i]][b[j]] = v/100.0;
     }
     std::getline(is, line);
   }
 
   // multiloop penalties
-  std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  ss >> multiloop_penalty;
-  multiloop_penalty /= 100.0;
-  ss >> multiloop_paired_penalty;
-  multiloop_paired_penalty /= 100.0;
-  ss >> multiloop_unpaired_penalty;
-  multiloop_unpaired_penalty /= 100.0;
+  while (line[0]=='>')
+    std::getline(is, line);
+  {
+    int v;
+    std::istringstream ss(line);
+    ss >> v; multiloop_penalty = v/100.0;
+    ss >> v; multiloop_paired_penalty = v/100.0;
+    ss >> v; multiloop_unpaired_penalty = v/100.0;
+    std::getline(is, line);
+  }
   
   // AT terminate penalties
-  std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  ss >> at_penalty;
-  at_penalty /= 100.0;
+  while (line[0]=='>')
+    std::getline(is, line);
+  {
+    int v;
+    std::istringstream ss(line);
+    ss >> v; at_penalty = v/100.0;
+    std::getline(is, line);
+  }
 
   // interior loops 1x1
-  std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  for (i=0; i!=6; ++i)
+  while (line[0]=='>')
+    std::getline(is, line);
+  for (int i=0; i!=6; ++i)
   {
-    for (j=0; j!=6; ++j)
+    for (int j=0; j!=6; ++j)
     {
+      std::getline(is, line);   // header
       for (int k=0; k!=4; ++k)
       {
-        ss.str(line);
+        std::istringstream ss(line);
         for (int l=0; l!=4; ++l)
         {
-          ss >> v;
-          int11[pair(i)][pair(j)][base(k)][base(l)] = v/100.0;
+          int v; ss >> v;
+          int11_37[p[i]][p[j]][b[k]][b[l]] = v/100.0;
         }
         std::getline(is, line);
       }
@@ -232,23 +345,24 @@ load_parameters(const char* file)
   }
 
   // interior loops 2x2
-  std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  for (i=0; i!=6; ++i)
+  while (line[0]=='>')
+    std::getline(is, line);
+  for (int i=0; i!=6; ++i)
   {
-    for (j=0; j!=6; ++j)
+    for (int j=0; j!=6; ++j)
     {
       for (int m=0; m!=4; ++m)
       {
         for (int n=0; n!=4; ++n)
         {
+          std::getline(is, line);   // header
           for (int k=0; k!=4; ++k)
           {
-            ss.str(line);
+            std::istringstream ss(line);
             for (int l=0; l!=4; ++l)
             {
-              ss >> v;
-              int22[pair(i)][pair(j)][base(m)][base(l)][base(n)][base(k)] = v/100.0;
+              int v; ss >> v;
+              int22_37[p[i]][p[j]][b[m]][b[l]][b[n]][b[k]] = v/100.0;
             }
             std::getline(is, line);
           }
@@ -258,21 +372,22 @@ load_parameters(const char* file)
   }
 
   // interior loops 1x2
-  std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  for (i=0; i!=6; ++i)
+  while (line[0]=='>')
+    std::getline(is, line);
+  for (int i=0; i!=6; ++i)
   {
-    for (j=0; j!=6; ++j)
+    for (int j=0; j!=6; ++j)
     {
       for (int m=0; m!=4; ++m)
       {
+        std::getline(is, line);   // header
         for (int k=0; k!=4; ++k)
         {
-          ss.str(line);
+          std::istringstream ss(line);
           for (int l=0; l!=4; ++l)
           {
-            ss >> v;
-            int12[pair(i)][base(k)][base(m)][pair(j)][base(l)] = v/100.0;
+            int v; ss >> v;
+            int12_37[p[i]][b[k]][b[m]][p[j]][b[l]] = v/100.0;
           }
           std::getline(is, line);
         }
@@ -281,53 +396,68 @@ load_parameters(const char* file)
   }
 
   // polyC hairpin parameters
-  std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  ss >> v; polyC_penalty = v/100.0;
-  ss >> v; polyC_slope = v/100.0;
-  ss >> v; polyC_int = v/100.0;
+  while (line[0]=='>')
+    std::getline(is, line);
+  {
+    int v;
+    std::istringstream ss(line);
+    ss >> v; polyC_penalty = v/100.0;
+    ss >> v; polyC_slope = v/100.0;
+    ss >> v; polyC_int = v/100.0;
+    std::getline(is, line);
+  }
 
   // pseudoknot energy parameters
-  std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  ss >> v; pk_penalty = v/100.0;
-  ss >> v; pk_paired_penalty = v/100.0;
-  ss >> v; pk_unpaired_penalty = v/100.0;
-  ss >> v; pk_multiloop_penalty = v/100.0;
-  ss >> v; pk_pk_penalty = v/100.0;
+  while (line[0]=='>')
+    std::getline(is, line);
+  {
+    int v;
+    std::istringstream ss(line);
+    ss >> v; pk_penalty = v/100.0;
+    ss >> v; pk_paired_penalty = v/100.0;
+    ss >> v; pk_unpaired_penalty = v/100.0;
+    ss >> v; pk_multiloop_penalty = v/100.0;
+    ss >> v; pk_pk_penalty = v/100.0;
+    std::getline(is, line);
+  }
 
   // BIMOLECULAR TERM
-  std::getline(is, line);
-  while (line[0]=='>') std::getline(is, line);
-  ss.str(line);
-  ss >> v; tinoco = v/100.0;
+  while (line[0]=='>')
+    std::getline(is, line);
+  {
+    int v;
+    std::istringstream ss(line);
+    ss >> v; //tinoco = v/100.0;
+    std::getline(is, line);
+  }
+
+  return true;
 }
 
 template < class PF_TYPE >
-Nupack<PF_TYPE>::pf_type
+typename Nupack<PF_TYPE>::pf_type
 Nupack<PF_TYPE>::
 calculate_partition_function()
 {
-  Q.resize(N);
-  Qb.resize(N);
-  Qm.resize(N);
-  Qp.resize(N);
-  Qz.resize(N);
-  Qg.resize(N);
-  Qgl.resize(N);
-  Qgr.resize(N);
-  Qgls.resize(N);
-  Qglr.resize(N);
-  DPTableX Qx, Qx1, Qx2;
+  Q.resize(N);    Q.fill(0.0);
+  Qb.resize(N);   Qb.fill(0.0);
+  Qm.resize(N);   Qm.fill(0.0);
+  Qp.resize(N);   Qp.fill(0.0);
+  Qz.resize(N);   Qz.fill(0.0);
+  Qg.resize(N);   Qg.fill(0.0);
+  Qgl.resize(N);  Qgl.fill(0.0);
+  Qgr.resize(N);  Qgr.fill(0.0);
+  Qgls.resize(N); Qgls.fill(0.0);
+  Qgrs.resize(N); Qgrs.fill(0.0);
+  for (int i=0; i!=N; ++i) Q(i,i-1) = Qz(i,i-1) = 1.0;
+  DPTableX<PF_TYPE> Qx, Qx1, Qx2;
 
   for (int l=1; l<=N; ++l)
   {
-    std::swap(Qx, Qx1);
-    std::swap(Qx1, Qx2);
+    Qx.swap(Qx1);
+    Qx1.swap(Qx2);
     Qx2.resize(l+1, N);
-    std::fill(Qx2.begin(), Qx2.end(), 0.0);
+    Qx2.fill(0.0);
 
     for (int i=0; i+l<=N; ++i)
     {
@@ -336,7 +466,7 @@ calculate_partition_function()
       // Qb recursion
       if (allow_paired(i,j))
       {
-        Qb(i,j) = exp( -score_hairpin(i,j)/RT );
+        Qb(i,j) = EXP( -score_hairpin(i,j)/RT );
 
         for (int d=i+1; d<=j-5; ++d) // all possible rightmost pairs d-e
         {
@@ -345,12 +475,12 @@ calculate_partition_function()
             if (allow_paired(d,e))
             {
               Qb(i,j) += Qb(d,e) *
-                exp( -score_interior(i,d,e,j)/RT );
+                EXP( -score_interior(i,d,e,j)/RT );
 
               if (d>=i+6 && wc_pair(d,e) && wc_pair(i,j))
               {
                 Qb(i,j) += Qm(i+1,d-1) * Qb(d,e) *
-                  exp( -( score_multiloop() +
+                  EXP( -( score_multiloop() +
                           score_multiloop_paired(2) +
                           score_multiloop_unpaired(j-e-1) +
                           score_at_penalty(i,j) +
@@ -368,16 +498,16 @@ calculate_partition_function()
             for (int e=d+5; e<=j-1; ++e)
             {
               Qb(i,j) += Qp(d,e) *
-                exp( -( score_multiloop() +
+                EXP( -( score_multiloop() +
                         score_pk_multiloop() +
                         score_multiloop_paired(3) +
                         score_multiloop_unpaired(j-e-1 + d-i-1) +
                         score_at_penalty(i,j) +
                         score_dangle(e+1,j-1) +
                         score_dangle(i+1,d-1) )/RT );
-
+              
               Qb(i,j) += Qm(i+1,d-1) * Qp(d,e) *
-                exp( -( score_multiloop() +
+                EXP( -( score_multiloop() +
                         score_pk_multiloop() +
                         score_multiloop_paired(3) +
                         score_multiloop_unpaired(j-e-1) +
@@ -400,7 +530,7 @@ calculate_partition_function()
           for (int e=d+4; e<=j-1; ++e)
           {
             if (allow_paired(d,e))
-              Qg(i,d,e,j) += exp( -score_interior(i,d,e,j)/RT );
+              Qg(i,d,e,j) += EXP( -score_interior(i,d,e,j)/RT );
           }
         }
       }
@@ -418,7 +548,7 @@ calculate_partition_function()
             if (allow_paired(d,e) && wc_pair(d,e))
             {
               Qg(i,d,e,j) += Qm(i+1,d-1) *
-                exp( -( score_multiloop() +
+                EXP( -( score_multiloop() +
                         score_multiloop_paired(2) +
                         score_multiloop_unpaired(j-e-1) + 
                         score_at_penalty(i,j) +
@@ -436,7 +566,7 @@ calculate_partition_function()
             if (allow_paired(d,e) && wc_pair(d,e))
             {
               Qg(i,d,e,j) += Qm(e+1,j-1) *
-                exp( -( score_multiloop() +
+                EXP( -( score_multiloop() +
                         score_multiloop_paired(2) +
                         score_multiloop_unpaired(d-i-1) +
                         score_at_penalty(i,j) +
@@ -454,7 +584,7 @@ calculate_partition_function()
             if (allow_paired(d,e) && wc_pair(d,e))
             {
               Qg(i,d,e,j) += Qm(i+1,d-1) * Qm(e+1,j-1) *
-                exp( -( score_multiloop() +
+                EXP( -( score_multiloop() +
                         score_multiloop_paired(2) +
                         score_at_penalty(i,j) +
                         score_at_penalty(d,e) )/RT );
@@ -472,7 +602,7 @@ calculate_partition_function()
               for (int f=e+1; f<=j-1; ++f)
               {
                 Qg(i,d,e,j) += Qgls(i+1,d,e,f) *
-                  exp( -( score_multiloop() +
+                  EXP( -( score_multiloop() +
                           score_multiloop_paired(1) +
                           score_multiloop_unpaired(j-f-1) +
                           score_at_penalty(i,j) +
@@ -492,7 +622,7 @@ calculate_partition_function()
               for (int c=i+1; c<=d-1; ++c)
               {
                 Qg(i,d,e,j) += Qgrs(c,d,e,j-1) *
-                  exp( -( score_multiloop() +
+                  EXP( -( score_multiloop() +
                           score_multiloop_paired(1) +
                           score_multiloop_unpaired(c-i-1) +
                           score_at_penalty(i,j) +
@@ -512,7 +642,7 @@ calculate_partition_function()
               for (int c=i+6; c<=d-1; ++c)
               {
                 Qg(i,d,e,j) += Qm(i+1,c-1) * Qgrs(c,d,e,j-1) *
-                  exp( -( score_multiloop() +
+                  EXP( -( score_multiloop() +
                           score_multiloop_paired(1) +
                           score_at_penalty(i,j) )/RT );
               }
@@ -533,7 +663,7 @@ calculate_partition_function()
               if (allow_paired(d,e))
               {
                 Qgls(i,d,e,j) += Qm(i,c-1) * Qg(c,d,e,j) *
-                  exp( -( score_multiloop_paired(1) +
+                  EXP( -( score_multiloop_paired(1) +
                           score_at_penalty(c,j) )/RT );
               }
             }
@@ -553,7 +683,7 @@ calculate_partition_function()
               if (allow_paired(i,f) && wc_pair(i,f))
               {
                 Qgrs(i,d,e,j) += Qg(i,d,e,f) * Qm(f+1,j) *
-                  exp( -( score_multiloop_paired(1) +
+                  EXP( -( score_multiloop_paired(1) +
                           score_at_penalty(i,f) )/RT );
               }
             }
@@ -571,7 +701,7 @@ calculate_partition_function()
             for (int e=d; e<=f-2; ++e) // f-3???
             {
               Qgl(i,e,f,j) += Qg(i,d,f,j) * Qz(d+1,e) *
-                exp( -( score_pk_paired(1) +
+                EXP( -( score_pk_paired(1) +
                         score_at_penalty(d,f) )/RT );
             }
           }
@@ -608,7 +738,7 @@ calculate_partition_function()
               {
                 int e=d;
                 Qp(i,j) += Qg(i,a,d,e) * Qg(b,c,f,j) * Qz(e+1,f-1) * Qz(c+1,d-1) * Qz(a+1,b-1) *
-                  exp( -( score_pk_paired(2) +
+                  EXP( -( score_pk_paired(2) +
                           score_at_penalty(a,d) +
                           score_at_penalty(c,f) +
                           score_at_penalty(i,e) +
@@ -632,7 +762,7 @@ calculate_partition_function()
               if (allow_paired(i,f) && wc_pair(i,f))
               {
                 Qp(i,j) += Qg(i,i,e,f) * Qz(i+1,d-1) * Qgr(d,e-1,f+1,j) *
-                  exp( -( score_pk_paired(1) +
+                  EXP( -( score_pk_paired(1) +
                           score_at_penalty(d,j) +
                           score_at_penalty(i,f)*2 )/RT );
               }
@@ -651,8 +781,8 @@ calculate_partition_function()
               {
                 if (allow_paired(i,f) && wc_pair(i,f))
                 {
-                  Qp(i,j) += Qg(d,d,j,j) * Qz(d+1,e-1) * Qz(f+1,j-1) *
-                    exp( -( score_pk_paired(1) +
+                  Qp(i,j) += Qgl(i,d-1,e,f) * Qg(d,d,j,j) * Qz(d+1,e-1) * Qz(f+1,j-1) *
+                    EXP( -( score_pk_paired(1) +
                             score_at_penalty(d,j)*2 +
                             score_at_penalty(i,f) )/RT );
                 }
@@ -676,7 +806,7 @@ calculate_partition_function()
                 if (allow_paired(i,f) && wc_pair(i,f))
                 {
                   Qp(i,j) += Qgl(i,d-1,e,f) * Qgr(d,e-1,f+1,j) *
-                    exp( -( score_at_penalty(d,j) +
+                    EXP( -( score_at_penalty(d,j) +
                             score_at_penalty(i,j) )/RT );
                 }
               }
@@ -686,12 +816,12 @@ calculate_partition_function()
       }
 
       // Q, Qm, Qz recurtions
-      Q(i,j) = exp( -score_dangle(i,j)/RT ); // empty recursion
+      Q(i,j) = EXP( -score_dangle(i,j)/RT ); // empty recursion
 
       if (i!=0 && j!=N-1)
       {
         Qz(i,j) =
-          exp( -( score_dangle(i,j) +
+          EXP( -( score_dangle(i,j) +
                   score_pk_unpaired(j-i+1) )/RT );
       }
 
@@ -702,13 +832,13 @@ calculate_partition_function()
           if (allow_paired(d,e) && wc_pair(d,e))
           {
             Q(i,j) += Q(i,d-1) * Qb(d,e) *
-              exp( -( score_at_penalty(d,e) +
+              EXP( -( score_at_penalty(d,e) +
                       score_dangle(e+1,j) )/RT );
 
             if (i!=0 && j!=N-1)
             {
               Qm(i,j) += Qb(d,e) *
-                exp( -( score_multiloop_paired(1) +
+                EXP( -( score_multiloop_paired(1) +
                         score_multiloop_unpaired(d-i + j-e) +
                         score_at_penalty(d,e) +
                         score_dangle(e+1,j) +
@@ -717,14 +847,14 @@ calculate_partition_function()
               if (d>=i+5)
               {
                 Qm(i,j) += Qm(i,d-1) * Qb(d,e) *
-                  exp( -( score_multiloop_paired(1) +
+                  EXP( -( score_multiloop_paired(1) +
                           score_multiloop_unpaired(j-e) +
                           score_at_penalty(d,e) +
                           score_dangle(e+1,j) )/RT );
               }
                 
               Qz(i,j) += Qz(i,d-1) * Qb(d,e) *
-                exp( -( score_pk_paired(1) +
+                EXP( -( score_pk_paired(1) +
                         score_pk_unpaired(j-e) +
                         score_at_penalty(d,e) +
                         score_dangle(e+1,j) )/RT );
@@ -738,13 +868,13 @@ calculate_partition_function()
         for (int e=d+5; e<=j; ++e)
         {
           Q(i,j) += Q(i,d-1) * Qp(d,e) *
-            exp( -( score_pk() +
+            EXP( -( score_pk() +
                     score_dangle(e+1,j) )/RT );
 
           if (i!=0 && j!=N-1)
           {
             Qm(i,j) += Qp(d,e) *
-              exp( -( score_pk_multiloop() +
+              EXP( -( score_pk_multiloop() +
                       score_multiloop_paired(2) +
                       score_multiloop_unpaired(d-i + j-e) +
                       score_dangle(e+1,j) +
@@ -753,20 +883,21 @@ calculate_partition_function()
             if (d>=i+5)
             {
               Qm(i,j) += Qm(i,d-1) * Qp(d,e) *
-                exp( -( score_pk_multiloop() +
+                EXP( -( score_pk_multiloop() +
                         score_multiloop_paired(2) +
                         score_multiloop_unpaired(j-e) +
                         score_dangle(e+1,j) )/RT );
             }
 
             Qz(i,j) += Qz(i,d-1) * Qp(d,e) *
-              exp( -( score_pk_pk() +
+              EXP( -( score_pk_pk() +
                       score_pk_paired(2) +
                       score_pk_unpaired(j-e) +
                       score_dangle(e+1,j) )/RT );
           }
         }
       }
+      //printf("%d,%d: %Lf\n", i, j, Q(i,j));
     }
   }
 
@@ -776,7 +907,7 @@ calculate_partition_function()
 template < class PF_TYPE >
 void
 Nupack<PF_TYPE>::
-fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
+fastiloops(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2)
 {
   int l=j-i+1;
   if (l>=17)   // smallest subsequence not added to Qg as special case
@@ -796,7 +927,7 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
             if (allow_paired(c,f))
             {
               Qx(i,d,e,s) += Qg(c,d,e,f) *
-                exp( -( score_interior_asymmetry(std::abs(l1-l2)) +
+                EXP( -( score_interior_asymmetry(l1, l2) +
                         score_interior_mismatch(f,c,f+1,c-1) )/RT );
             }
           }
@@ -812,7 +943,7 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
               if (allow_paired(c,f))
               {
                 Qx(i,d,e,s) += Qg(c,d,e,f) *
-                  exp( -( score_interior_asymmetry(std::abs(l1-l2)) +
+                  EXP( -( score_interior_asymmetry(l1, l2) +
                           score_interior_mismatch(f,c,f+1,c-1) )/RT );
               }
             }
@@ -834,7 +965,7 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
           for (int s=8; s<=l-9; ++s)
           {
             Qg(i,d,e,j) += Qx(i,d,e,s) *
-              exp( -score_interior_mismatch(i,j,i+1,j-1)/RT );
+              EXP( -score_interior_mismatch(i,j,i+1,j-1)/RT );
           }
         }
 
@@ -844,7 +975,7 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
           for (int s=8; s<=l-9; ++s)
           {
             Qx2(i-1,d,e,s+2) = Qx(i,d,e,s) *
-              exp( -(score_loop(s+2)-score_loop(s))/RT );
+              EXP( -(score_loop(s+2)-score_loop(s))/RT );
           }
         }
       
@@ -860,7 +991,7 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
               if (allow_paired(c,f))
               {
                 Qg(i,d,e,j) += Qg(c,d,e,f) *
-                  exp( -score_interior(i,c,f,j)/RT );
+                  EXP( -score_interior(i,c,f,j)/RT );
               }
             }
           }
@@ -874,7 +1005,7 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
               if (allow_paired(c,f))
               {
                 Qg(i,d,e,j) += Qg(c,d,e,f) *
-                  exp( -score_interior(i,c,f,j)/RT );
+                  EXP( -score_interior(i,c,f,j)/RT );
               }
             }
           }
@@ -887,7 +1018,7 @@ fastiloops(int i, int j, DPTableX& Qx, DPTableX& Qx2)
               if (allow_paired(c,f))
               {
                 Qg(i,d,e,j) += Qg(c,d,e,f) *
-                  exp( -score_interior(i,c,f,j)/RT );
+                  EXP( -score_interior(i,c,f,j)/RT );
               }
             }
           }
@@ -924,7 +1055,7 @@ score_hairpin(int i, int j) const
 
   e += size<=30 ?
     hairpin37[size-1] : 
-    hairpin37[30 - 1] + 1.75*RT*log(size/30.0);
+    hairpin37[30 - 1] + 1.75*RT*LOG(size/30.0);
 
   if (size==3)
   {
@@ -953,7 +1084,7 @@ score_loop(int l) const
 {
   return l<=30 ?
     interior37[l-1] :
-    interior37[30-1]+1.75*RT*log(l/30.0);
+    interior37[30-1]+1.75*RT*LOG(l/30.0);
 }
 
 template <class PF_TYPE>
@@ -969,7 +1100,7 @@ score_interior(int i, int h, int m, int j) const
   // helix
   if (size==0)
   {
-    e += stack37[get_type(i,j)][get_type(h,m)];
+    e += stack37[pair_type(i,j)][pair_type(h,m)];
   }
   
   // bulge
@@ -977,11 +1108,11 @@ score_interior(int i, int h, int m, int j) const
   {
     e += size<=30 ?
       bulge37[size-1] :
-      bulge37[30-1] + 1.75*RT*log(size/30.0);
+      bulge37[30-1] + 1.75*RT*LOG(size/30.0);
 
     if (l1+l2==1)           //single bulge...treat as a stacked region
     {
-      e += score_helix(i,h,m,j);
+      e += stack37[pair_type(i,j)][pair_type(h,m)];
       e -= SALT_CORRECTION;
     }
     else
@@ -997,16 +1128,21 @@ score_interior(int i, int h, int m, int j) const
     int asymmetry = std::abs(l1-l2);
     if (asymmetry>1 || size>4)
     {
-      e += score_interior_asymmetry(asymmetry);
+      e += score_interior_asymmetry(l1, l2);
       if (l1>1 && l2>1)
       {
         e += score_interior_mismatch(m, h, m+1, h-1);
         e += score_interior_mismatch(i, j, i+1, j-1);
       }
       else if (l1==1 || l2==1)
-      {                         // assume AA terminal mismatch?
+      {
+#if 1                           // assume AA terminal mismatch?
         e += score_interior_mismatch(m, h);
         e += score_interior_mismatch(i, j);
+#else
+        e += score_interior_mismatch(m, h, m+1, h-1);
+        e += score_interior_mismatch(i, j, i+1, j-1);
+#endif
       }
       else
       {
@@ -1015,13 +1151,13 @@ score_interior(int i, int h, int m, int j) const
       }
     }
     else if (l1==1 && l2==1)
-      e += int11[pair_type(i,j)][pair_type(h,m)][seq[i+1]-1][seq[j-1]-1];
+      e += int11_37[pair_type(i,j)][pair_type(h,m)][seq[i+1]-1][seq[j-1]-1];
     else if (l1==2 && l2==2)
-      e += int22[pair_type(i,j)][pair_type(h,m)][seq[i+1]-1][seq[j-1]-1][seq[i+2]-1][seq[j-2]-1];
+      e += int22_37[pair_type(i,j)][pair_type(h,m)][seq[i+1]-1][seq[j-1]-1][seq[i+2]-1][seq[j-2]-1];
     else if (l1==1 && l2==2)
-      e += int12[get_type(i,j)][seq[j-2]-1][seq[i+1]-1][get_type(h,m)][seq[j-1]-1];
+      e += int12_37[pair_type(i,j)][seq[j-2]-1][seq[i+1]-1][pair_type(h,m)][seq[j-1]-1];
     else if (l1==2 && l2==1)
-      e += int12[get_type(m,h)][seq[i+1]-1][seq[j-1]-1][get_type(m,h)][seq[i+2]-1];
+      e += int12_37[pair_type(m,h)][seq[i+1]-1][seq[j-1]-1][pair_type(j,i)][seq[i+2]-1];
     else
     {
       assert(!"error in tabulated interior loop");
@@ -1041,15 +1177,15 @@ energy_t
 Nupack<PF_TYPE>::
 score_interior_mismatch(int i, int j, int k, int l) const
 {
-/*
-  Interior Mismatch calculation
+  return mismatch_interior37[seq[k]-1][seq[l]-1][pair_type(i,j)];
+}
 
-  This calculates the Mismatch interaction energies between positions
-  1 -> 5' i k 3'
-  2 -> 3' j l 5'
-  Interactions energies taken from file tstacki2.dgd.
-*/
-  return mismatch37[seq[k]-1][seq[l]-1][pair_type(i,j)];
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_interior_mismatch(int i, int j) const
+{
+  return mismatch_interior37[BASE_N][BASE_N][pair_type(i,j)];
 }
 
 template <class PF_TYPE>
@@ -1062,16 +1198,11 @@ score_interior_asymmetry(int l1, int l2) const
   int asymmetry = std::abs(l1-l2);
   e += size<=30 ?
     interior37[size-1] :
-    interior37[30-1] + 1.75*RT*log(size/30.0);
+    interior37[30-1] + 1.75*RT*LOG(size/30.0);
 
-  //Asymmetry rountine copied from efn.f in Zuker's mfold package.
-  int asymmetry_index = 4;
-  if( l1 < asymmetry_index) asymmetry_index = l1;
-  if( l2 < asymmetry_index) asymmetry_index = l2;
-  if( asymmetry*asymmetry_penalty[ asymmetry_index - 1] < max_asymmetry )
-    e += asymmetry * asymmetry_penalty[ asymmetry_index - 1];
-  else
-    e += max_asymmetry; // MAX asymmetry penalty
+  // asymmetry penalty
+  e += std::min(max_asymmetry,
+                asymmetry * asymmetry_penalty[std::min(4,std::min(l1,l2))-1]);
 
   return e;
 }
@@ -1097,7 +1228,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_multiloop_unpaired(int n) const
 {
-  reutrn multiloop_unpaired_panelty*n;
+  return multiloop_unpaired_penalty*n;
 }
 
 template <class PF_TYPE>
@@ -1114,11 +1245,37 @@ Nupack<PF_TYPE>::
 score_dangle(int i, int j) const
 {
   energy_t d5=0.0, d3=0.0;
+
+#if 0
   if (j!=N-1)
-    d3 = dangle3_27[pair_type(i-1,j+1)][seq[j]-1];
+    d3 = dangle3_37[pair_type(i-1,j+1)][seq[j]-1];
   if (i!=0)
-    d5 = dangle5_27[pair_type(i-1,j+1)][seq[i]-1];
-  return d3+d5;
+    d5 = dangle5_37[pair_type(i-1,j+1)][seq[i]-1];
+
+#else  // Is this correct? This implementation is the same as the original nupack.
+
+  //if( DANGLETYPE != 2) {
+    if( (j == i - 1) || (j==-1 && i>0)) {
+      return 0.0;
+    }
+  //}
+  //else if( (j==-1 && i>0) || (j == i - 1 && (i == 0 || j == seqlength - 1)) ) {
+    //return 1.0;
+  //}
+
+  if( (j==-1 && i>0) || (j==i-1 && (i==0 || j==N-1)) )
+    return 0.0;
+
+  if (j!=N-1)
+    d3 = dangle3_37[3-pair_type(j+1)][seq[j]-1];
+  if (i!=0)
+    d5 = dangle5_37[pair_type(i-1)][seq[i]-1];
+#endif
+
+  if (i==j && i!=0 && j!=N-1 /* && DANGLETYPE!=2 */)
+    return std::min(d3, d5);
+  else
+    return d3+d5;
 }
 
 template <class PF_TYPE>
@@ -1161,3 +1318,12 @@ score_pk_unpaired(int n) const
   return pk_unpaired_penalty*n;
 }
 
+int
+main(int argc, char* argv[])
+{
+  Nupack<long double> nu;
+  nu.load_parameters(argv[1]);
+  nu.load_sequence("GGGCUGUUUUUCUCGCUGACUUUCAGCCCCAAACAAAAAAUGUCAGCA");
+  std::cout << nu.calculate_partition_function() << std::endl;
+  return 0;
+}
