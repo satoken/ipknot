@@ -42,6 +42,8 @@ extern "C" {
 };
 };
 
+#include "nupack/nupack.h"
+
 extern "C" {
 #include "new_param.h"
 };
@@ -157,6 +159,21 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
       bp[offset[i+1]+(j+1)] = Vienna::pr[Vienna::iindx[i+1]-(j+1)];
   Vienna::free_pf_arrays();
 }
+
+// Nupack model
+
+void
+NupackModel::
+calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
+{
+  Nupack<long double> nu;
+  nu.load_parameters("nupack/rna1995.dG");
+  nu.load_sequence(seq);
+  nu.calculate_partition_function();
+  nu.calculate_posterior();
+  nu.get_posterior(bp, offset);
+}
+
 
 // Alifold model
 

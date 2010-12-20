@@ -2200,6 +2200,9 @@ score_pk_unpaired(int n) const
   return pk_unpaired_penalty*n;
 }
 
+// instantiation
+template class Nupack<long double>;
+
 #if 0
 int
 main(int argc, char* argv[])

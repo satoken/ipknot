@@ -25,6 +25,7 @@
 #include <vector>
 #include <string>
 #include <boost/multi_array.hpp>
+#include "dptable.h"
 
 #define kB 0.00198717 // Boltzmann constant in kcal/mol/K
 #define ZERO_C_IN_KELVIN 273.15 // Zero degrees C in Kelvin
@@ -32,6 +33,7 @@
 
 template <class T> class DPTable2;
 template <class T> class DPTable4;
+template <class T> class DPTableX;
 
 template < class PF_TYPE >
 class Nupack
@@ -39,6 +41,7 @@ class Nupack
 public:
   typedef PF_TYPE pf_type;
   typedef double DBL_TYPE;
+  typedef float energy_t;
 
 public:
   Nupack();

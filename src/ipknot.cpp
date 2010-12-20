@@ -649,6 +649,8 @@ main(int argc, char* argv[])
       en = new RNAfoldModel(param);
     else if (strcasecmp(model[0], "CONTRAfold")==0)
       en = new CONTRAfoldModel();
+    else if (strcasecmp(model[0], "nupack")==0)
+      en = new NupackModel();
     else
     {
       usage(progname);

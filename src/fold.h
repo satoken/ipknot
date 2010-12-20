@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include <list>
+#include <stdexcept>
 
 // The base class for calculating base-pairing probabilities of an indivisual sequence
 class BPEngineSeq
@@ -71,6 +72,20 @@ public:
   
   void calculate_posterior(const std::string& seq, const std::string& paren,
                            std::vector<float>& bp, std::vector<int>& offset) const;
+    
+  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
+};
+
+class NupackModel : public BPEngineSeq
+{
+public:
+  NupackModel() : BPEngineSeq() { }
+  
+  void calculate_posterior(const std::string& seq, const std::string& paren,
+                           std::vector<float>& bp, std::vector<int>& offset) const
+  {
+    throw std::runtime_error("not supported yet");
+  }
     
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
 };
@@ -131,3 +146,7 @@ public:
 };
 
 #endif  // __INC_FOLD_H__
+
+// Local Variables:
+// mode: C++
+// End:
