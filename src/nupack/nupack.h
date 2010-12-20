@@ -1,4 +1,23 @@
-// $Id:$
+/*
+ * $Id$
+ * 
+ * Copyright (C) 2010 Kengo Sato
+ *
+ * This file is part of IPknot.
+ *
+ * IPknot is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * IPknot is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #ifndef __INC_NUPACK_H__
 #define __INC_NUPACK_H__
@@ -19,16 +38,26 @@ class Nupack
 {
 public:
   typedef PF_TYPE pf_type;
+  typedef double DBL_TYPE;
 
 public:
   Nupack();
   void load_sequence(const std::string& s);
   bool load_parameters(const char* filename);
   pf_type calculate_partition_function();
-  void calcualt_posterior();
+  void calculate_posterior();
+  void get_posterior(std::vector<float>& bp, std::vector<int>& offset) const;
+  void get_posterior(std::vector<float>& bp1, std::vector<float>& bp2, std::vector<int>& offset) const;
   
 private:
   void fastiloops(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2);
+  void fastiloops_pr(int i, int j,
+#ifdef ENABLE_RECALCULATE
+                     DPTableX<float>& Precx, DPTableX<float>& Precx2,
+#endif
+                     DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2,
+                     DPTable4<DBL_TYPE>& Pg, DPTableX<DBL_TYPE>& Px, DPTableX<DBL_TYPE>& Px2);
+
   energy_t score_hairpin(int i, int j) const;
   energy_t score_loop(int l) const;
   energy_t score_interior(int i, int d, int e, int j) const;
@@ -68,6 +97,17 @@ private:
   DPTable4<PF_TYPE> Qgr;
   DPTable4<PF_TYPE> Qgls;
   DPTable4<PF_TYPE> Qgrs;
+  DPTable2<DBL_TYPE> P;
+  DPTable2<DBL_TYPE> Pb;
+  DPTable2<DBL_TYPE> Pm;
+  DPTable2<DBL_TYPE> Pp;
+  DPTable2<DBL_TYPE> Pz;
+  DPTable2<DBL_TYPE> Pbg;
+  DPTable4<DBL_TYPE> Pg;
+  DPTable4<DBL_TYPE> Pgl;
+  DPTable4<DBL_TYPE> Pgr;
+  DPTable4<DBL_TYPE> Pgls;
+  DPTable4<DBL_TYPE> Pgrs;
   
   // energy parameters
   std::vector<energy_t> hairpin37;
