@@ -79,7 +79,8 @@ public:
 class NupackModel : public BPEngineSeq
 {
 public:
-  NupackModel(int model) : BPEngineSeq(), model_(model) { }
+  //NupackModel(int model) : BPEngineSeq(), model_(model) { }
+  NupackModel(const char* param) : BPEngineSeq(), param_(param) { }
   
   void calculate_posterior(const std::string& seq, const std::string& paren,
                            std::vector<float>& bp, std::vector<int>& offset) const
@@ -90,7 +91,8 @@ public:
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
 
 private:
-  int model_;
+  //int model_;
+  const char* param_;
 };
 
 class AlifoldModel : public BPEngineAln

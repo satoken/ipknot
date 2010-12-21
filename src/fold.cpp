@@ -167,8 +167,8 @@ NupackModel::
 calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
 {
   Nupack<long double> nu;
-  //nu.load_parameters("nupack/rna1995.dG");
-  nu.load_default_parameters(model_);
+  nu.load_parameters(param_);
+  //nu.load_default_parameters(model_);
   nu.load_sequence(seq);
   nu.calculate_partition_function();
   nu.calculate_posterior();
