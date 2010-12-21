@@ -117,6 +117,7 @@ private:
   DPTable4<DBL_TYPE> Pgrs;
   
   // energy parameters
+#if 0
   std::vector<energy_t> hairpin37;
   std::vector<energy_t> bulge37;
   std::vector<energy_t> interior37;
@@ -131,6 +132,22 @@ private:
   boost::multi_array<energy_t,3> mismatch_hairpin37;
   boost::multi_array<energy_t,3> mismatch_interior37;
   std::vector<energy_t> asymmetry_penalty;
+#else
+  energy_t hairpin37[30];
+  energy_t bulge37[30];
+  energy_t interior37[30];
+  energy_t stack37[6][6];
+  energy_t int11_37[6][6][4][4];
+  energy_t int21_37[6][4][4][6][4];
+  energy_t int22_37[6][6][4][4][4][4];
+  energy_t dangle3_37[6][4];
+  energy_t dangle5_37[6][4];
+  energy_t triloop37[4][4][4][4][4];
+  energy_t tloop37[4][4][4][4][4][4];
+  energy_t mismatch_hairpin37[4][4][6];
+  energy_t mismatch_interior37[4][4][6];
+  energy_t asymmetry_penalty[4];
+#endif
   energy_t polyC_penalty, polyC_slope, polyC_int;
   energy_t at_penalty;
   energy_t multiloop_penalty; // alpha1

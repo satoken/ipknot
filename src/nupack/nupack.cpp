@@ -47,6 +47,7 @@ Nupack()
   : base_map('z'-'a'+1),
     pair_map(boost::extents[5][5]),
     RT(kB*(ZERO_C_IN_KELVIN+37)),
+#if 0
     hairpin37(30),
     bulge37(30),
     interior37(30),
@@ -61,6 +62,7 @@ Nupack()
     mismatch_hairpin37(boost::extents[4][4][6]),
     mismatch_interior37(boost::extents[4][4][6]),
     asymmetry_penalty(4),
+#endif
     SALT_CORRECTION(0),
     loop_greater30(1.079 /*=1.75*RT*/),
     hairpin_GGG(0.0)
@@ -702,32 +704,6 @@ load_parameters_fm363(const std::vector<float>& v)
                       }                                        
                     }
 
-  // dangle3
-  dangle3_37[AU][A] = *x++;
-  dangle3_37[AU][C] = *x++;
-  dangle3_37[AU][G] = *x++;
-  dangle3_37[AU][U] = *x++;
-  dangle3_37[CG][A] = *x++;
-  dangle3_37[CG][C] = *x++;
-  dangle3_37[CG][G] = *x++;
-  dangle3_37[CG][U] = *x++;
-  dangle3_37[GC][A] = *x++;
-  dangle3_37[GC][C] = *x++;
-  dangle3_37[GC][G] = *x++;
-  dangle3_37[GC][U] = *x++;
-  dangle3_37[GU][A] = *x++;
-  dangle3_37[GU][C] = *x++;
-  dangle3_37[GU][G] = *x++;
-  dangle3_37[GU][U] = *x++;
-  dangle3_37[UA][A] = *x++;
-  dangle3_37[UA][C] = *x++;
-  dangle3_37[UA][G] = *x++;
-  dangle3_37[UA][U] = *x++;
-  dangle3_37[UG][A] = *x++;
-  dangle3_37[UG][C] = *x++;
-  dangle3_37[UG][G] = *x++;
-  dangle3_37[UG][U] = *x++;
-
   // dangle5
   dangle5_37[AU][A] = *x++;
   dangle5_37[AU][C] = *x++;
@@ -753,6 +729,32 @@ load_parameters_fm363(const std::vector<float>& v)
   dangle5_37[UG][C] = *x++;
   dangle5_37[UG][G] = *x++;
   dangle5_37[UG][U] = *x++;
+
+  // dangle3
+  dangle3_37[AU][A] = *x++;
+  dangle3_37[AU][C] = *x++;
+  dangle3_37[AU][G] = *x++;
+  dangle3_37[AU][U] = *x++;
+  dangle3_37[CG][A] = *x++;
+  dangle3_37[CG][C] = *x++;
+  dangle3_37[CG][G] = *x++;
+  dangle3_37[CG][U] = *x++;
+  dangle3_37[GC][A] = *x++;
+  dangle3_37[GC][C] = *x++;
+  dangle3_37[GC][G] = *x++;
+  dangle3_37[GC][U] = *x++;
+  dangle3_37[GU][A] = *x++;
+  dangle3_37[GU][C] = *x++;
+  dangle3_37[GU][G] = *x++;
+  dangle3_37[GU][U] = *x++;
+  dangle3_37[UA][A] = *x++;
+  dangle3_37[UA][C] = *x++;
+  dangle3_37[UA][G] = *x++;
+  dangle3_37[UA][U] = *x++;
+  dangle3_37[UG][A] = *x++;
+  dangle3_37[UG][C] = *x++;
+  dangle3_37[UG][G] = *x++;
+  dangle3_37[UG][U] = *x++;
 
   // loop length for interior loops
   for (int i=4; i!=7; ++i) interior37[i-1] = *x++;
@@ -798,8 +800,13 @@ load_parameters_fm363(const std::vector<float>& v)
   multiloop_unpaired_penalty = *x++;
   intermolecular_initiation = *x++;
 
+  // triloop
+  //std::fill(triloop37.data(), triloop37.data()+triloop37.num_elements(), 0.0);
+  std::fill(&triloop37[0][0][0][0][0], &triloop37[0][0][0][0][0]+4*4*4*4*4, 0.0);
+
   // tloops
-  std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0.0);
+  //std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0.0);
+  std::fill(&tloop37[0][0][0][0][0][0], &tloop37[0][0][0][0][0][0]+4*4*4*4*4*4, 0.0);
   tloop37[G][G][G][G][A][C] = *x++;
   tloop37[G][G][U][G][A][C] = *x++;
   tloop37[C][G][A][A][A][G] = *x++;
@@ -945,7 +952,8 @@ load_parameters(const char* file)
   }
 
   // triloops
-  std::fill(triloop37.data(), triloop37.data()+triloop37.num_elements(), 0.0);
+  //std::fill(triloop37.data(), triloop37.data()+triloop37.num_elements(), 0.0);
+  std::fill(&triloop37[0][0][0][0][0], &triloop37[0][0][0][0][0]+4*4*4*4*4, 0.0);
   std::getline(is, line);
   while (line[0]=='>')
     std::getline(is, line);
@@ -956,12 +964,14 @@ load_parameters(const char* file)
     sscanf(line.c_str(), "%s %d", loop, &v);
     std::vector<int> idx(5);
     for (int i=0; i!=5; ++i) idx[i]=base(loop[i])-1;
-    triloop37(idx) = v/100.0;
+    //triloop37(idx) = v/100.0;
+    triloop37[idx[0]][idx[1]][idx[2]][idx[3]][idx[4]] = v/100.0;
     std::getline(is, line);
   }
 
   // tloops
-  std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0.0);
+  //std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0.0);
+  std::fill(&tloop37[0][0][0][0][0][0], &tloop37[0][0][0][0][0][0]+4*4*4*4*4*4, 0.0);
   std::getline(is, line);
   while (line[0]=='>')
     std::getline(is, line);
@@ -972,7 +982,8 @@ load_parameters(const char* file)
     sscanf(line.c_str(), "%s %d", loop, &v);
     std::vector<int> idx(6);
     for (int i=0; i!=6; ++i) idx[i]=base(loop[i])-1;
-    tloop37(idx) = v/100.0;
+    //tloop37(idx) = v/100.0;
+    tloop37[idx[0]][idx[1]][idx[2]][idx[3]][idx[4]][idx[5]] = v/100.0;
     std::getline(is, line);    
   }
 
