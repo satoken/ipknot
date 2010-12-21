@@ -34,6 +34,8 @@ typedef float energy_t;
 
 enum { PAIR_AU=0, PAIR_CG, PAIR_GC, PAIR_UA, PAIR_GU, PAIR_UG };
 enum { BASE_N=0, BASE_A, BASE_C, BASE_G, BASE_U };
+enum { A=BASE_A-1, C=BASE_C-1, G=BASE_G-1, U=BASE_U-1 };
+enum { AU=PAIR_AU, CG=PAIR_CG, GC=PAIR_GC, UA=PAIR_UA, GU=PAIR_GU, UG=PAIR_UG };
 
 #define EXP expl
 #define LOG logl
@@ -49,16 +51,18 @@ Nupack()
     interior37(30),
     stack37(boost::extents[6][6]),
     int11_37(boost::extents[6][6][4][4]),
-    int12_37(boost::extents[6][4][4][6][4]),
+    int21_37(boost::extents[6][4][4][6][4]),
     int22_37(boost::extents[6][6][4][4][4][4]),
     dangle3_37(boost::extents[6][4]),
     dangle5_37(boost::extents[6][4]),
     triloop37(boost::extents[4][4][4][4][4]),
-    tetraloop37(boost::extents[4][4][4][4][4][4]),
+    tloop37(boost::extents[4][4][4][4][4][4]),
     mismatch_hairpin37(boost::extents[4][4][6]),
     mismatch_interior37(boost::extents[4][4][6]),
     asymmetry_penalty(4),
-    SALT_CORRECTION(0)
+    SALT_CORRECTION(0),
+    loop_greater30(1.079 /*=1.75*RT*/),
+    hairpin_GGG(0.0)
 {
   std::fill(base_map.begin(), base_map.end(), (int)BASE_N);
   base_map['a'-'a'] = BASE_A;
@@ -139,6 +143,714 @@ load_sequence(const std::string& s)
   for (int i=0; i!=N; ++i) seq[i] = base(s[i]);
 }
 
+int
+check_stability_and_size (int k, int l, int o, int p)
+// helper function, to detect which delta we need for the int22 parameters
+{
+  // having at least one AC mismatch is the simplest, test first
+  if ((k==A && l==C) || (k==C && l==A) || (o==A && p==C) || (o==C && p==A))
+    return 4;
+    
+  // combination of all mismatches of equal size (purine-purine, purine-pyrimidine, and pyrimidine-pyrimidine are different sizes)
+  // purine =  A, G
+  // pyrimidine = C, U
+  // if all purine-purines
+  if ((k==A || k==G) && (l==A || l==G) && (o==A || o==G) && (p==A || p==G))
+    return 1;
+  // if all pyrimidine-pyrimidine
+  if ((k==C || k==U) && (l==C || l==U) && (o==C || o==U) && (p==C || p==U))
+    return 1;
+  // if both  purine-pyrimidine
+  // assume the A-C pairs have been found above
+  if ( (((k==A || k==G) && (l==C || l==U)) || ((k==C || k==U) && (l==A || l==G))) &&
+       (((o==A || o==G) && (p==C || p==U)) || ((o==C || o==U) && (p==A || p==G))) )
+    return 1;
+  // or any combination of 2 unstable mismatches except AC: AA, CC, CU, GG
+  if ( ((k==A && l==A) || (k==C && l==C) || (k==C && l==U) || (k==U && l==C) || (k==G && l==G)) &&
+       ((o==A && p==A) || (o==C && p==C) || (o==C && p==U) || (o==U && p==C) || (o==G && p==G)) )
+    return 1;
+                 
+  // two stabilizing mismatches (GU, GA, UU) of different sizes  (purine-purine, purine-pyrimidine, and pyrimidine-pyrimidine are different sizes)
+  if ( (((k==G && l==U) || (k==U && l==G))   &&   ((o==G && p==A) || (o==A && p==G) || (o==U && p==U))) ||
+       (((k==G && l==A) || (k==A && l==G))   &&   ((o==G && p==U) || (o==U && p==G) || (o==U && p==U))) ||
+       ((k==U && l==U)                       &&   ((o==G && p==A) || (o==A && p==G) || (o==G && p==U) || (o==U && p==G))) )
+    return 2;
+        
+  // one stable (GU, GA, UU) and one unstable mismatch (excluding AC) (AA, CC, CU, GG) of different sizes
+  // GU
+  if ( ((k==G && l==U) || (k==U && l==G)) && 
+       ((o==A && p==A) || (o==C && p==C) || (o==C && p==U) || (o==U && p==C) || (o==G && p==G)) )
+    return 3;    
+  if ( ((o==G && p==U) || (o==U && p==G)) &&
+       ((k==A && l==A) || (k==C && l==C) || (k==C && l==U) || (k==U && l==C) || (k==G && l==G)) )
+    return 3;
+  // GA        
+  if ( ((k==G && l==A) || (k==A && l==G)) &&
+       ((o==C && p==C) || (o==C && p==U) || (o==U && p==C)) )
+    return 3;    
+  if ( ((o==G && p==A) || (o==A && p==G)) &&
+       ((k==C && l==C) || (k==C && l==U) || (k==U && l==C)) )
+    return 3;
+  // UU        
+  if ( (k==U && l==U) &&
+       ((o==A && p==A) || (o==G && p==G)) )
+    return 3;    
+  if ( (o==U && p==U) &&
+       ((k==A && l==A) || (k==G && l==G)) )
+    return 3;    
+        
+  return -1;            
+}
+
+// from Hotknot 2.0
+static float dp03[] = {
+  -0.90, -2.20, -2.10, -0.60, -1.10, -1.40, -2.10, -3.30, -2.40, -1.40,
+  -2.10, -2.40, -3.40, -1.50, -2.50, -1.30, -0.50, 1.30, -1.30, -1.00,
+  0.30, -0.30, -0.50, -0.30, -0.30, -0.10, -0.20, -1.50, -0.20, -1.10,
+  -1.20, -0.20, 0.20, -0.30, -0.30, -0.60, -1.10, -1.50, -1.50, -1.40,
+  -1.80, -1.00, -0.90, -2.90, -0.80, -2.20, -2.00, -1.60, -1.10, -1.70,
+  -1.40, -1.80, -2.00, -1.10, -1.50, -1.30, -2.10, -1.10, -0.70, -2.40,
+  -0.50, -2.40, -2.90, -1.40, -1.20, -1.90, -1.00, -2.20, -1.50, 0.20,
+  -0.50, -0.30, -0.30, -0.10, -0.20, -1.50, -0.20, -0.90, -1.10, -0.30,
+  0.00, -0.30, -0.30, -0.40, -1.10, -0.50, -0.30, -0.60, -0.50, -0.20,
+  -0.10, -1.20, 0.00, -1.40, -1.20, -0.70, -0.20, -0.30, -0.10, -0.50,
+  -0.80, -0.50, -0.30, -0.60, -0.50, -0.20, -0.10, -1.70, 0.00, -0.80,
+  -1.20, -0.30, -0.70, -0.60, -0.10, -0.60, -0.80, 0.65, -1.10, -0.70,
+  1.50, 1.00, 1.10, 1.20, 0.40, 1.10, -0.40, 0.40, 0.40, 0.40,
+  0.30, 0.50, 0.40, 0.50, 0.40, -0.10, -1.70, -1.40, 0.00, 1.10,
+  -0.30, 0.40, 0.80, 0.40, 0.40, 0.40, 0.40, -2.10, 1.10, -0.70,
+  1.80, 0.40, -1.70, 2.30, 2.10, 0.80, 2.20, 1.70, 0.60, 1.10,
+  1.60, 0.40, 2.30, 2.20, 2.50, 2.20, 2.50, 1.90, 2.20, 2.20,
+  2.20, 1.70, 0.80, 0.80, 2.20, 2.20, 1.70, 1.50, 1.20, 2.50,
+  2.10, 1.20, 2.20, 1.70, 0.60, 2.10, 1.60, 0.40, 2.30, 2.20,
+  2.50, 2.20, 2.50, 1.90, 2.20, 2.20, 2.20, 1.70, 0.80, 0.80,
+  2.20, 2.20, 1.70, 1.20, 1.20, 4.00, 0.75, 2.80, 2.50, 0.30,
+  2.30, 2.20, 2.20, 0.30, 1.40, -0.10, 2.20, -2.10, 0.60, 1.30,
+  2.00, -0.70, 1.10, 1.70, 1.40, -0.70, 0.80, -1.10, 1.40, -4.20,
+  -0.40, 1.50, 0.90, -1.30, 1.00, 1.00, 1.10, -2.60, 0.80, -4.10,
+  -1.00, -4.90, -0.50, 2.80, 2.80, 0.70, 1.90, 2.80, 2.20, 0.70,
+  1.50, -0.30, 2.80, -2.90, 1.10, 0.00, 1.80, 1.00, 0.00, 2.00,
+  -0.80, -0.50, -0.80, -0.60, -1.70, -0.80, -1.70, -1.20, -1.10, -0.40,
+  -1.30, -0.60, -0.80, -0.50, -0.80, -0.60, -0.70, -0.10, -0.70, -0.10,
+  -0.70, -0.10, -0.70, -0.10, -0.30, -0.10, -0.20, -0.10, -0.20, -0.10,
+  0.00, 0.00, -0.50, -0.10, -0.20, -0.10, -0.30, -0.10, -0.20, -0.10,
+  -0.30, -0.10, -0.40, -0.10, -0.30, -0.10, -0.40, -0.10, 1.70, 1.80,
+  2.00, 3.80, 2.80, 3.20, 3.60, 4.00, 4.40, 5.70, 5.60, 5.60,
+  5.40, 5.90, 5.60, 6.40, 0.50, -2.20, 0.30, 1.60, 1.40, 3.40,
+  0.40, 0.00, 4.10, -3.00, -3.00, -3.00, -3.00, -3.00, -3.00, -3.00,
+  -3.00, -3.00, -2.50, -2.50, -2.50, -2.50, -2.50, -2.00, -2.00, -2.00,
+  -2.00, -2.00, -1.50, -1.50, -1.50, -1.50, -1.50, -1.50, -1.50, -1.50,
+  -1.50, -1.50, -1.50, 9.6, 15.0, 15.0, 0.2, 0.1, 0.1, 0.83,
+  0.83, 3.4, 0.4, 0.0, 3.4, 0.4, 0.0
+};
+
+// from Hotknot 2.0
+static float dp09[] = {
+  -0.71, -1.32, -1.54, -0.12, -0.74, -0.91, -1.49, -2.16, -1.52, -0.58,
+  -1.68, -1.39, -2.16, -0.97, -1.57, -0.69, -0.73, -0.29, -0.77, -0.12,
+  -0.58,  0.27,  0.87,  0.45,  1.18, -0.09,  0.26,  0.42,  0.42, -0.30,
+  0.31,  0.16,  1.18,  0.28, -0.03,  0.86,  0.02, -0.44, -0.34, -0.00,
+  -0.09, -0.27, -0.23, -1.14, -0.37, -0.68, -0.06, -0.04, 0.03, -0.32,
+  -0.59, -0.95, -0.29, 0.05, -0.34, -0.96, 1.01, -0.28, 0.32, -0.32,
+  0.30, -0.68, -0.14, -0.28, 0.30, 0.07, -0.40, -0.37, -0.91, 0.60,
+  0.76, 0.74, 1.88, 0.35, 0.84, 0.58, 0.10, -1.17, 0.13, 0.36,
+  1.00, 0.07, 0.41, 0.63, 0.43, 0.29, 0.53, 0.92, 0.64, 0.72,
+  0.42, 0.12, 0.69, -0.44, 0.41, 0.17, 1.18, 0.57, -0.25, 0.30,
+  0.30, 0.31, 0.52, 1.09, 1.04, 0.57, 0.40, -0.03, 0.56, -0.27,
+  0.04, -0.22, 0.44, 0.42, -0.34, 0.09, -0.33, 0.77, -0.57, -0.46,
+  0.77, -0.38, 0.48, 0.37, 1.00, 1.79, 0.02, 0.42, -0.04, 0.64,
+  0.22, 0.65, 0.97, 1.26, 0.65, 0.37, -0.38, 0.79, 0.54, 0.21,
+  -0.19, -0.53, 0.89, -0.13, 0.12, 0.68, -0.38, -0.71, 0.40, -1.93,
+  1.03, 0.05, -0.52, 1.56, 1.72, 1.16, 1.06, 1.12, 0.83, 0.50,
+  1.13, 0.60, 0.61, 1.66, 1.38, 1.74, 1.32, 1.02, 1.63, 1.28,
+  1.62, 1.13, 1.47, -0.15, 2.22, 1.10, 0.57, 1.25, 0.53, 1.03,
+  1.36, 1.08, 1.12, 1.45, 1.25, 1.44, 1.59, 0.62, -0.23, 1.66,
+  0.39, 1.34, 1.43, 1.30, 1.70, 1.24, 1.53, 0.12, 0.12, 0.65,
+  -0.82, 1.34, 1.35, 2.52, 1.48, 1.54, 0.76, 1.48, 0.70, 1.55,
+  2.09, 1.37, 1.14, 0.11, 1.36, 1.70, 2.06, 1.71, 0.31, 0.93,
+  0.58, -0.52, 0.56, 1.25, 1.25, -0.43, 0.71, 0.62, 0.64, -0.58,
+  -0.76, 1.25, 0.56, 0.52, -0.01, 1.12, 1.16, -0.82, 0.35, -1.05,
+  1.02, -0.04, -0.94, 2.26, 2.04, 1.43, 1.71, 2.07, 2.28, 0.27,
+  1.97, 2.17, 1.70, 1.67, 0.22, 0.22, 1.68, 0.79, 0.97, 2.08
+  -0.32, -0.70, -0.90, -0.35, -0.87, -0.24, -0.98, -0.86, -0.46, -0.37,
+  -0.95, -0.54, -0.32, -0.87, -1.08, -0.11, -0.32, -0.42, -0.68, -0.45,
+  -0.32, -0.19, -0.86, -0.11, -0.14, 0.00, 0.00, -0.07, -0.32, -0.19,
+  -0.13, -0.05, -0.09, -0.17, 0.00, -0.01, 0.00, -0.01, 0.00, -0.11,
+  -0.32, -0.07, -0.06, -0.06, 0.00, 0.00, 0.00, 0.00, 0.44, 0.78,
+  0.47, 2.81, 1.52, 2.03, 3.12, 2.67, 2.78, 3.69, 2.83, 3.23,
+  2.87, 2.59, 2.65, 2.77, 0.50, 0.05, 0.38, -1.44, 0.31, 3.39,
+  0.03, 0.02, -0.46, -0.65, -2.03, -1.30, -0.62, -1.66, -1.68, -1.58,
+  -1.84, -1.96, -2.33, -1.86, -1.39, -1.42, -2.16, 0.20, -1.35, -1.02,
+  -1.33, -0.97, -1.17, -0.80, -0.67, -0.84, -0.52, -0.69, -0.68, -0.18,
+  -0.63, -0.33, 0.06, -1.38, 10.07, 15.00, 2.46, 0.06, 0.96, 0.89,
+  0.74, 3.39, 0.03, 0.02, 3.41, 0.56, 0.12  };
+
+template < class PF_TYPE >
+void
+Nupack<PF_TYPE>::
+load_default_parameters(int which)
+{
+  if (which==DP03)
+  {
+    std::vector<float> p(dp03, dp03+sizeof(dp03)/sizeof(dp03[0]));
+    load_parameters_fm363(p);
+  }
+  else
+  {
+    std::vector<float> p(dp09, dp09+sizeof(dp09)/sizeof(dp09[0]));
+    load_parameters_fm363(p);
+  }
+}
+
+template < class PF_TYPE >
+void
+Nupack<PF_TYPE>::
+load_parameters_fm363(const std::vector<float>& v)
+{
+  std::vector<float>::const_iterator x=v.begin();
+  //int b[] = { BASE_A-1, BASE_C-1, BASE_G-1, BASE_U-1 };
+  int bp[4][4] = 
+    {
+      { -1, -1, -1, AU },
+      { -1, -1, CG, -1 },
+      { -1, GC, -1, GU },
+      { UA, -1, UG, -1 }
+    };
+  int wc[4][4] = 
+    {
+      { 0, 0, 0, 1 },
+      { 0, 0, 1, 0 },
+      { 0, 1, 0, 0 },
+      { 1, 0, 0, 0 }
+    };
+  int gc[4][4] = 
+  {
+      { 0, 0, 0, 0 },
+      { 0, 0, 1, 0 },
+      { 0, 1, 0, 0 },
+      { 0, 0, 0, 0 }
+  };
+
+  // stack
+  stack37[AU][AU] = stack37[UA][UA] = *x++;
+  stack37[AU][CG] = stack37[GC][UA] = *x++;
+  stack37[AU][GC] = stack37[CG][UA] = *x++;
+  stack37[AU][GU] = stack37[UG][UA] = *x++;
+  stack37[AU][UA] = stack37[AU][UA] = *x++;
+  stack37[AU][UG] = stack37[GU][UA] = *x++;
+  stack37[CG][AU] = stack37[UA][GC] = *x++;
+  stack37[CG][CG] = stack37[GC][GC] = *x++;
+  stack37[CG][GC] = stack37[CG][GC] = *x++;
+  stack37[CG][GU] = stack37[UG][GC] = *x++;
+  stack37[CG][UG] = stack37[GU][GC] = *x++;
+  stack37[GC][AU] = stack37[UA][CG] = *x++;
+  stack37[GC][CG] = stack37[GC][CG] = *x++;
+  stack37[GC][GU] = stack37[UG][CG] = *x++;
+  stack37[GC][UG] = stack37[GU][CG] = *x++;
+  stack37[GU][AU] = stack37[UA][UG] = *x++;
+  stack37[GU][GU] = stack37[UG][UG] = *x++;
+  stack37[GU][UG] = stack37[GU][UG] = *x++;
+  stack37[UA][AU] = stack37[UA][AU] = *x++;
+  stack37[UA][GU] = stack37[UG][AU] = *x++;
+  stack37[UG][GU] = stack37[UG][GU] = *x++;
+
+  // terminal mismatch for hairpin loops
+  mismatch_hairpin37[A][A][AU] = *x++;
+  mismatch_hairpin37[A][C][AU] = *x++;
+  mismatch_hairpin37[A][G][AU] = *x++;
+  mismatch_hairpin37[A][U][AU] = *x++;
+  mismatch_hairpin37[C][A][AU] = *x++;
+  mismatch_hairpin37[C][C][AU] = *x++;
+  mismatch_hairpin37[C][G][AU] = *x++;
+  mismatch_hairpin37[C][U][AU] = *x++;
+  mismatch_hairpin37[G][A][AU] = *x++;
+  mismatch_hairpin37[G][C][AU] = *x++;
+  mismatch_hairpin37[G][G][AU] = *x++;
+  mismatch_hairpin37[G][U][AU] = *x++;
+  mismatch_hairpin37[U][A][AU] = *x++;
+  mismatch_hairpin37[U][C][AU] = *x++;
+  mismatch_hairpin37[U][G][AU] = *x++;
+  mismatch_hairpin37[U][U][AU] = *x++;
+  mismatch_hairpin37[A][A][CG] = *x++;
+  mismatch_hairpin37[A][C][CG] = *x++;
+  mismatch_hairpin37[A][G][CG] = *x++;
+  mismatch_hairpin37[A][U][CG] = *x++;
+  mismatch_hairpin37[C][A][CG] = *x++;
+  mismatch_hairpin37[C][C][CG] = *x++;
+  mismatch_hairpin37[C][G][CG] = *x++;
+  mismatch_hairpin37[C][U][CG] = *x++;
+  mismatch_hairpin37[G][A][CG] = *x++;
+  mismatch_hairpin37[G][C][CG] = *x++;
+  mismatch_hairpin37[G][G][CG] = *x++;
+  mismatch_hairpin37[G][U][CG] = *x++;
+  mismatch_hairpin37[U][A][CG] = *x++;
+  mismatch_hairpin37[U][C][CG] = *x++;
+  mismatch_hairpin37[U][G][CG] = *x++;
+  mismatch_hairpin37[U][U][CG] = *x++;
+  mismatch_hairpin37[A][A][GC] = *x++;
+  mismatch_hairpin37[A][C][GC] = *x++;
+  mismatch_hairpin37[A][G][GC] = *x++;
+  mismatch_hairpin37[A][U][GC] = *x++;
+  mismatch_hairpin37[C][A][GC] = *x++;
+  mismatch_hairpin37[C][C][GC] = *x++;
+  mismatch_hairpin37[C][G][GC] = *x++;
+  mismatch_hairpin37[C][U][GC] = *x++;
+  mismatch_hairpin37[G][A][GC] = *x++;
+  mismatch_hairpin37[G][C][GC] = *x++;
+  mismatch_hairpin37[G][G][GC] = *x++;
+  mismatch_hairpin37[G][U][GC] = *x++;
+  mismatch_hairpin37[U][A][GC] = *x++;
+  mismatch_hairpin37[U][C][GC] = *x++;
+  mismatch_hairpin37[U][G][GC] = *x++;
+  mismatch_hairpin37[U][U][GC] = *x++;
+  mismatch_hairpin37[A][A][GU] = *x++;
+  mismatch_hairpin37[A][C][GU] = *x++;
+  mismatch_hairpin37[A][G][GU] = *x++;
+  mismatch_hairpin37[A][U][GU] = *x++;
+  mismatch_hairpin37[C][A][GU] = *x++;
+  mismatch_hairpin37[C][C][GU] = *x++;
+  mismatch_hairpin37[C][G][GU] = *x++;
+  mismatch_hairpin37[C][U][GU] = *x++;
+  mismatch_hairpin37[G][A][GU] = *x++;
+  mismatch_hairpin37[G][C][GU] = *x++;
+  mismatch_hairpin37[G][G][GU] = *x++;
+  mismatch_hairpin37[G][U][GU] = *x++;
+  mismatch_hairpin37[U][A][GU] = *x++;
+  mismatch_hairpin37[U][C][GU] = *x++;
+  mismatch_hairpin37[U][G][GU] = *x++;
+  mismatch_hairpin37[U][U][GU] = *x++;
+  mismatch_hairpin37[A][A][UA] = *x++;
+  mismatch_hairpin37[A][C][UA] = *x++;
+  mismatch_hairpin37[A][G][UA] = *x++;
+  mismatch_hairpin37[A][U][UA] = *x++;
+  mismatch_hairpin37[C][A][UA] = *x++;
+  mismatch_hairpin37[C][C][UA] = *x++;
+  mismatch_hairpin37[C][G][UA] = *x++;
+  mismatch_hairpin37[C][U][UA] = *x++;
+  mismatch_hairpin37[G][A][UA] = *x++;
+  mismatch_hairpin37[G][C][UA] = *x++;
+  mismatch_hairpin37[G][G][UA] = *x++;
+  mismatch_hairpin37[G][U][UA] = *x++;
+  mismatch_hairpin37[U][A][UA] = *x++;
+  mismatch_hairpin37[U][C][UA] = *x++;
+  mismatch_hairpin37[U][G][UA] = *x++;
+  mismatch_hairpin37[U][U][UA] = *x++;
+  mismatch_hairpin37[A][A][UG] = *x++;
+  mismatch_hairpin37[A][C][UG] = *x++;
+  mismatch_hairpin37[A][G][UG] = *x++;
+  mismatch_hairpin37[A][U][UG] = *x++;
+  mismatch_hairpin37[C][A][UG] = *x++;
+  mismatch_hairpin37[C][C][UG] = *x++;
+  mismatch_hairpin37[C][G][UG] = *x++;
+  mismatch_hairpin37[C][U][UG] = *x++;
+  mismatch_hairpin37[G][A][UG] = *x++;
+  mismatch_hairpin37[G][C][UG] = *x++;
+  mismatch_hairpin37[G][G][UG] = *x++;
+  mismatch_hairpin37[G][U][UG] = *x++;
+  mismatch_hairpin37[U][A][UG] = *x++;
+  mismatch_hairpin37[U][C][UG] = *x++;
+  mismatch_hairpin37[U][G][UG] = *x++;
+  mismatch_hairpin37[U][U][UG] = *x++;
+
+  // terminal mismatch for interior loops
+  float internal_AU_closure = *x++;
+  float internal_AG_mismatch = *x++;
+  float internal_UU_mismatch = *x++;
+
+  // interior loops 1x1
+  int11_37[AU][AU][U][U] = int11_37[UA][UA][U][U] = *x++;
+  int11_37[AU][CG][U][U] = int11_37[GC][UA][U][U] = *x++;
+  int11_37[AU][GC][U][U] = int11_37[CG][UA][U][U] = *x++;
+  int11_37[AU][UA][U][U] = int11_37[AU][UA][U][U] = *x++;
+  int11_37[CG][CG][A][A] = int11_37[GC][GC][A][A] = *x++;
+  int11_37[CG][GC][A][A] = int11_37[CG][GC][A][A] = *x++;
+  int11_37[CG][CG][A][C] = int11_37[GC][GC][C][A] = *x++;
+  int11_37[CG][GC][A][C] = int11_37[CG][GC][C][A] = *x++;
+  int11_37[CG][CG][A][G] = int11_37[GC][GC][G][A] = *x++;
+  int11_37[CG][GC][A][G] = int11_37[CG][GC][G][A] = *x++;
+  int11_37[CG][CG][C][A] = int11_37[GC][GC][A][C] = *x++;
+  int11_37[CG][CG][C][C] = int11_37[GC][GC][C][C] = *x++;
+  int11_37[CG][GC][C][C] = int11_37[CG][GC][C][C] = *x++;
+  int11_37[CG][CG][C][U] = int11_37[GC][GC][U][C] = *x++;
+  int11_37[CG][GC][C][U] = int11_37[CG][GC][U][C] = *x++;
+  int11_37[CG][CG][G][A] = int11_37[GC][GC][A][G] = *x++;
+  int11_37[CG][CG][G][G] = int11_37[GC][GC][G][G] = *x++;
+  int11_37[CG][GC][G][G] = int11_37[CG][GC][G][G] = *x++;
+  int11_37[CG][CG][U][C] = int11_37[GC][GC][C][U] = *x++;
+  int11_37[CG][AU][U][U] = int11_37[UA][GC][U][U] = *x++;
+  int11_37[CG][CG][U][U] = int11_37[GC][GC][U][U] = *x++;
+  int11_37[CG][GC][U][U] = int11_37[CG][GC][U][U] = *x++;
+  int11_37[GC][CG][A][A] = int11_37[GC][CG][A][A] = *x++;
+  int11_37[GC][CG][A][C] = int11_37[GC][CG][C][A] = *x++;
+  int11_37[GC][CG][A][G] = int11_37[GC][CG][G][A] = *x++;
+  int11_37[GC][CG][C][C] = int11_37[GC][CG][C][C] = *x++;
+  int11_37[GC][CG][C][U] = int11_37[GC][CG][U][C] = *x++;
+  int11_37[GC][CG][G][G] = int11_37[GC][CG][G][G] = *x++;
+  int11_37[GC][AU][U][U] = int11_37[UA][CG][U][U] = *x++;
+  int11_37[GC][CG][U][U] = int11_37[GC][CG][U][U] = *x++;
+  int11_37[UA][AU][U][U] = int11_37[UA][AU][U][U] = *x++;
+  float internal11_basic_mismatch = *x++;
+  float internal11_GG_mismatch = *x++;
+  for (int i=0; i<4; i++)
+    for (int j=0; j<4; j++)
+      if (bp[i][j]>=0)
+        for (int k=0; k!=4; k++)
+          for (int l=0; l!=4; l++)
+            for (int m=0; m!=4; m++)
+              for (int n=0; n!=4; n++)
+                if (bp[m][n]>=0)
+                  if ( ((i==C && j==G) || (i==G && j==C)) &&
+                       ((m==C && n==G) || (m==G && n==C)))
+                  {
+                    if (bp[k][l]>=0)
+                      int11_37[bp[i][j]][bp[m][n]][k][l] = internal11_basic_mismatch;
+                  }
+                  else
+                  {
+                    if (!(wc[i][j] && wc[m][n] && k==U && l==U))
+                    {
+                      int11_37[bp[i][j]][bp[m][n]][k][l] = (k==G && l==G) ?
+                        internal11_GG_mismatch : internal11_basic_mismatch;
+                      if (!gc[i][j])
+                        int11_37[bp[i][j]][bp[m][n]][k][l] += internal_AU_closure;
+                      if (!gc[m][n])
+                        int11_37[bp[i][j]][bp[m][n]][k][l] += internal_AU_closure;
+                    }
+                  }
+                      
+  // interoir loops 2x1
+  int21_37[CG][A][A][CG][A] = *x++;
+  int21_37[CG][A][A][CG][C] = *x++;
+  int21_37[CG][A][A][CG][G] = *x++;
+  int21_37[CG][A][C][CG][A] = *x++;
+  int21_37[CG][A][C][CG][C] = *x++;
+  int21_37[CG][A][C][CG][G] = *x++;
+  int21_37[CG][A][G][CG][A] = *x++;
+  int21_37[CG][A][G][CG][C] = *x++;
+  int21_37[CG][A][G][CG][G] = *x++;
+  int21_37[CG][C][A][CG][A] = *x++;
+  int21_37[CG][C][A][CG][C] = *x++;
+  int21_37[CG][C][A][CG][U] = *x++;
+  int21_37[CG][C][C][CG][A] = *x++;
+  int21_37[CG][C][C][CG][C] = *x++;
+  int21_37[CG][C][C][CG][U] = *x++;
+  int21_37[CG][C][U][CG][A] = *x++;
+  int21_37[CG][C][U][CG][C] = *x++;
+  int21_37[CG][C][U][CG][U] = *x++;
+  int21_37[CG][G][A][CG][A] = *x++;
+  int21_37[CG][G][A][CG][G] = *x++;
+  int21_37[CG][G][G][CG][A] = *x++;
+  int21_37[CG][G][G][CG][G] = *x++;
+  int21_37[CG][U][C][CG][C] = *x++;
+  int21_37[CG][U][C][CG][U] = *x++;
+  int21_37[CG][U][U][CG][C] = *x++;
+  int21_37[CG][U][U][CG][U] = *x++;
+  int21_37[GC][A][A][GC][A] = *x++;
+  int21_37[GC][A][A][GC][C] = *x++;
+  int21_37[GC][A][A][GC][G] = *x++;
+  int21_37[GC][A][C][GC][A] = *x++;
+  int21_37[GC][A][C][GC][C] = *x++;
+  int21_37[GC][A][C][GC][G] = *x++;
+  int21_37[GC][A][G][GC][A] = *x++;
+  int21_37[GC][A][G][GC][C] = *x++;
+  int21_37[GC][A][G][GC][G] = *x++;
+  int21_37[GC][C][A][GC][A] = *x++;
+  int21_37[GC][C][A][GC][C] = *x++;
+  int21_37[GC][C][A][GC][U] = *x++;
+  int21_37[GC][C][C][GC][A] = *x++;
+  int21_37[GC][C][C][GC][C] = *x++;
+  int21_37[GC][C][C][GC][U] = *x++;
+  int21_37[GC][C][U][GC][A] = *x++;
+  int21_37[GC][C][U][GC][C] = *x++;
+  int21_37[GC][C][U][GC][U] = *x++;
+  int21_37[GC][G][A][GC][A] = *x++;
+  int21_37[GC][G][A][GC][G] = *x++;
+  int21_37[GC][G][G][GC][A] = *x++;
+  int21_37[GC][G][G][GC][G] = *x++;
+  int21_37[GC][U][C][GC][C] = *x++;
+  int21_37[GC][U][C][GC][U] = *x++;
+  int21_37[GC][U][U][GC][C] = *x++;
+  int21_37[GC][U][U][GC][U] = *x++;
+  float internal21_match = *x++;
+  float internal21_AU_closure = *x++;
+
+  for (int i=0; i<4; i++)
+    for (int j=0; j<4; j++)
+      if (bp[i][j]>=0)
+        for (int k=0; k<4; k++)
+          for (int l=0; l<4; l++)
+            for (int m=0; m<4; m++)
+              for (int n=0; n<4; n++)
+                if (bp[m][n]>=0)
+                  for(int o=0; o<4; o++)
+                    if ((i==C && j==G && m==C && n==G) ||
+                        (i==G && j==C && m==G && n==C))
+                    {
+                      if (bp[k][l]>=0 || bp[k][o]>=0)
+                        int21_37[bp[i][j]][k][l][bp[m][n]][o] = internal21_match;
+                    }
+                    else
+                    {
+                      if (bp[k][l]>=0 || bp[k][o]>=0)
+                        int21_37[bp[i][j]][k][l][bp[m][n]][o] = internal21_match;
+                      else
+                        int21_37[bp[i][j]][k][l][bp[m][n]][o] =
+                          int21_37[CG][k][l][CG][o]/2.0 + int21_37[GC][k][l][GC][o]/2.0;
+                      if (!gc[i][j])
+                        int21_37[bp[i][j]][k][l][bp[m][n]][o] += internal21_AU_closure;
+                      if (!gc[m][n])    
+                        int21_37[bp[i][j]][k][l][bp[m][n]][o] += internal21_AU_closure;
+                    }
+
+  // interior loops 2x2
+  int22_37[AU][UA][A][A][A][A] = int22_37[AU][UA][A][A][A][A] = *x++;
+  int22_37[AU][UA][A][C][C][A] = int22_37[AU][UA][A][C][C][A] = *x++;
+  int22_37[AU][UA][A][G][G][A] = int22_37[AU][UA][A][G][G][A] = *x++;
+  int22_37[AU][UA][C][A][A][C] = int22_37[AU][UA][C][A][A][C] = *x++;
+  int22_37[AU][UA][C][C][C][C] = int22_37[AU][UA][C][C][C][C] = *x++;
+  int22_37[AU][UA][C][U][U][C] = int22_37[AU][UA][C][U][U][C] = *x++;
+  int22_37[AU][UA][G][A][A][G] = int22_37[AU][UA][G][A][A][G] = *x++;
+  int22_37[AU][UA][G][G][G][G] = int22_37[AU][UA][G][G][G][G] = *x++;
+  int22_37[AU][UA][G][U][U][G] = int22_37[AU][UA][G][U][U][G] = *x++;
+  int22_37[AU][UA][U][C][C][U] = int22_37[AU][UA][U][C][C][U] = *x++;
+  int22_37[AU][UA][U][G][G][U] = int22_37[AU][UA][U][G][G][U] = *x++;
+  int22_37[AU][UA][U][U][U][U] = int22_37[AU][UA][U][U][U][U] = *x++;
+  int22_37[CG][GC][A][A][A][A] = int22_37[CG][GC][A][A][A][A] = *x++;
+  int22_37[CG][GC][A][C][C][A] = int22_37[CG][GC][A][C][C][A] = *x++;
+  int22_37[CG][GC][A][G][G][A] = int22_37[CG][GC][A][G][G][A] = *x++;
+  int22_37[CG][GC][C][A][A][C] = int22_37[CG][GC][C][A][A][C] = *x++;
+  int22_37[CG][GC][C][C][C][C] = int22_37[CG][GC][C][C][C][C] = *x++;
+  int22_37[CG][GC][C][U][U][C] = int22_37[CG][GC][C][U][U][C] = *x++;
+  int22_37[CG][GC][G][A][A][G] = int22_37[CG][GC][G][A][A][G] = *x++;
+  int22_37[CG][GC][G][G][G][G] = int22_37[CG][GC][G][G][G][G] = *x++;
+  int22_37[CG][GC][G][U][U][G] = int22_37[CG][GC][G][U][U][G] = *x++;
+  int22_37[CG][GC][U][C][C][U] = int22_37[CG][GC][U][C][C][U] = *x++;
+  int22_37[CG][GC][U][G][G][U] = int22_37[CG][GC][U][G][G][U] = *x++;
+  int22_37[CG][GC][U][U][U][U] = int22_37[CG][GC][U][U][U][U] = *x++;
+  int22_37[GC][CG][A][A][A][A] = int22_37[GC][CG][A][A][A][A] = *x++;
+  int22_37[GC][CG][A][C][C][A] = int22_37[GC][CG][A][C][C][A] = *x++;
+  int22_37[GC][CG][A][G][G][A] = int22_37[GC][CG][A][G][G][A] = *x++;
+  int22_37[GC][CG][C][A][A][C] = int22_37[GC][CG][C][A][A][C] = *x++;
+  int22_37[GC][CG][C][C][C][C] = int22_37[GC][CG][C][C][C][C] = *x++;
+  int22_37[GC][CG][C][U][U][C] = int22_37[GC][CG][C][U][U][C] = *x++;
+  int22_37[GC][CG][G][A][A][G] = int22_37[GC][CG][G][A][A][G] = *x++;
+  int22_37[GC][CG][G][G][G][G] = int22_37[GC][CG][G][G][G][G] = *x++;
+  int22_37[GC][CG][G][U][U][G] = int22_37[GC][CG][G][U][U][G] = *x++;
+  int22_37[GC][CG][U][C][C][U] = int22_37[GC][CG][U][C][C][U] = *x++;
+  int22_37[GC][CG][U][G][G][U] = int22_37[GC][CG][U][G][G][U] = *x++;
+  int22_37[GC][CG][U][U][U][U] = int22_37[GC][CG][U][U][U][U] = *x++;
+  int22_37[UA][AU][A][A][A][A] = int22_37[UA][AU][A][A][A][A] = *x++;
+  int22_37[UA][AU][A][C][C][A] = int22_37[UA][AU][A][C][C][A] = *x++;
+  int22_37[UA][AU][A][G][G][A] = int22_37[UA][AU][A][G][G][A] = *x++;
+  int22_37[UA][AU][C][A][A][C] = int22_37[UA][AU][C][A][A][C] = *x++;
+  int22_37[UA][AU][C][C][C][C] = int22_37[UA][AU][C][C][C][C] = *x++;
+  int22_37[UA][AU][C][U][U][C] = int22_37[UA][AU][C][U][U][C] = *x++;
+  int22_37[UA][AU][G][A][A][G] = int22_37[UA][AU][G][A][A][G] = *x++;
+  int22_37[UA][AU][G][G][G][G] = int22_37[UA][AU][G][G][G][G] = *x++;
+  int22_37[UA][AU][G][U][U][G] = int22_37[UA][AU][G][U][U][G] = *x++;
+  int22_37[UA][AU][U][C][C][U] = int22_37[UA][AU][U][C][C][U] = *x++;
+  int22_37[UA][AU][U][G][G][U] = int22_37[UA][AU][U][G][G][U] = *x++;
+  int22_37[UA][AU][U][U][U][U] = int22_37[UA][AU][U][U][U][U] = *x++;
+  float internal22_delta_same_size = *x++;
+  float internal22_delta_different_size = *x++;
+  float internal22_delta_1stable_1unstable = *x++;
+  float internal22_delta_AC = *x++;
+  float internal22_match = *x++;
+
+  for (int i=0; i<4; i++)
+    for (int j=0; j<4; j++)
+      if (bp[i][j]>=0)
+        for (int k=0; k<4; k++)
+          for (int l=0; l<4; l++)
+            for (int m=0; m<4; m++)
+              for (int n=0; n<4; n++)
+                if (bp[m][n]>=0)
+                  for(int o=0; o<4; o++)
+                    for (int p=0; p<4; p++)
+                    {
+                      int ii, jj, mm, nn;
+                      if (i==G && j==U)   ii = A;     else ii = i;
+                      if (i==U && j==G)   jj = A;     else jj = j;
+                      if (m==G && n==U)   mm = A;     else mm = m;
+                      if (m==U && n==G)   nn = A;     else nn = n;
+                      if (wc[k][l] || wc[o][p])
+                      {
+                        int22_37[bp[i][j]][bp[m][n]][k][l][o][p] = internal22_match;
+                      }
+                      else if (nn==ii && mm==jj && p==k && o==l)  // the UG closing pairs are the same as UA
+                      {
+                        int22_37[bp[i][j]][bp[m][n]][k][l][o][p] = int22_37[bp[ii][jj]][bp[mm][nn]][k][l][o][p];
+                      }
+                      else //if (!(n==i && m==j && p==k && o==l))   // was already filled above
+                      {
+                        int result = check_stability_and_size (k, l, o, p);
+                        // I approximate it to int, so that we obtain the same as by counte_each_structure_type and summing up
+                        float temp = int22_37[bp[ii][jj]][bp[jj][ii]][k][l][l][k]/2.0 +
+                          int22_37[bp[nn][mm]][bp[mm][nn]][p][o][o][p]/2.0;
+                        // rounf it to match Turner parameters
+                        //if (temp%10 == 5) temp -= 5; if (temp%10 == -5) temp += 5;
+                        int22_37[bp[i][j]][bp[m][n]][k][l][o][p] =  temp;
+                        switch (result)
+                        {
+                          case 1: int22_37[bp[i][j]][bp[m][n]][k][l][o][p] += internal22_delta_same_size; break;
+                          case 2: int22_37[bp[i][j]][bp[m][n]][k][l][o][p] += internal22_delta_different_size; break;
+                          case 3: int22_37[bp[i][j]][bp[m][n]][k][l][o][p] += internal22_delta_1stable_1unstable; break;
+                          case 4: int22_37[bp[i][j]][bp[m][n]][k][l][o][p] += internal22_delta_AC; break;
+                          default: assert(!"unreachable");
+                        }                                                
+                      }                                        
+                    }
+
+  // dangle3
+  dangle3_37[AU][A] = *x++;
+  dangle3_37[AU][C] = *x++;
+  dangle3_37[AU][G] = *x++;
+  dangle3_37[AU][U] = *x++;
+  dangle3_37[CG][A] = *x++;
+  dangle3_37[CG][C] = *x++;
+  dangle3_37[CG][G] = *x++;
+  dangle3_37[CG][U] = *x++;
+  dangle3_37[GC][A] = *x++;
+  dangle3_37[GC][C] = *x++;
+  dangle3_37[GC][G] = *x++;
+  dangle3_37[GC][U] = *x++;
+  dangle3_37[GU][A] = *x++;
+  dangle3_37[GU][C] = *x++;
+  dangle3_37[GU][G] = *x++;
+  dangle3_37[GU][U] = *x++;
+  dangle3_37[UA][A] = *x++;
+  dangle3_37[UA][C] = *x++;
+  dangle3_37[UA][G] = *x++;
+  dangle3_37[UA][U] = *x++;
+  dangle3_37[UG][A] = *x++;
+  dangle3_37[UG][C] = *x++;
+  dangle3_37[UG][G] = *x++;
+  dangle3_37[UG][U] = *x++;
+
+  // dangle5
+  dangle5_37[AU][A] = *x++;
+  dangle5_37[AU][C] = *x++;
+  dangle5_37[AU][G] = *x++;
+  dangle5_37[AU][U] = *x++;
+  dangle5_37[CG][A] = *x++;
+  dangle5_37[CG][C] = *x++;
+  dangle5_37[CG][G] = *x++;
+  dangle5_37[CG][U] = *x++;
+  dangle5_37[GC][A] = *x++;
+  dangle5_37[GC][C] = *x++;
+  dangle5_37[GC][G] = *x++;
+  dangle5_37[GC][U] = *x++;
+  dangle5_37[GU][A] = *x++;
+  dangle5_37[GU][C] = *x++;
+  dangle5_37[GU][G] = *x++;
+  dangle5_37[GU][U] = *x++;
+  dangle5_37[UA][A] = *x++;
+  dangle5_37[UA][C] = *x++;
+  dangle5_37[UA][G] = *x++;
+  dangle5_37[UA][U] = *x++;
+  dangle5_37[UG][A] = *x++;
+  dangle5_37[UG][C] = *x++;
+  dangle5_37[UG][G] = *x++;
+  dangle5_37[UG][U] = *x++;
+
+  // loop length for interior loops
+  for (int i=4; i!=7; ++i) interior37[i-1] = *x++;
+  for (int i=7; i!=30; ++i)
+    interior37[i-1] = interior37[7-1] + loop_greater30 * LOG(1.0*i/7);
+
+  // loop length for bulge loops
+  for (int i=1; i!=7; ++i) bulge37[i-1] = *x++;
+  for (int i=7; i!=30; ++i)
+    bulge37[i-1] = bulge37[7-1] + loop_greater30 * LOG(1.0*i/7);
+
+  // loop length for hairpin loops
+  for (int i=3; i!=10; ++i) hairpin37[i-1] = *x++;
+  for (int i=10; i!=30; ++i)
+    hairpin37[i-1] = hairpin37[10-1] + loop_greater30 * LOG(1.0*i/10);
+
+  // misc loops
+  at_penalty = *x++;
+  hairpin_GGG = *x++;
+  polyC_slope = *x++;
+  polyC_int = *x++;
+  polyC_penalty = *x++;
+
+  // terminal mismatch for interior loops
+  for (int i=0; i<4; i++)
+    for (int j=0; j<4; j++)
+      if (bp[i][j]>=0)
+        for (int k=0; k<4; k++)
+          for (int l=0; l<4; l++)
+          {
+            mismatch_interior37[k][l][bp[i][j]] = 0;
+            if (((i == A || i == G) && j == U) || ((j == A || j == G) && i == U))
+              mismatch_interior37[k][l][bp[i][j]] += internal_AU_closure;
+            if ((k == A && l == G) || (l == A && k == G))
+              mismatch_interior37[k][l][bp[i][j]] += internal_AG_mismatch;
+            if (k == U && l == U)
+              mismatch_interior37[k][l][bp[i][j]] += internal_UU_mismatch;
+          }
+
+  // multiloop penalty
+  multiloop_penalty = *x++;
+  multiloop_paired_penalty = *x++;
+  multiloop_unpaired_penalty = *x++;
+  intermolecular_initiation = *x++;
+
+  // tloops
+  std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0.0);
+  tloop37[G][G][G][G][A][C] = *x++;
+  tloop37[G][G][U][G][A][C] = *x++;
+  tloop37[C][G][A][A][A][G] = *x++;
+  tloop37[G][G][A][G][A][C] = *x++;
+  tloop37[C][G][C][A][A][G] = *x++;
+  tloop37[G][G][A][A][A][C] = *x++;
+  tloop37[C][G][G][A][A][G] = *x++;
+  tloop37[C][U][U][C][G][G] = *x++;
+  tloop37[C][G][U][G][A][G] = *x++;
+  tloop37[C][G][A][A][G][G] = *x++;
+  tloop37[C][U][A][C][G][G] = *x++;
+  tloop37[G][G][C][A][A][C] = *x++;
+  tloop37[C][G][C][G][A][G] = *x++;
+  tloop37[U][G][A][G][A][G] = *x++;
+  tloop37[C][G][A][G][A][G] = *x++;
+  tloop37[A][G][A][A][A][U] = *x++;
+  tloop37[C][G][U][A][A][G] = *x++;
+  tloop37[C][U][A][A][C][G] = *x++;
+  tloop37[U][G][A][A][A][G] = *x++;
+  tloop37[G][G][A][A][G][C] = *x++;
+  tloop37[G][G][G][A][A][C] = *x++;
+  tloop37[U][G][A][A][A][A] = *x++;
+  tloop37[A][G][C][A][A][U] = *x++;
+  tloop37[A][G][U][A][A][U] = *x++;
+  tloop37[C][G][G][G][A][G] = *x++;
+  tloop37[A][G][U][G][A][U] = *x++;
+  tloop37[G][G][C][G][A][C] = *x++;
+  tloop37[G][G][G][A][G][C] = *x++;
+  tloop37[G][U][G][A][A][C] = *x++;
+  tloop37[U][G][G][A][A][A] = *x++;
+
+  // asymmetry penalty
+  max_asymmetry = 0.300;
+  asymmetry_penalty[0] = 0.050;
+  asymmetry_penalty[1] = 0.050;
+  asymmetry_penalty[2] = 0.050;
+  asymmetry_penalty[3] = 0.050;
+
+  // peudoknot parameters
+  pk_penalty = *x++;
+  pk_multiloop_penalty = *x++;
+  pk_pk_penalty = *x++;
+  pk_band_penalty = *x++;
+  pk_unpaired_penalty = *x++;
+  pk_paired_penalty = *x++;
+  pk_stack_span = *x++;
+  pk_interior_span = *x++;
+  multiloop_penalty_pk = *x++;
+  multiloop_paired_penalty_pk = *x++;
+  multiloop_unpaired_penalty_pk = *x++;
+}
+
 template < class PF_TYPE >
 bool
 Nupack<PF_TYPE>::
@@ -180,7 +892,7 @@ load_parameters(const char* file)
       hairpin37[i] = v/100.0;
     }
     for (j=i; j<30; ++j)
-      hairpin37[j] = hairpin37[i-1]+1.75*RT*LOG((j+1)/(1.0*i));
+      hairpin37[j] = hairpin37[i-1]+loop_greater30*LOG((j+1)/(1.0*i));
   }
 
   // bulge
@@ -196,7 +908,7 @@ load_parameters(const char* file)
       bulge37[i] = v/100.0;
     }
     for (j=i; j<30; ++j)
-      bulge37[j] = bulge37[i-1]+1.75*RT*LOG((j+1)/(1.0*i));
+      bulge37[j] = bulge37[i-1]+loop_greater30*LOG((j+1)/(1.0*i));
   }
 
 
@@ -213,7 +925,7 @@ load_parameters(const char* file)
       interior37[i] = v/100.0;
     }
     for (j=i; j<30; ++j)
-      interior37[j] = interior37[i-1]+1.75*RT*LOG((j+1)/(1.0*i));
+      interior37[j] = interior37[i-1]+loop_greater30*LOG((j+1)/(1.0*i));
   }
 
   // asymmetry panelties
@@ -247,8 +959,8 @@ load_parameters(const char* file)
     std::getline(is, line);
   }
 
-  // tetraloops
-  std::fill(tetraloop37.data(), tetraloop37.data()+tetraloop37.num_elements(), 0.0);
+  // tloops
+  std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0.0);
   std::getline(is, line);
   while (line[0]=='>')
     std::getline(is, line);
@@ -259,7 +971,7 @@ load_parameters(const char* file)
     sscanf(line.c_str(), "%s %d", loop, &v);
     std::vector<int> idx(6);
     for (int i=0; i!=6; ++i) idx[i]=base(loop[i])-1;
-    tetraloop37(idx) = v/100.0;
+    tloop37(idx) = v/100.0;
     std::getline(is, line);    
   }
 
@@ -407,7 +1119,7 @@ load_parameters(const char* file)
           for (int l=0; l!=4; ++l)
           {
             int v; ss >> v;
-            int12_37[p[i]][b[k]][b[m]][p[j]][b[l]] = v/100.0;
+            int21_37[p[i]][b[k]][b[m]][p[j]][b[l]] = v/100.0;
           }
           std::getline(is, line);
         }
@@ -440,6 +1152,12 @@ load_parameters(const char* file)
     ss >> v; pk_pk_penalty = v/100.0;
     std::getline(is, line);
   }
+  pk_band_penalty = 0.0;
+  pk_stack_span = 1.0;
+  pk_interior_span = 1.0;
+  multiloop_penalty_pk = multiloop_penalty;
+  multiloop_paired_penalty_pk = multiloop_paired_penalty;
+  multiloop_unpaired_penalty_pk = multiloop_unpaired_penalty;
 
   // BIMOLECULAR TERM
   while (line[0]=='>')
@@ -447,7 +1165,7 @@ load_parameters(const char* file)
   {
     int v;
     std::istringstream ss(line);
-    ss >> v; //tinoco = v/100.0;
+    ss >> v; intermolecular_initiation = v/100.0;
     std::getline(is, line);
   }
 
@@ -495,14 +1213,14 @@ calculate_partition_function()
             if (allow_paired(d,e))
             {
               Qb(i,j) += Qb(d,e) *
-                EXP( -score_interior(i,d,e,j)/RT );
+                EXP( -score_interior(i,d,e,j,false)/RT );
 
               if (d>=i+6 && wc_pair(d,e) && wc_pair(i,j))
               {
                 Qb(i,j) += Qm(i+1,d-1) * Qb(d,e) *
-                  EXP( -( score_multiloop() +
-                          score_multiloop_paired(2) +
-                          score_multiloop_unpaired(j-e-1) +
+                  EXP( -( score_multiloop(false) +
+                          score_multiloop_paired(2,false) +
+                          score_multiloop_unpaired(j-e-1,false) +
                           score_at_penalty(i,j) +
                           score_at_penalty(d,e) +
                           score_dangle(e+1,j-1) )/RT ) ;
@@ -518,19 +1236,19 @@ calculate_partition_function()
             for (int e=d+5; e<=j-1; ++e)
             {
               Qb(i,j) += Qp(d,e) *
-                EXP( -( score_multiloop() +
+                EXP( -( score_multiloop(false) +
                         score_pk_multiloop() +
-                        score_multiloop_paired(3) +
-                        score_multiloop_unpaired(j-e-1 + d-i-1) +
+                        score_multiloop_paired(3,false) +
+                        score_multiloop_unpaired(j-e-1 + d-i-1,false) +
                         score_at_penalty(i,j) +
                         score_dangle(e+1,j-1) +
                         score_dangle(i+1,d-1) )/RT );
               
               Qb(i,j) += Qm(i+1,d-1) * Qp(d,e) *
-                EXP( -( score_multiloop() +
+                EXP( -( score_multiloop(false) +
                         score_pk_multiloop() +
-                        score_multiloop_paired(3) +
-                        score_multiloop_unpaired(j-e-1) +
+                        score_multiloop_paired(3,false) +
+                        score_multiloop_unpaired(j-e-1,false) +
                         score_at_penalty(i,j) +
                         score_dangle(e+1,j-1) )/RT );
             }
@@ -550,7 +1268,7 @@ calculate_partition_function()
           for (int e=d+4; e<=j-1; ++e)
           {
             if (allow_paired(d,e))
-              Qg(i,d,e,j) += EXP( -score_interior(i,d,e,j)/RT );
+              Qg(i,d,e,j) += EXP( -score_interior(i,d,e,j,true)/RT );
           }
         }
       }
@@ -568,9 +1286,9 @@ calculate_partition_function()
             if (allow_paired(d,e) && wc_pair(d,e))
             {
               Qg(i,d,e,j) += Qm(i+1,d-1) *
-                EXP( -( score_multiloop() +
-                        score_multiloop_paired(2) +
-                        score_multiloop_unpaired(j-e-1) + 
+                EXP( -( score_multiloop(true) +
+                        score_multiloop_paired(2,true) +
+                        score_multiloop_unpaired(j-e-1,true) + 
                         score_at_penalty(i,j) +
                         score_at_penalty(d,e) +
                         score_dangle(e+1, j-1) )/RT );
@@ -586,9 +1304,9 @@ calculate_partition_function()
             if (allow_paired(d,e) && wc_pair(d,e))
             {
               Qg(i,d,e,j) += Qm(e+1,j-1) *
-                EXP( -( score_multiloop() +
-                        score_multiloop_paired(2) +
-                        score_multiloop_unpaired(d-i-1) +
+                EXP( -( score_multiloop(true) +
+                        score_multiloop_paired(2,true) +
+                        score_multiloop_unpaired(d-i-1,true) +
                         score_at_penalty(i,j) +
                         score_at_penalty(d,e) +
                         score_dangle(i+1, d-1) )/RT );
@@ -604,8 +1322,8 @@ calculate_partition_function()
             if (allow_paired(d,e) && wc_pair(d,e))
             {
               Qg(i,d,e,j) += Qm(i+1,d-1) * Qm(e+1,j-1) *
-                EXP( -( score_multiloop() +
-                        score_multiloop_paired(2) +
+                EXP( -( score_multiloop(true) +
+                        score_multiloop_paired(2,true) +
                         score_at_penalty(i,j) +
                         score_at_penalty(d,e) )/RT );
             }
@@ -622,9 +1340,9 @@ calculate_partition_function()
               for (int f=e+1; f<=j-1; ++f)
               {
                 Qg(i,d,e,j) += Qgls(i+1,d,e,f) *
-                  EXP( -( score_multiloop() +
-                          score_multiloop_paired(1) +
-                          score_multiloop_unpaired(j-f-1) +
+                  EXP( -( score_multiloop(true) +
+                          score_multiloop_paired(1,true) +
+                          score_multiloop_unpaired(j-f-1,true) +
                           score_at_penalty(i,j) +
                           score_dangle(f+1,j-1) )/RT );
               }
@@ -642,9 +1360,9 @@ calculate_partition_function()
               for (int c=i+1; c<=d-1; ++c)
               {
                 Qg(i,d,e,j) += Qgrs(c,d,e,j-1) *
-                  EXP( -( score_multiloop() +
-                          score_multiloop_paired(1) +
-                          score_multiloop_unpaired(c-i-1) +
+                  EXP( -( score_multiloop(true) +
+                          score_multiloop_paired(1,true) +
+                          score_multiloop_unpaired(c-i-1,true) +
                           score_at_penalty(i,j) +
                           score_dangle(i+1,c-1) )/RT );
               }
@@ -662,8 +1380,8 @@ calculate_partition_function()
               for (int c=i+6; c<=d-1; ++c)
               {
                 Qg(i,d,e,j) += Qm(i+1,c-1) * Qgrs(c,d,e,j-1) *
-                  EXP( -( score_multiloop() +
-                          score_multiloop_paired(1) +
+                  EXP( -( score_multiloop(true) +
+                          score_multiloop_paired(1,true) +
                           score_at_penalty(i,j) )/RT );
               }
             }
@@ -683,7 +1401,7 @@ calculate_partition_function()
               if (allow_paired(d,e))
               {
                 Qgls(i,d,e,j) += Qm(i,c-1) * Qg(c,d,e,j) *
-                  EXP( -( score_multiloop_paired(1) +
+                  EXP( -( score_multiloop_paired(1,true) +
                           score_at_penalty(c,j) )/RT );
               }
             }
@@ -703,7 +1421,7 @@ calculate_partition_function()
               if (allow_paired(i,f) && wc_pair(i,f))
               {
                 Qgrs(i,d,e,j) += Qg(i,d,e,f) * Qm(f+1,j) *
-                  EXP( -( score_multiloop_paired(1) +
+                  EXP( -( score_multiloop_paired(1,true) +
                           score_at_penalty(i,f) )/RT );
               }
             }
@@ -759,6 +1477,7 @@ calculate_partition_function()
                 int e=d;
                 Qp(i,j) += Qg(i,a,d,e) * Qg(b,c,f,j) * Qz(e+1,f-1) * Qz(c+1,d-1) * Qz(a+1,b-1) *
                   EXP( -( score_pk_paired(2) +
+                          score_pk_band(2) +
                           score_at_penalty(a,d) +
                           score_at_penalty(c,f) +
                           score_at_penalty(i,e) +
@@ -783,6 +1502,7 @@ calculate_partition_function()
               {
                 Qp(i,j) += Qg(i,i,e,f) * Qz(i+1,d-1) * Qgr(d,e-1,f+1,j) *
                   EXP( -( score_pk_paired(1) +
+                          score_pk_band(2) +
                           score_at_penalty(d,j) +
                           score_at_penalty(i,f)*2 )/RT );
               }
@@ -803,6 +1523,7 @@ calculate_partition_function()
                 {
                   Qp(i,j) += Qgl(i,d-1,e,f) * Qg(d,d,j,j) * Qz(d+1,e-1) * Qz(f+1,j-1) *
                     EXP( -( score_pk_paired(1) +
+                            score_pk_band(2) +
                             score_at_penalty(d,j)*2 +
                             score_at_penalty(i,f) )/RT );
                 }
@@ -826,7 +1547,8 @@ calculate_partition_function()
                 if (allow_paired(i,f) && wc_pair(i,f))
                 {
                   Qp(i,j) += Qgl(i,d-1,e,f) * Qgr(d,e-1,f+1,j) *
-                    EXP( -( score_at_penalty(d,j) +
+                    EXP( -( score_pk_band(2) +
+                            score_at_penalty(d,j) +
                             score_at_penalty(i,j) )/RT );
                 }
               }
@@ -858,8 +1580,8 @@ calculate_partition_function()
             if (i!=0 && j!=N-1)
             {
               Qm(i,j) += Qb(d,e) *
-                EXP( -( score_multiloop_paired(1) +
-                        score_multiloop_unpaired(d-i + j-e) +
+                EXP( -( score_multiloop_paired(1,false) +
+                        score_multiloop_unpaired(d-i + j-e,false) +
                         score_at_penalty(d,e) +
                         score_dangle(e+1,j) +
                         score_dangle(i,d-1) )/RT );
@@ -867,8 +1589,8 @@ calculate_partition_function()
               if (d>=i+5)
               {
                 Qm(i,j) += Qm(i,d-1) * Qb(d,e) *
-                  EXP( -( score_multiloop_paired(1) +
-                          score_multiloop_unpaired(j-e) +
+                  EXP( -( score_multiloop_paired(1,false) +
+                          score_multiloop_unpaired(j-e,false) +
                           score_at_penalty(d,e) +
                           score_dangle(e+1,j) )/RT );
               }
@@ -895,8 +1617,8 @@ calculate_partition_function()
           {
             Qm(i,j) += Qp(d,e) *
               EXP( -( score_pk_multiloop() +
-                      score_multiloop_paired(2) +
-                      score_multiloop_unpaired(d-i + j-e) +
+                      score_multiloop_paired(2,false) +
+                      score_multiloop_unpaired(d-i + j-e,false) +
                       score_dangle(e+1,j) +
                       score_dangle(i,d-1) )/RT );
 
@@ -904,8 +1626,8 @@ calculate_partition_function()
             {
               Qm(i,j) += Qm(i,d-1) * Qp(d,e) *
                 EXP( -( score_pk_multiloop() +
-                        score_multiloop_paired(2) +
-                        score_multiloop_unpaired(j-e) +
+                        score_multiloop_paired(2,false) +
+                        score_multiloop_unpaired(j-e,false) +
                         score_dangle(e+1,j) )/RT );
             }
 
@@ -1011,7 +1733,7 @@ fastiloops(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<
               if (allow_paired(c,f))
               {
                 Qg(i,d,e,j) += Qg(c,d,e,f) *
-                  EXP( -score_interior(i,c,f,j)/RT );
+                  EXP( -score_interior(i,c,f,j,true)/RT );
               }
             }
           }
@@ -1025,7 +1747,7 @@ fastiloops(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<
               if (allow_paired(c,f))
               {
                 Qg(i,d,e,j) += Qg(c,d,e,f) *
-                  EXP( -score_interior(i,c,f,j)/RT );
+                  EXP( -score_interior(i,c,f,j,true)/RT );
               }
             }
           }
@@ -1038,7 +1760,7 @@ fastiloops(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<
               if (allow_paired(c,f))
               {
                 Qg(i,d,e,j) += Qg(c,d,e,f) *
-                  EXP( -score_interior(i,c,f,j)/RT );
+                  EXP( -score_interior(i,c,f,j,true)/RT );
               }
             }
           }
@@ -1118,8 +1840,8 @@ calculate_posterior()
               if (Pm(i,j)>0.0)
               {
                 DBL_TYPE p = Qb(d,e) *
-                  EXP( -( score_multiloop_paired(1) +
-                          score_multiloop_unpaired(d-i + j-e) +
+                  EXP( -( score_multiloop_paired(1,false) +
+                          score_multiloop_unpaired(d-i + j-e,false) +
                           score_at_penalty(d,e) +
                           score_dangle(e+1,j) +
                           score_dangle(i,d-1) )/RT )
@@ -1129,8 +1851,8 @@ calculate_posterior()
                 if (d>=i+5)
                 {
                   p = Qm(i,d-1) * Qb(d,e) *
-                    EXP( -( score_multiloop_paired(1) +
-                            score_multiloop_unpaired(j-e) +
+                    EXP( -( score_multiloop_paired(1,false) +
+                            score_multiloop_unpaired(j-e,false) +
                             score_at_penalty(d,e) +
                             score_dangle(e+1,j) )/RT )
                     / Qm(i,j) * Pm(i,j);
@@ -1178,8 +1900,8 @@ calculate_posterior()
             {
               DBL_TYPE p = Qp(d,e) *
                 EXP( -( score_pk_multiloop() +
-                        score_multiloop_paired(2) +
-                        score_multiloop_unpaired(d-i + j-e) +
+                        score_multiloop_paired(2,false) +
+                        score_multiloop_unpaired(d-i + j-e,false) +
                         score_dangle(e+1,j) +
                         score_dangle(i,d-1) )/RT )
                 / Qm(i,j) * Pm(i,j);
@@ -1190,8 +1912,8 @@ calculate_posterior()
               {
                 p = Qm(i,d-1) * Qp(d,e) *
                   EXP( -( score_pk_multiloop() +
-                          score_multiloop_paired(2) +
-                          score_multiloop_unpaired(j-e) +
+                          score_multiloop_paired(2,false) +
+                          score_multiloop_unpaired(j-e,false) +
                           score_dangle(e+1,j) )/RT )
                   / Qm(i,j) * Pm(i,j);
                 Pm(i,d-1) += p;
@@ -1388,7 +2110,7 @@ calculate_posterior()
               if (allow_paired(i,f) && wc_pair(i,f) && Pgrs(i,d,e,j)>0.0)
               {
                 DBL_TYPE p = Qg(i,d,e,f) * Qm(f+1,j) *
-                  EXP( -( score_multiloop_paired(1) +
+                  EXP( -( score_multiloop_paired(1,true) +
                           score_at_penalty(i,f) )/RT )
                   / Qgrs(i,d,e,j) * Pgrs(i,d,e,j);
                 Pg(i,d,e,f) += p;
@@ -1412,7 +2134,7 @@ calculate_posterior()
               if (allow_paired(d,e) && Pgls(i,d,e,j)>0.0)
               {
                 DBL_TYPE p = Qm(i,c-1) * Qg(c,d,e,j) *
-                  EXP( -( score_multiloop_paired(1) +
+                  EXP( -( score_multiloop_paired(1,true) +
                           score_at_penalty(c,j) )/RT )
                   / Qgls(i,d,e,j) * Pgls(i,d,e,j);
                 Pm(i,c-1) += p;
@@ -1437,9 +2159,9 @@ calculate_posterior()
             if (allow_paired(d,e) && wc_pair(d,e) && Pg(i,d,e,j)>0.0)
             {
               DBL_TYPE p = Qm(i+1,d-1) *
-                EXP( -( score_multiloop() +
-                        score_multiloop_paired(2) +
-                        score_multiloop_unpaired(j-e-1) + 
+                EXP( -( score_multiloop(true) +
+                        score_multiloop_paired(2,true) +
+                        score_multiloop_unpaired(j-e-1,true) + 
                         score_at_penalty(i,j) +
                         score_at_penalty(d,e) +
                         score_dangle(e+1, j-1) )/RT )
@@ -1458,9 +2180,9 @@ calculate_posterior()
             if (allow_paired(d,e) && wc_pair(d,e) && Pg(i,d,e,j)>0.0)
             {
               DBL_TYPE p = Qm(e+1,j-1) *
-                EXP( -( score_multiloop() +
-                        score_multiloop_paired(2) +
-                        score_multiloop_unpaired(d-i-1) +
+                EXP( -( score_multiloop(true) +
+                        score_multiloop_paired(2,true) +
+                        score_multiloop_unpaired(d-i-1,true) +
                         score_at_penalty(i,j) +
                         score_at_penalty(d,e) +
                         score_dangle(i+1, d-1) )/RT )
@@ -1479,8 +2201,8 @@ calculate_posterior()
             if (allow_paired(d,e) && wc_pair(d,e) && Pg(i,d,e,j)>0.0)
             {
               DBL_TYPE p = Qm(i+1,d-1) * Qm(e+1,j-1) *
-                EXP( -( score_multiloop() +
-                        score_multiloop_paired(2) +
+                EXP( -( score_multiloop(true) +
+                        score_multiloop_paired(2,true) +
                         score_at_penalty(i,j) +
                         score_at_penalty(d,e) )/RT )
                 / Qg(i,d,e,j) * Pg(i,d,e,j);
@@ -1503,9 +2225,9 @@ calculate_posterior()
                 if (Pg(i,d,e,j)>0.0)
                 {
                   DBL_TYPE p = Qgls(i+1,d,e,f) *
-                    EXP( -( score_multiloop() +
-                            score_multiloop_paired(1) +
-                            score_multiloop_unpaired(j-f-1) +
+                    EXP( -( score_multiloop(true) +
+                            score_multiloop_paired(1,true) +
+                            score_multiloop_unpaired(j-f-1,true) +
                             score_at_penalty(i,j) +
                             score_dangle(f+1,j-1) )/RT )
                     / Qg(i,d,e,j) * Pg(i,d,e,j);
@@ -1529,9 +2251,9 @@ calculate_posterior()
                 if (Pg(i,d,e,j)>0.0)
                 {
                   DBL_TYPE p = Qgrs(c,d,e,j-1) *
-                    EXP( -( score_multiloop() +
-                            score_multiloop_paired(1) +
-                            score_multiloop_unpaired(c-i-1) +
+                    EXP( -( score_multiloop(true) +
+                            score_multiloop_paired(1,true) +
+                            score_multiloop_unpaired(c-i-1,true) +
                             score_at_penalty(i,j) +
                             score_dangle(i+1,c-1) )/RT )
                     / Qg(i,d,e,j) * Pg(i,d,e,j);
@@ -1555,8 +2277,8 @@ calculate_posterior()
                 if (Pg(i,d,e,j)>0.0)
                 {
                   DBL_TYPE p = Qm(i+1,c-1) * Qgrs(c,d,e,j-1) *
-                    EXP( -( score_multiloop() +
-                            score_multiloop_paired(1) +
+                    EXP( -( score_multiloop(true) +
+                            score_multiloop_paired(1,true) +
                             score_at_penalty(i,j) )/RT )
                     / Qg(i,d,e,j) * Pg(i,d,e,j);
                   Pm(i+1,c-1) += p;
@@ -1586,7 +2308,7 @@ calculate_posterior()
               if (Pb(i,j)>0.0)
               {
                 DBL_TYPE p = Qb(d,e) *
-                  EXP( -score_interior(i,d,e,j)/RT )
+                  EXP( -score_interior(i,d,e,j,false)/RT )
                   / Qb(i,j) * Pb(i,j);
                 Pb(d,e) += p;
                 assert(!std::isnan(p));
@@ -1594,9 +2316,9 @@ calculate_posterior()
                 if (d>=i+6 && wc_pair(d,e) && wc_pair(i,j))
                 {
                   DBL_TYPE p = Qm(i+1,d-1) * Qb(d,e) *
-                    EXP( -( score_multiloop() +
-                            score_multiloop_paired(2) +
-                            score_multiloop_unpaired(j-e-1) +
+                    EXP( -( score_multiloop(false) +
+                            score_multiloop_paired(2,false) +
+                            score_multiloop_unpaired(j-e-1,false) +
                             score_at_penalty(i,j) +
                             score_at_penalty(d,e) +
                             score_dangle(e+1,j-1) )/RT )
@@ -1620,10 +2342,10 @@ calculate_posterior()
               {
                 DBL_TYPE p;
                 p = Qp(d,e) *
-                  EXP( -( score_multiloop() +
+                  EXP( -( score_multiloop(false) +
                           score_pk_multiloop() +
-                          score_multiloop_paired(3) +
-                          score_multiloop_unpaired(j-e-1 + d-i-1) +
+                          score_multiloop_paired(3,false) +
+                          score_multiloop_unpaired(j-e-1 + d-i-1,false) +
                           score_at_penalty(i,j) +
                           score_dangle(e+1,j-1) +
                           score_dangle(i+1,d-1) )/RT )
@@ -1632,10 +2354,10 @@ calculate_posterior()
                 assert(!std::isnan(p));
               
                 p = Qm(i+1,d-1) * Qp(d,e) *
-                  EXP( -( score_multiloop() +
+                  EXP( -( score_multiloop(false) +
                           score_pk_multiloop() +
-                          score_multiloop_paired(3) +
-                          score_multiloop_unpaired(j-e-1) +
+                          score_multiloop_paired(3,false) +
+                          score_multiloop_unpaired(j-e-1,false) +
                           score_at_penalty(i,j) +
                           score_dangle(e+1,j-1) )/RT )
                   / Qb(i,j) * Pb(i,j);
@@ -1681,7 +2403,7 @@ fastiloops_pr(int i, int j,
               if (allow_paired(c,f) && Pg(i,d,e,j)>0.0)
               {
                 DBL_TYPE p = Qg(c,d,e,f) *
-                  EXP( -score_interior(i,c,f,j)/RT )
+                  EXP( -score_interior(i,c,f,j,true)/RT )
                   / Qg(i,d,e,j) * Pg(i,d,e,j);
                 Pg(c,d,e,f) += p;
                 assert(!std::isnan(p));
@@ -1698,7 +2420,7 @@ fastiloops_pr(int i, int j,
               if (allow_paired(c,f) && Pg(i,d,e,j)>0.0)
               {
                 DBL_TYPE p = Qg(c,d,e,f) *
-                  EXP( -score_interior(i,c,f,j)/RT )
+                  EXP( -score_interior(i,c,f,j,true)/RT )
                   / Qg(i,d,e,j) * Pg(i,d,e,j);
                 Pg(c,d,e,f) += p;
                 assert(!std::isnan(p));
@@ -1714,7 +2436,7 @@ fastiloops_pr(int i, int j,
               if (allow_paired(c,f) && Pg(i,d,e,j)>0.0)
               {
                 DBL_TYPE p = Qg(c,d,e,f) *
-                  EXP( -score_interior(i,c,f,j)/RT )
+                  EXP( -score_interior(i,c,f,j,true)/RT )
                   / Qg(i,d,e,j) * Pg(i,d,e,j);
                 Pg(c,d,e,f) += p;
                 assert(!std::isnan(p));
@@ -1812,7 +2534,7 @@ fastiloops_pr(int i, int j,
                   if (j-f-1>l2min && f>=e+1 && allow_paired(c,f))
                   {
                     temp += Qg(c,d,e,f) *
-                      EXP ( -score_interior(i,j,c,f)/RT );
+                      EXP ( -score_interior(i,j,c,f,true)/RT );
                   }
                 }
                 Qx(i,d,e,s) = temp;
@@ -1852,7 +2574,7 @@ fastiloops_pr(int i, int j,
                     if (j-f-1>l2min && f>=e+1 && allow_paired(c,f))
                     {
                       temp += Qg(c,d,e,f) *
-                        EXP ( -score_interior(i,j,c,f)/RT );
+                        EXP ( -score_interior(i,j,c,f,true)/RT );
                     }
                   }
                   Qx(i,d,e,s) = temp;
@@ -1937,17 +2659,19 @@ score_hairpin(int i, int j) const
 
   e += size<=30 ?
     hairpin37[size-1] : 
-    hairpin37[30 - 1] + 1.75*RT*LOG(size/30.0);
+    hairpin37[30 - 1] + loop_greater30*LOG(size/30.0);
 
   if (size==3)
   {
     e += score_at_penalty(i,j);
     e += triloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-1]-1][seq[j]-1];
     if (polyC) e += polyC_penalty;
+    if (seq[i+1]==BASE_G && seq[i+2]==BASE_G && seq[j-1]==BASE_G)
+      e += hairpin_GGG;
   }
   else if (size==4)
   {
-    e += tetraloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-2]-1][seq[j-1]-1][seq[j]-1];
+    e += tloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-2]-1][seq[j-1]-1][seq[j]-1];
     e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
     if (polyC) e += polyC_slope*size + polyC_int;
   }
@@ -1966,13 +2690,13 @@ score_loop(int l) const
 {
   return l<=30 ?
     interior37[l-1] :
-    interior37[30-1]+1.75*RT*LOG(l/30.0);
+    interior37[30-1]+loop_greater30*LOG(l/30.0);
 }
 
 template <class PF_TYPE>
 energy_t
 Nupack<PF_TYPE>::
-score_interior(int i, int h, int m, int j) const
+score_interior(int i, int h, int m, int j, bool pk) const
 {
   int l1 = h - i - 1;
   int l2 = j - m - 1;
@@ -1982,7 +2706,8 @@ score_interior(int i, int h, int m, int j) const
   // helix
   if (size==0)
   {
-    e += stack37[pair_type(i,j)][pair_type(h,m)];
+    return stack37[pair_type(i,j)][pair_type(h,m)]
+      * (pk ? pk_stack_span : 1.0);
   }
   
   // bulge
@@ -1990,7 +2715,7 @@ score_interior(int i, int h, int m, int j) const
   {
     e += size<=30 ?
       bulge37[size-1] :
-      bulge37[30-1] + 1.75*RT*LOG(size/30.0);
+      bulge37[30-1] + loop_greater30*LOG(size/30.0);
 
     if (l1+l2==1)           //single bulge...treat as a stacked region
     {
@@ -2037,9 +2762,9 @@ score_interior(int i, int h, int m, int j) const
     else if (l1==2 && l2==2)
       e += int22_37[pair_type(i,j)][pair_type(h,m)][seq[i+1]-1][seq[j-1]-1][seq[i+2]-1][seq[j-2]-1];
     else if (l1==1 && l2==2)
-      e += int12_37[pair_type(i,j)][seq[j-2]-1][seq[i+1]-1][pair_type(h,m)][seq[j-1]-1];
+      e += int21_37[pair_type(i,j)][seq[j-2]-1][seq[i+1]-1][pair_type(h,m)][seq[j-1]-1];
     else if (l1==2 && l2==1)
-      e += int12_37[pair_type(m,h)][seq[i+1]-1][seq[j-1]-1][pair_type(j,i)][seq[i+2]-1];
+      e += int21_37[pair_type(m,h)][seq[i+1]-1][seq[j-1]-1][pair_type(j,i)][seq[i+2]-1];
     else
     {
       assert(!"error in tabulated interior loop");
@@ -2051,7 +2776,7 @@ score_interior(int i, int h, int m, int j) const
     assert(!"improperly classifed interior loop");
     exit(1);
   }
-  return e;
+  return e * (pk ? pk_interior_span : 1.0);
 }
 
 template <class PF_TYPE>
@@ -2080,7 +2805,7 @@ score_interior_asymmetry(int l1, int l2) const
   int asymmetry = std::abs(l1-l2);
   e += size<=30 ?
     interior37[size-1] :
-    interior37[30-1] + 1.75*RT*LOG(size/30.0);
+    interior37[30-1] + loop_greater30*LOG(size/30.0);
 
   // asymmetry penalty
   e += std::min(max_asymmetry,
@@ -2092,25 +2817,25 @@ score_interior_asymmetry(int l1, int l2) const
 template <class PF_TYPE>
 energy_t
 Nupack<PF_TYPE>::
-score_multiloop() const
+score_multiloop(bool pk) const
 {
-  return multiloop_penalty;
+  return pk ? multiloop_penalty_pk : multiloop_penalty ;
 }
 
 template <class PF_TYPE>
 energy_t
 Nupack<PF_TYPE>::
-score_multiloop_paired(int n) const
+score_multiloop_paired(int n, bool pk) const
 {
-  return multiloop_paired_penalty*n;
+  return (pk ? multiloop_paired_penalty_pk : multiloop_paired_penalty) * n;
 }
 
 template <class PF_TYPE>
 energy_t
 Nupack<PF_TYPE>::
-score_multiloop_unpaired(int n) const
+score_multiloop_unpaired(int n, bool pk) const
 {
-  return multiloop_unpaired_penalty*n;
+  return (pk ? multiloop_unpaired_penalty_pk : multiloop_unpaired_penalty) * n;
 }
 
 template <class PF_TYPE>
@@ -2198,6 +2923,14 @@ Nupack<PF_TYPE>::
 score_pk_unpaired(int n) const
 {
   return pk_unpaired_penalty*n;
+}
+
+template <class PF_TYPE>
+energy_t
+Nupack<PF_TYPE>::
+score_pk_band(int n) const
+{
+  return pk_band_penalty*n;
 }
 
 // instantiation

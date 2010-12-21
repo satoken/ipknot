@@ -39,6 +39,7 @@ template < class PF_TYPE >
 class Nupack
 {
 public:
+  enum { DP03, DP09 };
   typedef PF_TYPE pf_type;
   typedef double DBL_TYPE;
   typedef float energy_t;
@@ -46,6 +47,8 @@ public:
 public:
   Nupack();
   void load_sequence(const std::string& s);
+  void load_parameters_fm363(const std::vector<float>& v);
+  void load_default_parameters(int which);
   bool load_parameters(const char* filename);
   pf_type calculate_partition_function();
   void calculate_posterior();
@@ -63,13 +66,13 @@ private:
 
   energy_t score_hairpin(int i, int j) const;
   energy_t score_loop(int l) const;
-  energy_t score_interior(int i, int d, int e, int j) const;
+  energy_t score_interior(int i, int d, int e, int j, bool pk) const;
   energy_t score_interior_mismatch(int i, int j) const;
   energy_t score_interior_mismatch(int i, int j, int k, int l) const;
   energy_t score_interior_asymmetry(int l1, int l2) const;
-  energy_t score_multiloop() const;
-  energy_t score_multiloop_paired(int n) const;
-  energy_t score_multiloop_unpaired(int n) const;
+  energy_t score_multiloop(bool pk) const;
+  energy_t score_multiloop_paired(int n, bool pk) const;
+  energy_t score_multiloop_unpaired(int n, bool pk) const;
   energy_t score_at_penalty(int i, int j) const;
   energy_t score_dangle(int i, int j) const;
   energy_t score_pk() const;  
@@ -77,6 +80,7 @@ private:
   energy_t score_pk_pk() const;  
   energy_t score_pk_paired(int n) const;
   energy_t score_pk_unpaired(int n) const;
+  energy_t score_pk_band(int n) const;
 
   int base(char x) const;
   bool allow_paired(int i, int j) const;
@@ -118,16 +122,17 @@ private:
   std::vector<energy_t> interior37;
   boost::multi_array<energy_t,2> stack37;
   boost::multi_array<energy_t,4> int11_37;
-  boost::multi_array<energy_t,5> int12_37;
+  boost::multi_array<energy_t,5> int21_37;
   boost::multi_array<energy_t,6> int22_37;
   boost::multi_array<energy_t,2> dangle3_37;
   boost::multi_array<energy_t,2> dangle5_37;
   boost::multi_array<energy_t,5> triloop37;
-  boost::multi_array<energy_t,6> tetraloop37;
+  boost::multi_array<energy_t,6> tloop37;
   boost::multi_array<energy_t,3> mismatch_hairpin37;
   boost::multi_array<energy_t,3> mismatch_interior37;
   std::vector<energy_t> asymmetry_penalty;
   energy_t polyC_penalty, polyC_slope, polyC_int;
+  energy_t at_penalty;
   energy_t multiloop_penalty; // alpha1
   energy_t multiloop_paired_penalty; // alpha2
   energy_t multiloop_unpaired_penalty; // alpha3
@@ -136,10 +141,18 @@ private:
   energy_t pk_pk_penalty; // beta1p
   energy_t pk_paired_penalty; // beta2
   energy_t pk_unpaired_penalty; // beta3
-  energy_t at_penalty;
+  energy_t pk_band_penalty;
+  energy_t pk_stack_span;
+  energy_t pk_interior_span;
+  energy_t multiloop_penalty_pk;
+  energy_t multiloop_paired_penalty_pk;
+  energy_t multiloop_unpaired_penalty_pk;
 
   energy_t max_asymmetry;
   energy_t SALT_CORRECTION;
+  energy_t loop_greater30;
+  energy_t hairpin_GGG;
+  float intermolecular_initiation;
 };
 
 #endif // __INC_NUPACK_H__

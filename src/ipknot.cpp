@@ -650,7 +650,9 @@ main(int argc, char* argv[])
     else if (strcasecmp(model[0], "CONTRAfold")==0)
       en = new CONTRAfoldModel();
     else if (strcasecmp(model[0], "nupack")==0)
-      en = new NupackModel();
+      en = new NupackModel(0);
+    else if (strcasecmp(model[0], "nupack09")==0)
+      en = new NupackModel(1);
     else
     {
       usage(progname);
