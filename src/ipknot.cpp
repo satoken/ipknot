@@ -653,7 +653,7 @@ main(int argc, char* argv[])
       if (param)
         en = new NupackModel(param);
       else
-        en = new NupackModel(0);
+        en = new NupackModel(2);
     else if (strcasecmp(model[0], "nupack03")==0)
       en = new NupackModel(0);
     else if (strcasecmp(model[0], "nupack09")==0)
