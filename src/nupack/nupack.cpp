@@ -525,53 +525,53 @@ load_parameters_fm363(const std::vector<float>& v)
   int21_37[CG][A][A][CG][A] = *x++;
   int21_37[CG][A][A][CG][C] = *x++;
   int21_37[CG][A][A][CG][G] = *x++;
-  int21_37[CG][A][C][CG][A] = *x++;
-  int21_37[CG][A][C][CG][C] = *x++;
-  int21_37[CG][A][C][CG][G] = *x++;
-  int21_37[CG][A][G][CG][A] = *x++;
-  int21_37[CG][A][G][CG][C] = *x++;
-  int21_37[CG][A][G][CG][G] = *x++;
   int21_37[CG][C][A][CG][A] = *x++;
   int21_37[CG][C][A][CG][C] = *x++;
-  int21_37[CG][C][A][CG][U] = *x++;
+  int21_37[CG][C][A][CG][G] = *x++;
+  int21_37[CG][G][A][CG][A] = *x++;
+  int21_37[CG][G][A][CG][C] = *x++;
+  int21_37[CG][G][A][CG][G] = *x++;
+  int21_37[CG][A][C][CG][A] = *x++;
+  int21_37[CG][A][C][CG][C] = *x++;
+  int21_37[CG][A][C][CG][U] = *x++;
   int21_37[CG][C][C][CG][A] = *x++;
   int21_37[CG][C][C][CG][C] = *x++;
   int21_37[CG][C][C][CG][U] = *x++;
-  int21_37[CG][C][U][CG][A] = *x++;
-  int21_37[CG][C][U][CG][C] = *x++;
-  int21_37[CG][C][U][CG][U] = *x++;
-  int21_37[CG][G][A][CG][A] = *x++;
-  int21_37[CG][G][A][CG][G] = *x++;
-  int21_37[CG][G][G][CG][A] = *x++;
-  int21_37[CG][G][G][CG][G] = *x++;
+  int21_37[CG][U][C][CG][A] = *x++;
   int21_37[CG][U][C][CG][C] = *x++;
   int21_37[CG][U][C][CG][U] = *x++;
+  int21_37[CG][A][G][CG][A] = *x++;
+  int21_37[CG][A][G][CG][G] = *x++;
+  int21_37[CG][G][G][CG][A] = *x++;
+  int21_37[CG][G][G][CG][G] = *x++;
+  int21_37[CG][C][U][CG][C] = *x++;
+  int21_37[CG][C][U][CG][U] = *x++;
   int21_37[CG][U][U][CG][C] = *x++;
   int21_37[CG][U][U][CG][U] = *x++;
   int21_37[GC][A][A][GC][A] = *x++;
   int21_37[GC][A][A][GC][C] = *x++;
   int21_37[GC][A][A][GC][G] = *x++;
-  int21_37[GC][A][C][GC][A] = *x++;
-  int21_37[GC][A][C][GC][C] = *x++;
-  int21_37[GC][A][C][GC][G] = *x++;
-  int21_37[GC][A][G][GC][A] = *x++;
-  int21_37[GC][A][G][GC][C] = *x++;
-  int21_37[GC][A][G][GC][G] = *x++;
   int21_37[GC][C][A][GC][A] = *x++;
   int21_37[GC][C][A][GC][C] = *x++;
-  int21_37[GC][C][A][GC][U] = *x++;
+  int21_37[GC][C][A][GC][G] = *x++;
+  int21_37[GC][G][A][GC][A] = *x++;
+  int21_37[GC][G][A][GC][C] = *x++;
+  int21_37[GC][G][A][GC][G] = *x++;
+  int21_37[GC][A][C][GC][A] = *x++;
+  int21_37[GC][A][C][GC][C] = *x++;
+  int21_37[GC][A][C][GC][U] = *x++;
   int21_37[GC][C][C][GC][A] = *x++;
   int21_37[GC][C][C][GC][C] = *x++;
   int21_37[GC][C][C][GC][U] = *x++;
-  int21_37[GC][C][U][GC][A] = *x++;
-  int21_37[GC][C][U][GC][C] = *x++;
-  int21_37[GC][C][U][GC][U] = *x++;
-  int21_37[GC][G][A][GC][A] = *x++;
-  int21_37[GC][G][A][GC][G] = *x++;
-  int21_37[GC][G][G][GC][A] = *x++;
-  int21_37[GC][G][G][GC][G] = *x++;
+  int21_37[GC][U][C][GC][A] = *x++;
   int21_37[GC][U][C][GC][C] = *x++;
   int21_37[GC][U][C][GC][U] = *x++;
+  int21_37[GC][A][G][GC][A] = *x++;
+  int21_37[GC][A][G][GC][G] = *x++;
+  int21_37[GC][G][G][GC][A] = *x++;
+  int21_37[GC][G][G][GC][G] = *x++;
+  int21_37[GC][C][U][GC][C] = *x++;
+  int21_37[GC][C][U][GC][U] = *x++;
   int21_37[GC][U][U][GC][C] = *x++;
   int21_37[GC][U][U][GC][U] = *x++;
   float internal21_match = *x++;
@@ -590,19 +590,19 @@ load_parameters_fm363(const std::vector<float>& v)
                         (i==G && j==C && m==G && n==C))
                     {
                       if (bp[k][l]>=0 || bp[k][o]>=0)
-                        int21_37[bp[i][j]][k][l][bp[m][n]][o] = internal21_match;
+                        int21_37[bp[i][j]][l][k][bp[m][n]][o] = internal21_match;
                     }
                     else
                     {
                       if (bp[k][l]>=0 || bp[k][o]>=0)
-                        int21_37[bp[i][j]][k][l][bp[m][n]][o] = internal21_match;
+                        int21_37[bp[i][j]][l][k][bp[m][n]][o] = internal21_match;
                       else
-                        int21_37[bp[i][j]][k][l][bp[m][n]][o] =
-                          int21_37[CG][k][l][CG][o]/2.0 + int21_37[GC][k][l][GC][o]/2.0;
+                        int21_37[bp[i][j]][l][k][bp[m][n]][o] =
+                          int21_37[CG][l][k][CG][o]/2.0 + int21_37[GC][l][k][GC][o]/2.0;
                       if (!gc[i][j])
-                        int21_37[bp[i][j]][k][l][bp[m][n]][o] += internal21_AU_closure;
+                        int21_37[bp[i][j]][l][k][bp[m][n]][o] += internal21_AU_closure;
                       if (!gc[m][n])    
-                        int21_37[bp[i][j]][k][l][bp[m][n]][o] += internal21_AU_closure;
+                        int21_37[bp[i][j]][l][k][bp[m][n]][o] += internal21_AU_closure;
                     }
 
   // interior loops 2x2
@@ -758,18 +758,18 @@ load_parameters_fm363(const std::vector<float>& v)
 
   // loop length for interior loops
   for (int i=4; i!=7; ++i) interior37[i-1] = *x++;
-  for (int i=7; i!=30; ++i)
-    interior37[i-1] = interior37[7-1] + loop_greater30 * LOG(1.0*i/7);
+  for (int i=7; i<=30; ++i)
+    interior37[i-1] = interior37[6-1] + loop_greater30 * LOG(1.0*i/7);
 
   // loop length for bulge loops
   for (int i=1; i!=7; ++i) bulge37[i-1] = *x++;
-  for (int i=7; i!=30; ++i)
-    bulge37[i-1] = bulge37[7-1] + loop_greater30 * LOG(1.0*i/7);
+  for (int i=7; i<=30; ++i)
+    bulge37[i-1] = bulge37[6-1] + loop_greater30 * LOG(1.0*i/7);
 
   // loop length for hairpin loops
   for (int i=3; i!=10; ++i) hairpin37[i-1] = *x++;
-  for (int i=10; i!=30; ++i)
-    hairpin37[i-1] = hairpin37[10-1] + loop_greater30 * LOG(1.0*i/10);
+  for (int i=10; i<=30; ++i)
+    hairpin37[i-1] = hairpin37[9-1] + loop_greater30 * LOG(1.0*i/10);
 
   // misc loops
   at_penalty = *x++;
@@ -839,11 +839,11 @@ load_parameters_fm363(const std::vector<float>& v)
   tloop37[U][G][G][A][A][A] = *x++;
 
   // asymmetry penalty
-  max_asymmetry = 0.300;
-  asymmetry_penalty[0] = 0.050;
-  asymmetry_penalty[1] = 0.050;
-  asymmetry_penalty[2] = 0.050;
-  asymmetry_penalty[3] = 0.050;
+  max_asymmetry = 3.00;
+  asymmetry_penalty[0] = 0.50;
+  asymmetry_penalty[1] = 0.50;
+  asymmetry_penalty[2] = 0.50;
+  asymmetry_penalty[3] = 0.50;
 
   // peudoknot parameters
   pk_penalty = *x++;
@@ -1183,6 +1183,141 @@ load_parameters(const char* file)
 
   return true;
 }
+
+template < class PF_TYPE >
+void
+Nupack<PF_TYPE>::
+dump_parameters(std::ostream& os) const
+{
+  // stack
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=6; ++j)
+      os << "stack37[" << i << "][" << j << "]=" << stack37[i][j] << std::endl;
+
+  // hairpin
+  for (int i=0; i!=30; ++i)
+    os << "hairpin37[" << i << "]=" << hairpin37[i] << std::endl;
+
+  // bulge
+  for (int i=0; i!=30; ++i)
+    os << "bulge37[" << i << "]=" << bulge37[i] << std::endl;
+
+  // interior
+  for (int i=0; i!=30; ++i)
+    os << "interior37[" << i << "]=" << interior37[i] << std::endl;
+
+  // asymmetry
+  for (int i=0; i!=4; ++i)
+    os << "asymmetry_penalty[" << i << "]=" << asymmetry_penalty[i] << std::endl;
+  os << "max_asymmetry=" << max_asymmetry << std::endl;
+
+  // triloops
+  for (int i0=0; i0!=4; ++i0)
+    for (int i1=0; i1!=4; ++i1)
+      for (int i2=0; i2!=4; ++i2)
+        for (int i3=0; i3!=4; ++i3)
+          for (int i4=0; i4!=4; ++i4)
+            if (triloop37[i0][i1][i2][i3][i4]!=0.0)
+              os << "triloop37["<<i0<<"]["<<i1<<"]["<<i2<<"]["<<i3<<"]["<<i4<<"]="
+                 << triloop37[i0][i1][i2][i3][i4] <<std::endl;
+
+  // tloops
+  for (int i0=0; i0!=4; ++i0)
+    for (int i1=0; i1!=4; ++i1)
+      for (int i2=0; i2!=4; ++i2)
+        for (int i3=0; i3!=4; ++i3)
+          for (int i4=0; i4!=4; ++i4)
+            for (int i5=0; i5!=4; ++i5)
+            if (tloop37[i0][i1][i2][i3][i4][i5]!=0.0)
+              os << "tloop37["<<i0<<"]["<<i1<<"]["<<i2<<"]["<<i3<<"]["<<i4<<"]["<<i5<<"]="
+                 << tloop37[i0][i1][i2][i3][i4][i5] <<std::endl;
+
+  // mismatch hairpin
+  for (int i=0; i!=4; ++i)
+    for (int j=0; j!=4; ++j)
+      for (int k=0; k!=6; ++k)
+        os << "mismatch_hairpin37["<<i<<"]["<<j<<"]["<<k<<"]="
+           << mismatch_hairpin37[i][j][k] << std::endl;
+
+  // mismatch interior37
+  for (int i=0; i!=4; ++i)
+    for (int j=0; j!=4; ++j)
+      for (int k=0; k!=6; ++k)
+        os << "mismatch_interior37["<<i<<"]["<<j<<"]["<<k<<"]="
+           << mismatch_interior37[i][j][k] << std::endl;
+
+  // dangle5
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=4; ++j)
+      os << "dangle5_37["<<i<<"]["<<j<<"]=" << dangle5_37[i][j] << std::endl;
+
+  // dangle3
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=4; ++j)
+      os << "dangle3_37["<<i<<"]["<<j<<"]=" << dangle3_37[i][j] << std::endl;
+
+  // multiloop penalties
+  os << "multiloop_penalty=" << multiloop_penalty << std::endl
+     << "multiloop_paired_penalty=" << multiloop_paired_penalty << std::endl
+     << "multiloop_unpaired_penalty=" << multiloop_unpaired_penalty << std::endl;
+
+  // AT terminate penalties
+  os << "at_penalty=" << at_penalty << std::endl;
+
+  // interior loops 1x1
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=6; ++j)
+      for (int k=0; k!=4; ++k)
+        for (int l=0; l!=4; ++l)
+          os << "int11_37["<<i<<"]["<<j<<"]["<<k<<"]["<<l<<"]="
+             << int11_37[i][j][k][l] << std::endl;
+
+  // interior loops 2x2
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=6; ++j)
+      for (int m=0; m!=4; ++m)
+        for (int n=0; n!=4; ++n)
+          for (int k=0; k!=4; ++k)
+            for (int l=0; l!=4; ++l)
+              os << "int22_37["<<i<<"]["<<j<<"]["<<m<<"]["<<l<<"]["<<n<<"]["<<k<<"]="
+                 << int22_37[i][j][m][l][n][k] << std::endl;
+
+  // interior loops 1x2
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=6; ++j)
+      for (int m=0; m!=4; ++m)
+        for (int k=0; k!=4; ++k)
+          for (int l=0; l!=4; ++l)
+            os << "int21_37["<<i<<"]["<<k<<"]["<<m<<"]["<<j<<"]["<<l<<"]="
+               << int21_37[i][k][m][j][l] << std::endl;
+
+  // polyC hairpin parameters
+  os << "polyC_penalty=" << polyC_penalty << std::endl
+     << "polyC_slope=" << polyC_slope << std::endl
+     << "polyC_int=" << polyC_int << std::endl;
+
+  // pseudoknot energy parameters
+  os << "pk_penalty=" << pk_penalty << std::endl
+     << "pk_paired_penalty=" << pk_paired_penalty << std::endl
+     << "pk_unpaired_penalty=" << pk_unpaired_penalty << std::endl
+     << "pk_multiloop_penalty=" << pk_multiloop_penalty << std::endl
+     << "pk_pk_penalty=" << pk_pk_penalty << std::endl
+     << "pk_band_penalty=" << pk_band_penalty << std::endl
+     << "pk_stack_span=" << pk_stack_span << std::endl
+     << "pk_interior_span=" << pk_interior_span << std::endl
+     << "multiloop_penalty_pk=" << multiloop_penalty_pk << std::endl
+     << "multiloop_paired_penalty_pk=" << multiloop_paired_penalty_pk << std::endl
+     << "multiloop_unpaired_penalty_pk" << multiloop_unpaired_penalty_pk << std::endl;
+
+  // BIMOLECULAR TERM
+  os << "intermolecular_initiation=" << intermolecular_initiation << std::endl;
+
+  // misc
+  os << "loop_greater30=" << loop_greater30 << std::endl
+     << "hairpin_GGG=" << hairpin_GGG << std::endl;
+
+}
+
 
 template < class PF_TYPE >
 typename Nupack<PF_TYPE>::pf_type

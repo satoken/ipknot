@@ -50,6 +50,7 @@ public:
   void load_parameters_fm363(const std::vector<float>& v);
   void load_default_parameters(int which);
   bool load_parameters(const char* filename);
+  void dump_parameters(std::ostream& os) const;
   pf_type calculate_partition_function();
   void calculate_posterior();
   void get_posterior(std::vector<float>& bp, std::vector<int>& offset) const;
