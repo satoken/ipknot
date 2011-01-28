@@ -24,7 +24,7 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/resource.h>
+//#include <sys/resource.h>
 #include <strings.h>
 #include <ctime>
 #include <iostream>
@@ -430,6 +430,7 @@ make_parenthsis(const std::vector<int>& bpseq, const std::vector<int>& plevel)
   return r;
 }
 
+#if 0
 double
 timing()
 {
@@ -437,6 +438,7 @@ timing()
   getrusage(RUSAGE_SELF, &ru);
   return ru.ru_utime.tv_sec+ru.ru_utime.tv_usec*1e-6;
 }
+#endif
 
 template < class SEQ, class EN >
 void
@@ -513,14 +515,20 @@ parse_csv_line(const char* l)
 void
 usage(const char* progname)
 {
+  std::cout << "IPknot version " << PACKAGE_VERSION << std::endl
+            << "  Available probabilistic models: McCaskill, CONTRAfold, Alifold, NUPACK"
+            << std::endl << std::endl;
+
   std::cout << progname << ": [options] fasta" << std::endl
+            << ""
             << " -h:       show this message" << std::endl
     //      << " -a alpha: weight for each level" << std::endl
             << " -t th:    threshold of base-pairing probabilities for each level" << std::endl
             << " -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)" << std::endl
-            << "           (default: -g 4 -g 8)" << std::endl
-            << " -m:       select thresholds that maxmize pseudo MCC" << std::endl
+            << "           (default: -g 2 -g 4)" << std::endl
+    //      << " -m:       select thresholds that maxmize pseudo MCC" << std::endl
             << " -e model: probabilistic model (default: McCaskill)" << std::endl
+            << " -r n:     the number of the iterative refinement (default: 0)" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
             << " -b:       output the prediction by BPSEQ format" << std::endl
             << " -P param: read the energy parameter file for the Vienna RNA package" << std::endl
@@ -543,20 +551,20 @@ main(int argc, char* argv[])
   std::vector<const char*> model;
   bool output_bpseq=false;
   int n_th=1;
-  int n_fill=0;
+  int n_refinement=0;
   const char* param=NULL;
   bool aux=false;
   bool levelwise=true;
   bool max_pmcc=false;
-  while ((ch=getopt(argc, argv, "a:t:g:me:f:ibn:P:xuh"))!=-1)
+  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibn:P:xuh"))!=-1)
   {
     switch (ch)
     {
       case 'e':
         model.push_back(optarg);
         break;
-      case 'f':
-        n_fill=atoi(optarg);
+      case 'f': case 'r':
+        n_refinement=atoi(optarg);
         break;
       case 'a':
         alpha.push_back(atof(optarg));
@@ -608,8 +616,16 @@ main(int argc, char* argv[])
   if (th.empty())
   {
     th.resize(2);
-    th[0].resize(1, 1/(4.0+1)); // -g 4
-    th[1].resize(1, 1/(8.0+1)); // -g 8
+    if (n_refinement==0)
+    {
+      th[0].resize(1, 1/(2.0+1)); // -g 2
+      th[1].resize(1, 1/(4.0+1)); // -g 4
+    }
+    else
+    {
+      th[0].resize(1, 1/(1.0+1)); // -g 1
+      th[1].resize(1, 1/(1.0+1)); // -g 1
+    }
   }
   if (alpha.empty())
   {
@@ -649,6 +665,7 @@ main(int argc, char* argv[])
       en = new RNAfoldModel(param);
     else if (strcasecmp(model[0], "CONTRAfold")==0)
       en = new CONTRAfoldModel();
+#if 0
     else if (strcasecmp(model[0], "nupack")==0)
       if (param)
         en = new NupackModel(param);
@@ -658,6 +675,10 @@ main(int argc, char* argv[])
       en = new NupackModel(0);
     else if (strcasecmp(model[0], "nupack09")==0)
       en = new NupackModel(1);
+#else
+    else if (strcasecmp(model[0], "nupack")==0)
+      en = new NupackModel(param);
+#endif
     else
     {
       usage(progname);
@@ -672,7 +693,7 @@ main(int argc, char* argv[])
         ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel);
       else
         ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
-      for (int i=0; i!=n_fill; ++i)
+      for (int i=0; i!=n_refinement; ++i)
       {
         update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
         if (max_pmcc)
@@ -739,7 +760,7 @@ main(int argc, char* argv[])
         ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel);
       else
         ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
-      for (int i=0; i!=n_fill; ++i)
+      for (int i=0; i!=n_refinement; ++i)
       {
         update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, bp, offset);
         if (max_pmcc)

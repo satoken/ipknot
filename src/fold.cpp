@@ -170,7 +170,7 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
   if (param_)
     nu.load_parameters(param_);
   else
-    nu.load_default_parameters(model_);
+    nu.load_default_parameters(/*model_*/);
   //nu.dump_parameters(std::cout);
   nu.load_sequence(seq);
   nu.calculate_partition_function();
@@ -184,6 +184,7 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
 AlifoldModel::
 AlifoldModel(const char* param)
 {
+  copy_new_parameters();
   if (param) Vienna::read_parameter_file(param);
 }
 

@@ -81,6 +81,22 @@ Nupack()
   pair_map[BASE_G][BASE_C] = PAIR_GC;
   pair_map[BASE_G][BASE_U] = PAIR_GU;
   pair_map[BASE_U][BASE_G] = PAIR_UG;
+#if 0
+  std::fill(hairpin37.begin(), hairpin37.end(), 0);
+  std::fill(bulge37.begin(), bulge37.end(), 0);
+  std::fill(interior37.begin(), interior37.end(), 0);
+  std::fill(stack37.data(), stack37.data()+stack37.num_elements(), 0);
+  std::fill(int11_37.data(), int11_37.data()+int11_37.num_elements(), 0);
+  std::fill(int21_37.data(), int21_37.data()+int21_37.num_elements(), 0);
+  std::fill(int22_37.data(), int22_37.data()+int22_37.num_elements(), 0);
+  std::fill(dangle3_37.data(), dangle3_37.data()+dangle3_37.num_elements(), 0);
+  std::fill(dangle5_37.data(), dangle5_37.data()+dangle5_37.num_elements(), 0);
+  std::fill(triloop37.data(), triloop37.data()+triloop37.num_elements(), 0);
+  std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0);
+  std::fill(mismatch_hairpin37.data(), mismatch_hairpin37.data()+mismatch_hairpin37.num_elements(), 0);
+  std::fill(mismatch_interior37.data(), mismatch_interior37.data()+mismatch_interior37.num_elements(), 0);
+  std::fill(asymmetry_penalty.begin(), asymmetry_penalty.end(), 0);
+#endif
 }
 
 template < class PF_TYPE >
@@ -205,6 +221,9 @@ check_stability_and_size (int k, int l, int o, int p)
   return -1;            
 }
 
+#include "def_param.h"
+
+#if 0
 static float bl[] = {
   -0.70, -1.30, -1.39, -0.14, -0.85, -0.81, -1.32, -2.08, -1.33, -0.38,
   -1.47, -1.23, -2.05, -0.92, -1.51, -0.58, -0.68, -0.23, -0.69, -0.03,
@@ -333,28 +352,6 @@ static float dp09[] = {
   9.6, 15.0, 15.0, 0.2, 0.1, 0.1, 0.83,
   0.83, 3.4, 0.4, 0.0, 3.4, 0.4, 0.0
 };
-
-template < class PF_TYPE >
-void
-Nupack<PF_TYPE>::
-load_default_parameters(int which)
-{
-  if (which==DP03)
-  {
-    std::vector<float> p(dp03, dp03+sizeof(dp03)/sizeof(dp03[0]));
-    load_parameters_fm363(p);
-  }
-  else if (which==DP09)
-  {
-    std::vector<float> p(dp09, dp09+sizeof(dp09)/sizeof(dp09[0]));
-    load_parameters_fm363(p);
-  }
-  else /*if (which==BL)*/
-  {
-    std::vector<float> p(bl, bl+sizeof(bl)/sizeof(bl[0]));
-    load_parameters_fm363(p);
-  }
-}
 
 template < class PF_TYPE >
 void
@@ -909,6 +906,7 @@ load_parameters_fm363(const std::vector<float>& v)
   multiloop_paired_penalty_pk = *x++;
   multiloop_unpaired_penalty_pk = *x++;
 }
+#endif
 
 template < class PF_TYPE >
 bool
@@ -1233,6 +1231,139 @@ load_parameters(const char* file)
   }
 
   return true;
+}
+
+template < class PF_TYPE >
+void
+Nupack<PF_TYPE>::
+load_default_parameters()
+{
+  int p[] = { PAIR_AU, PAIR_CG, PAIR_GC, PAIR_UA, PAIR_GU, PAIR_UG };
+  int b[] = { BASE_A-1, BASE_C-1, BASE_G-1, BASE_U-1 };
+
+  const int* v = &default_parameters[0];
+  
+  // stack
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=6; ++j)
+      stack37[p[i]][p[j]] = *(v++)/100.0;
+  
+  // hairpin
+  for (int i=0; i<30; ++i)
+    hairpin37[i] = *(v++)/100.0;
+
+  // bulge
+  for (int i=0; i<30; ++i)
+    bulge37[i] = *(v++)/100.0;
+
+  // interior
+  for (int i=0; i<30; ++i)
+    interior37[i] = *(v++)/100.0;
+
+  // asymmetry panelties
+  for (int i=0; i<4; ++i)
+    asymmetry_penalty[i] = *(v++)/100.0;
+
+  // mismatch hairpin
+  for (int i=0; i!=4; ++i)
+    for (int j=0; j!=4; ++j)
+      for (int k=0; k!=6; ++k)
+        mismatch_hairpin37[b[i]][b[j]][p[k]] = *(v++)/100.0;
+
+  // mismatch interior
+  for (int i=0; i!=4; ++i)
+    for (int j=0; j!=4; ++j)
+      for (int k=0; k!=6; ++k)
+        mismatch_interior37[b[i]][b[j]][p[k]] = *(v++)/100.0;
+
+  // dangle5
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=4; ++j)
+      dangle5_37[p[i]][b[j]] = *(v++)/100.0;
+
+  // dangle3
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=4; ++j)
+      dangle3_37[p[i]][b[j]] = *(v++)/100.0;
+
+  // multiloop penalties
+  multiloop_penalty = *(v++)/100.0;
+  multiloop_paired_penalty = *(v++)/100.0;
+  multiloop_unpaired_penalty = *(v++)/100.0;
+  
+  // AT terminate penalties
+  at_penalty = *(v++)/100.0;
+
+  // interior loops 1x1
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=6; ++j)
+      for (int k=0; k!=4; ++k)
+        for (int l=0; l!=4; ++l)
+          int11_37[p[i]][p[j]][b[k]][b[l]] = *(v++)/100.0;
+
+  // interior loops 2x2
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=6; ++j)
+      for (int m=0; m!=4; ++m)
+        for (int n=0; n!=4; ++n)
+          for (int k=0; k!=4; ++k)
+            for (int l=0; l!=4; ++l)
+              int22_37[p[i]][p[j]][b[m]][b[l]][b[n]][b[k]] = *(v++)/100.0;
+
+  // interior loops 1x2
+  for (int i=0; i!=6; ++i)
+    for (int j=0; j!=6; ++j)
+      for (int m=0; m!=4; ++m)
+        for (int k=0; k!=4; ++k)
+          for (int l=0; l!=4; ++l)
+            int21_37[p[i]][b[k]][b[m]][p[j]][b[l]] = *(v++)/100.0;
+
+  // polyC hairpin parameters
+  polyC_penalty = *(v++)/100.0;
+  polyC_slope = *(v++)/100.0;
+  polyC_int = *(v++)/100.0;
+
+  // pseudoknot energy parameters
+  pk_penalty = *(v++)/100.0;
+  pk_paired_penalty = *(v++)/100.0;
+  pk_unpaired_penalty = *(v++)/100.0;
+  pk_multiloop_penalty = *(v++)/100.0;
+  pk_pk_penalty = *(v++)/100.0;
+  pk_band_penalty = 0.0;
+  pk_stack_span = 1.0;
+  pk_interior_span = 1.0;
+  multiloop_penalty_pk = multiloop_penalty;
+  multiloop_paired_penalty_pk = multiloop_paired_penalty;
+  multiloop_unpaired_penalty_pk = multiloop_unpaired_penalty;
+
+  // BIMOLECULAR TERM
+  intermolecular_initiation = *(v++)/100.0;
+
+  // triloops
+  //std::fill(triloop37.data(), triloop37.data()+triloop37.num_elements(), 0.0);
+  std::fill(&triloop37[0][0][0][0][0], &triloop37[0][0][0][0][0]+4*4*4*4*4, 0.0);
+  for (int i=0; default_triloops[i].s!=NULL; ++i)
+  {
+    int v=default_triloops[i].e;
+    const char* loop=default_triloops[i].s;
+    std::vector<int> idx(5);
+    for (int i=0; i!=5; ++i) idx[i]=base(loop[i])-1;
+    //triloop37(idx) = v/100.0;
+    triloop37[idx[0]][idx[1]][idx[2]][idx[3]][idx[4]] = v/100.0;
+  }
+
+  // tloops
+  //std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0.0);
+  std::fill(&tloop37[0][0][0][0][0][0], &tloop37[0][0][0][0][0][0]+4*4*4*4*4*4, 0.0);
+  for (int i=0; default_tloops[i].s!=NULL; ++i)
+  {
+    int v=default_tloops[i].e;
+    const char* loop=default_tloops[i].s;
+    std::vector<int> idx(6);
+    for (int i=0; i!=6; ++i) idx[i]=base(loop[i])-1;
+    //tloop37(idx) = v/100.0;
+    tloop37[idx[0]][idx[1]][idx[2]][idx[3]][idx[4]][idx[5]] = v/100.0;
+  }
 }
 
 template < class PF_TYPE >

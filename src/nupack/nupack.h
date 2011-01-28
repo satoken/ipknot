@@ -39,7 +39,7 @@ template < class PF_TYPE >
 class Nupack
 {
 public:
-  enum { DP03, DP09 };
+  //enum { DP03, DP09 };
   typedef PF_TYPE pf_type;
   typedef double DBL_TYPE;
   typedef float energy_t;
@@ -48,7 +48,7 @@ public:
   Nupack();
   void load_sequence(const std::string& s);
   void load_parameters_fm363(const std::vector<float>& v);
-  void load_default_parameters(int which);
+  void load_default_parameters(/*int which*/);
   bool load_parameters(const char* filename);
   void dump_parameters(std::ostream& os) const;
   pf_type calculate_partition_function();

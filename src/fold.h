@@ -79,7 +79,7 @@ public:
 class NupackModel : public BPEngineSeq
 {
 public:
-  NupackModel(int model) : BPEngineSeq(), model_(model), param_(NULL) { }
+  //NupackModel(int model) : BPEngineSeq(), model_(model), param_(NULL) { }
   NupackModel(const char* param) : BPEngineSeq(), param_(param) { }
   
   void calculate_posterior(const std::string& seq, const std::string& paren,
@@ -91,7 +91,7 @@ public:
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
 
 private:
-  int model_;
+  //int model_;
   const char* param_;
 };
 
