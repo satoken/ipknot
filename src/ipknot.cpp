@@ -556,7 +556,8 @@ main(int argc, char* argv[])
   bool aux=false;
   bool levelwise=true;
   bool max_pmcc=false;
-  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibn:P:xuh"))!=-1)
+  bool output_mfa=false;
+  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibn:P:xulh"))!=-1)
   {
     switch (ch)
     {
@@ -600,6 +601,9 @@ main(int argc, char* argv[])
         break;
       case 'u':
         levelwise=false;
+        break;
+      case 'l':
+        output_mfa=true;
         break;
       case 'h': case '?': default:
         usage(progname);
@@ -768,8 +772,21 @@ main(int argc, char* argv[])
         else
           ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
       }
-      output(output_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
-
+      if (!output_mfa)
+        output(output_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
+      else
+      {
+        std::cout << ">SS_cons" << std::endl
+                  << make_parenthsis(bpseq, plevel) << std::endl;
+        std::list<std::string>::const_iterator name=aln->name().begin();
+        std::list<std::string>::const_iterator seq=aln->seq().begin();
+        while (name!=aln->name().end() && seq!=aln->seq().end())
+        {
+          std::cout << ">" << *name << std::endl
+                    << *seq << std::endl;
+          ++seq; ++name;
+        }
+      }
       a.erase(aln);
     }
 
