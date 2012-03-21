@@ -482,22 +482,43 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
 #endif
 }
 
+static
 void
-output(bool output_bpseq, const std::string& desc, const std::string& seq,
-       const std::vector<int>& bpseq, const std::vector<int>& plevel)
+output_fa(std::ostream& os,
+          const std::string& desc, const std::string& seq,
+          const std::vector<int>& bpseq, const std::vector<int>& plevel)
 {
-  if (!output_bpseq)
+  os << ">" << desc << std::endl
+     << seq << std::endl
+     << make_parenthsis(bpseq, plevel) << std::endl;
+}
+
+static
+void
+output_mfa(std::ostream& os, const Aln& aln,
+           const std::vector<int>& bpseq, const std::vector<int>& plevel)
+{
+  os << ">SS_cons" << std::endl
+     << make_parenthsis(bpseq, plevel) << std::endl;
+  std::list<std::string>::const_iterator name=aln.name().begin();
+  std::list<std::string>::const_iterator seq=aln.seq().begin();
+  while (name!=aln.name().end() && seq!=aln.seq().end())
   {
-    std::cout << ">" << desc << std::endl
-              << seq << std::endl
-              << make_parenthsis(bpseq, plevel) << std::endl;
+    os << ">" << *name << std::endl
+       << *seq << std::endl;
+    ++seq; ++name;
   }
-  else
-  {
-    std::cout << "# " << desc << std::endl;
-    for (uint i=0; i!=bpseq.size(); ++i)
-      std::cout << i+1 << " " << seq[i] << " " << bpseq[i]+1 << std::endl;
-  }
+}
+
+static
+void
+output_bpseq(std::ostream& os,
+             const std::string& desc, const std::string& seq,
+             const std::vector<int>& bpseq, const std::vector<int>& plevel)
+{
+  os << "# " << desc << std::endl;
+  for (uint i=0; i!=bpseq.size(); ++i)
+    os << i+1 << " " << seq[i] << " " << bpseq[i]+1 << std::endl;
 }
 
 template <class T>
@@ -549,15 +570,15 @@ main(int argc, char* argv[])
   std::vector<float> alpha;
   bool isolated_bp=false;
   std::vector<const char*> model;
-  bool output_bpseq=false;
   int n_th=1;
   int n_refinement=0;
   const char* param=NULL;
   bool aux=false;
   bool levelwise=true;
   bool max_pmcc=false;
-  bool output_mfa=false;
-  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibn:P:xulh"))!=-1)
+  std::ostream *os_bpseq=NULL;
+  std::ostream *os_mfa=NULL;
+  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:h"))!=-1)
   {
     switch (ch)
     {
@@ -588,7 +609,15 @@ main(int argc, char* argv[])
         isolated_bp=true;
         break;
       case 'b':
-        output_bpseq=true;
+        os_bpseq=&std::cout;
+        break;
+      case 'B':
+        os_bpseq=new std::ofstream(optarg);
+        if (!dynamic_cast<std::ofstream*>(os_bpseq)->is_open())
+        {
+          perror(optarg);
+          return 1;
+        }
         break;
       case 'n':
         n_th=atoi(optarg);
@@ -603,7 +632,15 @@ main(int argc, char* argv[])
         levelwise=false;
         break;
       case 'l':
-        output_mfa=true;
+        os_mfa=&std::cout;
+        break;
+      case 'L':
+        os_mfa=new std::ofstream(optarg);
+        if (!dynamic_cast<std::ofstream*>(os_mfa)->is_open())
+        {
+          perror(optarg);
+          return 1;
+        }
         break;
       case 'h': case '?': default:
         usage(progname);
@@ -660,7 +697,10 @@ main(int argc, char* argv[])
       ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel);
     else
       ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel);
-    output(output_bpseq, argv[0], seq, bpseq, plevel);
+    if (os_bpseq)
+      output_bpseq(*os_bpseq, argv[0], seq, bpseq, plevel);
+    if (os_bpseq!=&std::cout)
+      output_fa(std::cout, argv[0], seq, bpseq, plevel);
   }    
   else if (Fasta::load(f, argv[0])>0)
   {
@@ -705,8 +745,10 @@ main(int argc, char* argv[])
         else
           ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
       }
-      output(output_bpseq, fa->name(), fa->seq(), bpseq, plevel);
-
+      if (os_bpseq)
+        output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel);
+      if (os_bpseq!=&std::cout)
+        output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel);
       f.erase(fa);
     }
 
@@ -772,21 +814,12 @@ main(int argc, char* argv[])
         else
           ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
       }
-      if (!output_mfa)
-        output(output_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
-      else
-      {
-        std::cout << ">SS_cons" << std::endl
-                  << make_parenthsis(bpseq, plevel) << std::endl;
-        std::list<std::string>::const_iterator name=aln->name().begin();
-        std::list<std::string>::const_iterator seq=aln->seq().begin();
-        while (name!=aln->name().end() && seq!=aln->seq().end())
-        {
-          std::cout << ">" << *name << std::endl
-                    << *seq << std::endl;
-          ++seq; ++name;
-        }
-      }
+      if (os_bpseq)
+        output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
+      if (os_mfa)
+        output_mfa(*os_mfa, *aln, bpseq, plevel);
+      if (os_bpseq!=&std::cout && os_mfa!=&std::cout)
+        output_fa(std::cout, aln->name().front(), aln->consensus(), bpseq, plevel);        
       a.erase(aln);
     }
 
@@ -794,6 +827,14 @@ main(int argc, char* argv[])
     for (uint i=0; i!=en_s.size(); ++i) delete en_s[i];
     for (uint i=0; i!=en_a.size(); ++i) delete en_a[i];
   }
+  else
+  {
+    std::cout << argv[0] << ": Format error" << std::endl;
+    return 1;
+  }
+
+  if (os_bpseq!=&std::cout) delete os_bpseq;
+  if (os_mfa!=&std::cout) delete os_mfa;
 
   return 0;
 }
