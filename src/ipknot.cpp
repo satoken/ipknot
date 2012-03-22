@@ -31,6 +31,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <stdexcept>
 #include <boost/multi_array.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
@@ -676,161 +677,171 @@ main(int argc, char* argv[])
   }
   pk_level=alpha.size();
 
-  IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th);
-  std::vector<float> bp;
-  std::vector<int> offset;
-  std::vector<int> bpseq;
-  std::vector<int> plevel;
+  try
+  {
+    IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th);
+    std::vector<float> bp;
+    std::vector<int> offset;
+    std::vector<int> bpseq;
+    std::vector<int> plevel;
 
-  IPknot::EnumParam<float> ep(th);
-  std::vector<float> t(th.size());
-  ep.get(t);
+    IPknot::EnumParam<float> ep(th);
+    std::vector<float> t(th.size());
+    ep.get(t);
   
-  std::list<Fasta> f;
-  std::list<Aln> a;
-  if (aux)
-  {
-    AuxModel aux;
-    std::string seq;
-    aux.calculate_posterior(argv[0], seq, bp, offset);
-    if (max_pmcc)
-      ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel);
-    else
-      ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel);
-    if (os_bpseq)
-      output_bpseq(*os_bpseq, argv[0], seq, bpseq, plevel);
-    if (os_bpseq!=&std::cout)
-      output_fa(std::cout, argv[0], seq, bpseq, plevel);
-  }    
-  else if (Fasta::load(f, argv[0])>0)
-  {
-    BPEngineSeq* en=NULL;
-    if (model.empty() || strcasecmp(model[0], "McCaskill")==0)
-      en = new RNAfoldModel(param);
-    else if (strcasecmp(model[0], "CONTRAfold")==0)
-      en = new CONTRAfoldModel();
-#if 0
-    else if (strcasecmp(model[0], "nupack")==0)
-      if (param)
-        en = new NupackModel(param);
-      else
-        en = new NupackModel(2);
-    else if (strcasecmp(model[0], "nupack03")==0)
-      en = new NupackModel(0);
-    else if (strcasecmp(model[0], "nupack09")==0)
-      en = new NupackModel(1);
-#else
-    else if (strcasecmp(model[0], "nupack")==0)
-      en = new NupackModel(param);
-#endif
-    else
+    std::list<Fasta> f;
+    std::list<Aln> a;
+    if (aux)
     {
-      usage(progname);
-      return 1;
-    }
-    
-    while (!f.empty())
-    {
-      std::list<Fasta>::iterator fa = f.begin();
-      en->calculate_posterior(fa->seq(), bp, offset);
+      AuxModel aux;
+      std::string seq;
+      aux.calculate_posterior(argv[0], seq, bp, offset);
       if (max_pmcc)
-        ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel);
+        ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel);
       else
-        ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
-      for (int i=0; i!=n_refinement; ++i)
+        ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel);
+      if (os_bpseq)
+        output_bpseq(*os_bpseq, argv[0], seq, bpseq, plevel);
+      if (os_bpseq!=&std::cout)
+        output_fa(std::cout, argv[0], seq, bpseq, plevel);
+    }    
+    else if (Fasta::load(f, argv[0])>0)
+    {
+      BPEngineSeq* en=NULL;
+      if (model.empty() || strcasecmp(model[0], "McCaskill")==0)
+        en = new RNAfoldModel(param);
+      else if (strcasecmp(model[0], "CONTRAfold")==0)
+        en = new CONTRAfoldModel();
+#if 0
+      else if (strcasecmp(model[0], "nupack")==0)
+        if (param)
+          en = new NupackModel(param);
+        else
+          en = new NupackModel(2);
+      else if (strcasecmp(model[0], "nupack03")==0)
+        en = new NupackModel(0);
+      else if (strcasecmp(model[0], "nupack09")==0)
+        en = new NupackModel(1);
+#else
+      else if (strcasecmp(model[0], "nupack")==0)
+        en = new NupackModel(param);
+#endif
+      else
       {
-        update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
+        usage(progname);
+        return 1;
+      }
+    
+      while (!f.empty())
+      {
+        std::list<Fasta>::iterator fa = f.begin();
+        en->calculate_posterior(fa->seq(), bp, offset);
         if (max_pmcc)
           ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel);
         else
           ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
+        for (int i=0; i!=n_refinement; ++i)
+        {
+          update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
+          if (max_pmcc)
+            ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel);
+          else
+            ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
+        }
+        if (os_bpseq)
+          output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel);
+        if (os_bpseq!=&std::cout)
+          output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel);
+        f.erase(fa);
       }
-      if (os_bpseq)
-        output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel);
-      if (os_bpseq!=&std::cout)
-        output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel);
-      f.erase(fa);
-    }
 
-    delete en;
-  }
-  else if (Aln::load(a, argv[0])>0)
-  {
-    BPEngineAln* mix_en=NULL;
-    std::vector<BPEngineSeq*> en_s;
-    std::vector<BPEngineAln*> en_a;
-    if (model.empty())
-    {
-      BPEngineSeq* e = new RNAfoldModel(param);
-      en_s.push_back(e);
-      en_a.push_back(new AveragedModel(e));
-      en_a.push_back(new AlifoldModel(param));
-      mix_en = new MixtureModel(en_a);
+      delete en;
     }
-    else
+    else if (Aln::load(a, argv[0])>0)
     {
-      for (uint i=0; i!=model.size(); ++i)
+      BPEngineAln* mix_en=NULL;
+      std::vector<BPEngineSeq*> en_s;
+      std::vector<BPEngineAln*> en_a;
+      if (model.empty())
       {
-        if (strcasecmp(model[i], "McCaskill")==0)
-        {
-          BPEngineSeq* e = new RNAfoldModel(param);
-          en_s.push_back(e);
-          en_a.push_back(new AveragedModel(e));
-        }
-        else if (strcasecmp(model[0], "CONTRAfold")==0)
-        {
-          BPEngineSeq* e = new CONTRAfoldModel();
-          en_s.push_back(e);
-          en_a.push_back(new AveragedModel(e));
-        }
-        else if (strcasecmp(model[0], "Alifold")==0)
-        {
-          en_a.push_back(new AlifoldModel(param));
-        }
-        else
-        {
-          usage(progname);
-          return 1;
-        }
-      }
-      if (en_a.size()>1)
+        BPEngineSeq* e = new RNAfoldModel(param);
+        en_s.push_back(e);
+        en_a.push_back(new AveragedModel(e));
+        en_a.push_back(new AlifoldModel(param));
         mix_en = new MixtureModel(en_a);
-    }
-    BPEngineAln* en= mix_en ? mix_en : en_a[0];
-
-    while (!a.empty())
-    {
-      std::list<Aln>::iterator aln = a.begin();
-      en->calculate_posterior(aln->seq(), bp, offset);
-      if (max_pmcc)
-        ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel);
+      }
       else
-        ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
-      for (int i=0; i!=n_refinement; ++i)
       {
-        update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, bp, offset);
+        for (uint i=0; i!=model.size(); ++i)
+        {
+          if (strcasecmp(model[i], "McCaskill")==0)
+          {
+            BPEngineSeq* e = new RNAfoldModel(param);
+            en_s.push_back(e);
+            en_a.push_back(new AveragedModel(e));
+          }
+          else if (strcasecmp(model[0], "CONTRAfold")==0)
+          {
+            BPEngineSeq* e = new CONTRAfoldModel();
+            en_s.push_back(e);
+            en_a.push_back(new AveragedModel(e));
+          }
+          else if (strcasecmp(model[0], "Alifold")==0)
+          {
+            en_a.push_back(new AlifoldModel(param));
+          }
+          else
+          {
+            usage(progname);
+            return 1;
+          }
+        }
+        if (en_a.size()>1)
+          mix_en = new MixtureModel(en_a);
+      }
+      BPEngineAln* en= mix_en ? mix_en : en_a[0];
+
+      while (!a.empty())
+      {
+        std::list<Aln>::iterator aln = a.begin();
+        en->calculate_posterior(aln->seq(), bp, offset);
         if (max_pmcc)
           ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel);
         else
           ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
+        for (int i=0; i!=n_refinement; ++i)
+        {
+          update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, bp, offset);
+          if (max_pmcc)
+            ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel);
+          else
+            ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
+        }
+        if (os_bpseq)
+          output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
+        if (os_mfa)
+          output_mfa(*os_mfa, *aln, bpseq, plevel);
+        if (os_bpseq!=&std::cout && os_mfa!=&std::cout)
+          output_fa(std::cout, aln->name().front(), aln->consensus(), bpseq, plevel);        
+        a.erase(aln);
       }
-      if (os_bpseq)
-        output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
-      if (os_mfa)
-        output_mfa(*os_mfa, *aln, bpseq, plevel);
-      if (os_bpseq!=&std::cout && os_mfa!=&std::cout)
-        output_fa(std::cout, aln->name().front(), aln->consensus(), bpseq, plevel);        
-      a.erase(aln);
-    }
 
-    if (mix_en) delete mix_en;
-    for (uint i=0; i!=en_s.size(); ++i) delete en_s[i];
-    for (uint i=0; i!=en_a.size(); ++i) delete en_a[i];
+      if (mix_en) delete mix_en;
+      for (uint i=0; i!=en_s.size(); ++i) delete en_s[i];
+      for (uint i=0; i!=en_a.size(); ++i) delete en_a[i];
+    }
+    else
+    {
+      throw (std::string(argv[0])+": Format error").c_str();
+    }
   }
-  else
+  catch (const char* msg)
   {
-    std::cout << argv[0] << ": Format error" << std::endl;
-    return 1;
+    std::cout << msg << std::endl;
+  }
+  catch (std::logic_error err)
+  {
+    std::cout << err.what() << std::endl;
   }
 
   if (os_bpseq!=&std::cout) delete os_bpseq;

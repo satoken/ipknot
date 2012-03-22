@@ -108,7 +108,7 @@ load(std::list<Fasta>& data, const char* filename)
   file_iterator<> fi(filename);
   if (!fi) {
     std::ostringstream os;
-    os << filename << ": no such file";
+    os << filename << ": No such file";
     throw os.str().c_str();
     //return false;
   }

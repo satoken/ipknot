@@ -82,7 +82,7 @@ struct aln_parser : public grammar< aln_parser >
       } else if (wa.names[wa.cur_index] == wa.cur_name) {
 	wa.seqs[wa.cur_index] += wa.cur_seq;
       } else {
-	throw format_error("format error: broken sequence name consistency");
+	throw format_error("Format error: broken sequence name consistency");
       }
       wa.cur_index++;
     }
@@ -99,7 +99,7 @@ struct aln_parser : public grammar< aln_parser >
       unsigned int l=wa.seqs[0].size();
       for (unsigned int i=1; i!=wa.seqs.size(); ++i) {
 	if (l!=wa.seqs[i].size())
-	  throw format_error("format error: broken sequence length consistency");
+	  throw format_error("Format error: broken sequence length consistency");
       }
       wa.cur_index = 0;
     }
@@ -168,17 +168,23 @@ load(std::list<Aln>& data, const char* filename)
   file_iterator<> fi(filename);
   if (!fi) {
     std::ostringstream os;
-    os << filename << ": no such file";
+    os << filename << ": No such file";
     throw os.str().c_str();
     //return false;
   }
   while (1) {
-    Aln aln;
-    if (aln.load(fi)>0) {
-      n++;
-      data.push_back(aln);
-    } else {
-      break;
+    try {
+      Aln aln;
+      if (aln.load(fi)>0) {
+        n++;
+        data.push_back(aln);
+      } else {
+        break;
+      }
+    }
+    catch (aln_parser::format_error err)
+    {
+      throw (std::string(filename)+": "+err.what()).c_str();
     }
   }
   return n;
