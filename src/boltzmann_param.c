@@ -1,28 +1,12 @@
 /*
- * $Id$
- * 
- * Copyright (C) 2010 Kengo Sato
- *
- * This file is part of IPknot.
- *
- * IPknot is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * IPknot is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-/*
+  $Id$
   Set the new parameters estimated by Andronescu et al (RNA 2010).
   http://www.cs.ubc.ca/labs/beta/Projects/RNA-Params/data/parameters_BLstar_Vienna.txt
  */
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -5991,12 +5975,20 @@ static void copy_MLparams(const int values[])
   ML_BASE37 = values[0];
   ML_closing37 = values[1];
   ML_intern37 = values[2];
+#ifdef HAVE_VIENNA20
+  TerminalAU37 = values[3];
+#else
   TerminalAU = values[3];
+#endif
 }
 
 static void copy_ninio(const int values[])
 {
+#ifdef HAVE_VIENNA20
+  ninio37 = values[0];
+#else
   F_ninio37[2] = values[0];
+#endif
   MAX_NINIO = values[1];
 }
 
@@ -6006,12 +5998,16 @@ static void copy_Tetra_loop(const struct tetra_loops tl[])
   while (tl[i].s!=NULL && i<200) {
     strcpy(&Tetraloops[7*i], tl[i].s);
     strcat(Tetraloops, " ");
+#ifdef HAVE_VIENNA20
+    Tetraloop37[i] = tl[i].e;
+#else
     TETRA_ENERGY37[i] = tl[i].e;
+#endif
     i++;
   }
 }
 
-void copy_new_parameters()
+void copy_boltzmann_parameters()
 {
   copy_stacks(stack37, stack37a);
   copy_mismatch(mismatchH37, mismatchH37a);
