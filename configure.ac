@@ -2,11 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.15])
-<<<<<<< local
-AC_INIT([ipknot], [0.0.2a], [satoken@bio.keio.ac.jp])
-=======
 AC_INIT([ipknot], [0.0.3], [satoken@k.u-tokyo.ac.jp])
->>>>>>> other
 AM_INIT_AUTOMAKE([-Wall foreign])
 AM_CONFIG_HEADER(config.h)
 AC_CONFIG_SRCDIR([src/ipknot.cpp])
