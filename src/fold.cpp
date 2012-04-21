@@ -45,7 +45,7 @@ extern "C" {
 #include "nupack/nupack.h"
 
 extern "C" {
-#include "new_param.h"
+#include "boltzmann_param.h"
 };
 
 typedef unsigned int uint;
@@ -95,7 +95,7 @@ calculate_posterior(const std::string& seq, const std::string& paren,
 RNAfoldModel::
 RNAfoldModel(const char* param)
 {
-  copy_new_parameters();
+  copy_boltzmann_parameters();
   if (param) Vienna::read_parameter_file(param);
 }
 
@@ -125,7 +125,9 @@ calculate_posterior(const std::string& seq, const std::string& paren,
 #else
   Vienna::pf_scale = -1;
 #endif
+#ifndef HAVE_VIENNA20
   Vienna::init_pf_fold(L);
+#endif
   Vienna::pf_fold(const_cast<char*>(seq.c_str()), &p[0]);
   for (uint i=0; i!=L-1; ++i)
     for (uint j=i+1; j!=L; ++j)
@@ -152,7 +154,9 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
 #else
   Vienna::pf_scale = -1;
 #endif
+#ifndef HAVE_VIENNA20
   Vienna::init_pf_fold(L);
+#endif
   Vienna::pf_fold(const_cast<char*>(seq.c_str()), NULL);
   for (uint i=0; i!=L-1; ++i)
     for (uint j=i+1; j!=L; ++j)
@@ -184,7 +188,7 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
 AlifoldModel::
 AlifoldModel(const char* param)
 {
-  copy_new_parameters();
+  copy_boltzmann_parameters();
   if (param) Vienna::read_parameter_file(param);
 }
 
@@ -231,7 +235,11 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
   char** seqs=alloc_aln(aln);
   std::string res(p);
   // scaling parameters to avoid overflow
+#ifdef HAVE_VIENNA20
+  double min_en = Vienna::alifold((const char**)seqs, &res[0]);  
+#else
   double min_en = Vienna::alifold(seqs, &res[0]);
+#endif
   double kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
   Vienna::pf_scale = exp(-(1.07*min_en)/kT/L);
   Vienna::free_alifold_arrays();
@@ -241,7 +249,11 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
 #else
   Vienna::pair_info* pi;
 #endif
+#ifdef HAVE_VIENNA20
+  Vienna::alipf_fold((const char**)seqs, &p[0], &pi);
+#else
   Vienna::alipf_fold(seqs, &p[0], &pi);
+#endif
   for (uint k=0; pi[k].i!=0; ++k)
     bp[offset[pi[k].i]+pi[k].j]=pi[k].p;
   free(pi);
@@ -267,7 +279,11 @@ calculate_posterior(const std::list<std::string>& aln,
   char** seqs=alloc_aln(aln);
   std::string res(L+1, ' ');
   // scaling parameters to avoid overflow
+#ifdef HAVE_VIENNA20
+  double min_en = Vienna::alifold((const char**)seqs, &res[0]);  
+#else
   double min_en = Vienna::alifold(seqs, &res[0]);
+#endif
   double kT = (Vienna::temperature+273.15)*1.98717/1000.; /* in Kcal */
   Vienna::pf_scale = exp(-(1.07*min_en)/kT/L);
   Vienna::free_alifold_arrays();
@@ -277,7 +293,11 @@ calculate_posterior(const std::list<std::string>& aln,
 #else
   Vienna::pair_info* pi;
 #endif
+#ifdef HAVE_VIENNA20
+  Vienna::alipf_fold((const char**)seqs, NULL, &pi);
+#else
   Vienna::alipf_fold(seqs, NULL, &pi);
+#endif
   for (uint k=0; pi[k].i!=0; ++k)
     bp[offset[pi[k].i]+pi[k].j]=pi[k].p;
   free(pi);

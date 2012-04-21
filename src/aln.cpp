@@ -285,7 +285,12 @@ energy_of_struct(const std::string& paren) const
     }
     s.erase(std::remove(s.begin(), s.end(), '-'), s.end());
     p.erase(std::remove(p.begin(), p.end(), '-'), p.end());
+#ifdef HAVE_VIENNA20
+    e += Vienna::energy_of_structure(s.c_str(), p.c_str(), -1);
+#else
+    Vienna::eos_debug = -1;
     e += Vienna::energy_of_struct(s.c_str(), p.c_str());
+#endif
   }
   return e/num_aln();
 }
