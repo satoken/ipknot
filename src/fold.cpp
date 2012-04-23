@@ -131,7 +131,16 @@ calculate_posterior(const std::string& seq, const std::string& paren,
   Vienna::pf_fold(const_cast<char*>(seq.c_str()), &p[0]);
   for (uint i=0; i!=L-1; ++i)
     for (uint j=i+1; j!=L; ++j)
-      bp[offset[i+1]+(j+1)] = Vienna::pr[Vienna::iindx[i+1]-(j+1)];
+    {
+#ifdef HAVE_VIENNA20
+      FLT_OR_DBL* pr = Vienna::export_bppm();
+      int* iindx = Vienna::get_iindx(seq.size());
+#else
+      FLT_OR_DBL* pr = Vienna::pr;
+      int* iindx = Vienna::iindx;
+#endif
+      bp[offset[i+1]+(j+1)] = pr[iindx[i+1]-(j+1)];
+    }
   Vienna::free_pf_arrays();
   Vienna::fold_constrained = bk;
 }
