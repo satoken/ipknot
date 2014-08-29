@@ -1,0 +1,10 @@
+*~
+*.o
+*.Po
+examples/*
+autom4te.cache
+Makefile
+config.h
+config.log
+config.status
+src/ipknot
