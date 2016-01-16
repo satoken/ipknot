@@ -23,103 +23,62 @@
 #endif
 #include "fa.h"
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <string>
+#include <cctype>
+#include <cstring>
+#include <cassert>
 
-using namespace BOOST_SPIRIT_CLASSIC_NS;
+typedef unsigned int uint;
 
-struct fa_parser : public grammar< fa_parser >
-{
-  fa_parser(std::string& n, std::string& s, std::string& st)
-    : name(n), seq(s), str(st) { }
-
-  std::string& name;
-  std::string& seq;
-  std::string& str;
-
-  struct append_seq
-  {
-    std::string& seq;
-
-    append_seq(std::string& s) : seq(s) { }
-
-    template <class Ite>
-    void operator()(Ite i1, Ite i2) const
-    {
-      std::string s(i1, i2);
-      seq += s;
-    }
-  };
-
-
-  template <class ScannerT>
-  struct definition
-  {
-    typedef rule<ScannerT> rule_t;
-    rule_t fa;
-    rule_t head;
-    rule_t seq_l;
-    rule_t seq;
-    rule_t str;
-    rule_t str_l;
-
-    definition(const fa_parser& self)
-    {
-      fa = head >> seq >> *(eol_p >> (seq | str)) >> !eol_p;
-      head = ch_p('>') >> (*(blank_p | graph_p))[assign_a(self.name)] >> eol_p;
-      seq_l = +(alpha_p | ch_p('-'));
-      str_l = +(chset_p("()[].?x") | blank_p);
-      seq = seq_l[append_seq(self.seq)];
-      str = str_l[append_seq(self.str)];
-    }
-
-    const rule_t& start() const { return fa; }
-  };
-};
-
-bool
-Fasta::
-load(file_iterator<>& fi)
-{
-  file_iterator<> s = fi;
-  seq_.clear();
-  fa_parser parser(name_, seq_, str_);
-  parse_info<file_iterator<> > info =  parse(fi, fi.make_end(), parser);
-#if 0
-  std::cout << "name: " << name() << std::endl
-	    << " seq: " << seq() << std::endl
-	    << " str: " << str() << std::endl;
-#endif
-  if (!info.hit) {
-    fi = s;
-    return false;
-  } else {
-    fi = info.stop;
-    return true;
-  }
-}
-
-// static
+//static
 unsigned int
 Fasta::
-load(std::list<Fasta>& data, const char* filename)
+load(std::list<Fasta>& data, const char* file)
 {
-  unsigned int n=0;
-  file_iterator<> fi(filename);
-  if (!fi) {
-    std::ostringstream os;
-    os << filename << ": No such file";
-    throw os.str().c_str();
-    //return false;
-  }
-  while (1) {
-    Fasta fa;
-    if (fa.load(fi)) {
-      n++;
-      data.push_back(fa);
+  std::string line, name, seq, str;
+  std::ifstream ifs(file);
+  while (std::getline(ifs, line)) {
+    if (line[0]=='>') {         // header
+      if (!name.empty()) {
+        assert(str.size()==0 || seq.size()==str.size());
+#if 0
+        std::cout << "name: " << name << std::endl
+                  << " seq: " << seq << std::endl
+                  << " str: " << str << std::endl;
+#endif
+        data.push_back(Fasta(name, seq, str));
+      }
+
+      name=line.substr(1);
+      seq.clear();
+      str.clear();
+      continue;
+    } 
+
+    if (std::strchr("()[].?xle ", line[0])==NULL) { // seq
+      uint i;
+      for (i=0; i!=line.size(); ++i)
+        if (!isalpha(line[i])) break;
+      seq+=line.substr(0, i);
     } else {
-      break;
+      uint i;
+      for (i=0; i!=line.size(); ++i)
+        if (std::strchr("()[].?xle ", line[i])==NULL) break;
+      str+=line.substr(0, i);
     }
   }
-  return n;
+  
+  if (!name.empty()) {
+#if 0
+    std::cout << "name: " << name << std::endl
+              << " seq: " << seq << std::endl
+              << " str: " << str << std::endl;
+#endif
+    data.push_back(Fasta(name, seq, str));
+  }
+
+  return data.size();
 }
+

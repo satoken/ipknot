@@ -27,14 +27,15 @@
 //#include <sys/resource.h>
 #include <strings.h>
 #include <ctime>
+#include <cstdlib>
+#include <cmath>
+#include <cassert>
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <stdexcept>
-#include <boost/multi_array.hpp>
-#include <boost/algorithm/string.hpp>
-#include <boost/lexical_cast.hpp>
 
 #include "ip.h"
 #include "fa.h"
@@ -42,6 +43,11 @@
 #include "fold.h"
 
 typedef unsigned int uint;
+typedef std::vector<float> VF;
+typedef std::vector<VF> VVF;
+typedef std::vector<int> VI;
+typedef std::vector<VI> VVI;
+typedef std::vector<VVI> VVVI;
 
 class IPknot
 {
@@ -63,9 +69,8 @@ public:
              const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel) const
   {
     IP ip(IP::MAX, n_th_);
-    boost::multi_array<int, 3> v(boost::extents[pk_level_][L][L]);
-    boost::multi_array<std::vector<int>, 2> w(boost::extents[pk_level_][L]);
-    std::fill(v.data(), v.data()+v.num_elements(), -1);
+    VVVI v(pk_level_, VVI(L, VI(L, -1)));
+    VVVI w(pk_level_, VVI(L));
     
     // make objective variables with their weights
     for (uint j=1; j!=L; ++j)
@@ -462,6 +467,7 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
     std::string str(L, '?');
     for (uint i=0; i!=bpseq.size(); ++i)
       if (bpseq[i]>=0 && (int)i<bpseq[i])
+      {
         if ((int)l==plevel[i])
         {
           str[i]='('; str[bpseq[i]]=')';
@@ -470,6 +476,7 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
         {
           str[i]=str[bpseq[i]]='.';
         }
+      }
 
     // re-folding the seq with the constraint
     std::fill(bpl.begin(), bpl.end(), 0.0);
@@ -526,11 +533,11 @@ template <class T>
 std::vector<T>
 parse_csv_line(const char* l)
 {
-  std::vector<std::string> v;
-  boost::algorithm::split(v, l, boost::is_any_of(","));
-  std::vector<T> r(v.size());
-  for (uint i=0; i!=v.size(); ++i)
-    r[i] = boost::lexical_cast<T>(v[i]);
+  std::string s;
+  std::vector<T> r;
+  std::istringstream ss(l);
+  while (std::getline(ss, s, ','))
+    r.push_back(atof(s.c_str()));
   return r;
 }
 
