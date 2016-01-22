@@ -27,8 +27,11 @@
 #include <vector>
 #include <stack>
 #include <stdexcept>
+#include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <cassert>
+#include <cerrno>
 
 #ifdef HAVE_LIBRNA
 namespace Vienna {

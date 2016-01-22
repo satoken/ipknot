@@ -36,6 +36,8 @@
 #include <string>
 #include <vector>
 #include <stdexcept>
+#include <iterator>
+#include <algorithm>
 
 #include "ip.h"
 #include "fa.h"

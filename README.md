@@ -22,8 +22,9 @@ For Gurobi,
 
 For CPLEX,
 
-	env CPPFLAGS='-I/path/to/cplex/include' LDFLAGS='-L/path/to/cplex/lib' \
-	./configure --with-vienna-rna=/path/to/vienna-rna --with-cplex
+	./configure --with-vienna-rna=/path/to/vienna-rna --with-cplex \
+	            --with-cplex-include=/path/to/cplex/include \
+		    --with-cplex-lib=/path/to/cplex/lib
 
 Usage
 -----
