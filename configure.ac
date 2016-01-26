@@ -35,10 +35,14 @@ fi
 AC_CHECK_LIB([pthread], [pthread_create])
 
 # glpk
-AC_ARG_WITH([glpk], AS_HELP_STRING([--with-glpk], [support GNU linear programming kit]),
+AC_ARG_WITH([glpk], AS_HELP_STRING([--with-glpk(=PATH)], [support GNU linear programming kit]),
   [
     if test "$with_glpk" != "no"; then
       CPPFLAGS="-DWITH_GLPK $CPPFLAGS"
+      if test "$with_glpk" != "yes"; then
+        CPPFLAGS="-I${with_glpk}/include $CPPFLAGS"
+      	LDFLAGS="-L${with_glpk}/lib $LDFLAGS"
+      fi
       AC_CHECK_HEADERS([glpk.h])
       AC_CHECK_LIB([z], [main])
       AC_CHECK_LIB([gmp], [main])
@@ -51,7 +55,7 @@ AC_ARG_WITH([glpk], AS_HELP_STRING([--with-glpk], [support GNU linear programmin
 
 # ILOG CPLEX
 AC_ARG_WITH([cplex-include],
-  AC_HELP_STRING([--with-cplex-include=PATH], [location of CPLEX include directory] ),
+  AC_HELP_STRING([--with-cplex-include(=PATH)], [location of CPLEX include directory] ),
   [CPPFLAGS="-I$withval ${CPPFLAGS}"] )
 AC_ARG_WITH([cplex-lib],
   AC_HELP_STRING([--with-cplex-lib=PATH], [location of CPLEX callable library] ),
@@ -60,13 +64,18 @@ AC_ARG_WITH([cplex], AS_HELP_STRING([--with-cplex], [support CPLEX optimizer]),
   [
     if test "$with_cplex" != "no"; then
       CPPFLAGS="-DWITH_CPLEX -DIL_STD $CPPFLAGS"
+      if test "$with_cplex" != "yes"; then
+        CPPFLAGS="-I${with_cplex}/include $CPPFLAGS"
+      	LDFLAGS="-L${with_cplex}/lib $LDFLAGS"
+      fi
       AC_CHECK_HEADERS([ilcplex/cplex.h])
       AC_CHECK_LIB([cplex], [main])
     fi
   ]
 )
+
 # gurobi optimizer
-AC_ARG_WITH([gurobi], AS_HELP_STRING([--with-gurobi=PATH], [support Gurobi optimizer]),
+AC_ARG_WITH([gurobi], AS_HELP_STRING([--with-gurobi(=PATH)], [support Gurobi optimizer]),
   [
     if test "$with_gurobi" != "no"; then
       CPPFLAGS="-DWITH_GUROBI $CPPFLAGS"
@@ -83,7 +92,7 @@ AC_ARG_WITH([gurobi], AS_HELP_STRING([--with-gurobi=PATH], [support Gurobi optim
 )
 
 # Vienna RNA package
-AC_ARG_WITH([vienna-rna], AS_HELP_STRING([--with-vienna-rna=PATH], [support Vienna RNA package]),
+AC_ARG_WITH([vienna-rna], AS_HELP_STRING([--with-vienna-rna(=PATH)], [support Vienna RNA package]),
   if test "$with_vienna_rna" != "yes" && test "$with_vienna_rna" != "no" ; then
      CPPFLAGS="-I${with_vienna_rna}/include $CPPFLAGS"
      LDFLAGS="-L${with_vienna_rna}/lib $LDFLAGS"

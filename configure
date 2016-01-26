@@ -1367,13 +1367,14 @@ Optional Features:
 Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
-  --with-glpk             support GNU linear programming kit
-  --with-cplex-include=PATH
+  --with-glpk(=PATH)      support GNU linear programming kit
+  --with-cplex-include(=PATH)
                           location of CPLEX include directory
   --with-cplex-lib=PATH   location of CPLEX callable library
   --with-cplex            support CPLEX optimizer
-  --with-gurobi=PATH      support Gurobi optimizer
-  --with-vienna-rna=PATH  support Vienna RNA package
+  --with-gurobi(=PATH)    support Gurobi optimizer
+  --with-vienna-rna(=PATH)
+                          support Vienna RNA package
 
 Some influential environment variables:
   CXX         C++ compiler command
@@ -4922,6 +4923,10 @@ if test "${with_glpk+set}" = set; then :
   withval=$with_glpk;
     if test "$with_glpk" != "no"; then
       CPPFLAGS="-DWITH_GLPK $CPPFLAGS"
+      if test "$with_glpk" != "yes"; then
+        CPPFLAGS="-I${with_glpk}/include $CPPFLAGS"
+      	LDFLAGS="-L${with_glpk}/lib $LDFLAGS"
+      fi
       for ac_header in glpk.h
 do :
   ac_fn_cxx_check_header_mongrel "$LINENO" "glpk.h" "ac_cv_header_glpk_h" "$ac_includes_default"
@@ -5160,6 +5165,10 @@ if test "${with_cplex+set}" = set; then :
   withval=$with_cplex;
     if test "$with_cplex" != "no"; then
       CPPFLAGS="-DWITH_CPLEX -DIL_STD $CPPFLAGS"
+      if test "$with_cplex" != "yes"; then
+        CPPFLAGS="-I${with_cplex}/include $CPPFLAGS"
+      	LDFLAGS="-L${with_cplex}/lib $LDFLAGS"
+      fi
       for ac_header in ilcplex/cplex.h
 do :
   ac_fn_cxx_check_header_mongrel "$LINENO" "ilcplex/cplex.h" "ac_cv_header_ilcplex_cplex_h" "$ac_includes_default"
