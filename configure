@@ -1368,10 +1368,10 @@ Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
   --with-glpk(=PATH)      support GNU linear programming kit
-  --with-cplex-include(=PATH)
+  --with-cplex-include=PATH
                           location of CPLEX include directory
   --with-cplex-lib=PATH   location of CPLEX callable library
-  --with-cplex            support CPLEX optimizer
+  --with-cplex(=PATH)     support CPLEX optimizer
   --with-gurobi(=PATH)    support Gurobi optimizer
   --with-vienna-rna(=PATH)
                           support Vienna RNA package
@@ -5224,6 +5224,7 @@ fi
 
 
 fi
+
 
 # gurobi optimizer
 
