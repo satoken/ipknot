@@ -722,7 +722,10 @@ ac_user_opts='
 enable_option_checking
 enable_silent_rules
 enable_dependency_tracking
+enable_debug
 with_glpk
+with_cplex_include
+with_cplex_lib
 with_cplex
 with_gurobi
 with_vienna_rna
@@ -1359,14 +1362,19 @@ Optional Features:
                           do not reject slow dependency extractors
   --disable-dependency-tracking
                           speeds up one-time build
+  --enable-debug          turn on debugging (default: off)
 
 Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
-  --with-glpk             support GNU linear programming kit
-  --with-cplex            support CPLEX optimizer
-  --with-gurobi           support Gurobi optimizer
-  --with-vienna-rna       support Vienna RNA package
+  --with-glpk(=PATH)      support GNU linear programming kit
+  --with-cplex-include=PATH
+                          location of CPLEX include directory
+  --with-cplex-lib=PATH   location of CPLEX callable library
+  --with-cplex(=PATH)     support CPLEX optimizer
+  --with-gurobi(=PATH)    support Gurobi optimizer
+  --with-vienna-rna(=PATH)
+                          support Vienna RNA package
 
 Some influential environment variables:
   CXX         C++ compiler command
@@ -2255,7 +2263,7 @@ ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $
 ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
-am__api_version='1.14'
+am__api_version='1.15'
 
 ac_aux_dir=
 for ac_dir in "$srcdir" "$srcdir/.." "$srcdir/../.."; do
@@ -2456,8 +2464,8 @@ test "$program_suffix" != NONE &&
 ac_script='s/[\\$]/&&/g;s/;s,x,x,$//'
 program_transform_name=`$as_echo "$program_transform_name" | sed "$ac_script"`
 
-# expand $ac_aux_dir to an absolute path
-am_aux_dir=`cd $ac_aux_dir && pwd`
+# Expand $ac_aux_dir to an absolute path.
+am_aux_dir=`cd "$ac_aux_dir" && pwd`
 
 if test x"${MISSING+set}" != xset; then
   case $am_aux_dir in
@@ -2476,7 +2484,7 @@ else
 $as_echo "$as_me: WARNING: 'missing' script is too old or missing" >&2;}
 fi
 
-if test x"${install_sh}" != xset; then
+if test x"${install_sh+set}" != xset; then
   case $am_aux_dir in
   *\ * | *\	*)
     install_sh="\${SHELL} '$am_aux_dir/install-sh'" ;;
@@ -2804,8 +2812,8 @@ MAKEINFO=${MAKEINFO-"${am_missing_run}makeinfo"}
 # <http://lists.gnu.org/archive/html/automake/2012-07/msg00014.html>
 mkdir_p='$(MKDIR_P)'
 
-# We need awk for the "check" target.  The system "awk" is bad on
-# some platforms.
+# We need awk for the "check" target (and possibly the TAP driver).  The
+# system "awk" is bad on some platforms.
 # Always define AMTAR for backward compatibility.  Yes, it's still used
 # in the wild :-(  We should find a proper way to deprecate it ...
 AMTAR='$${TAR-tar}'
@@ -2862,6 +2870,7 @@ END
     as_fn_error $? "Your 'rm' program is bad, sorry." "$LINENO" 5
   fi
 fi
+
 ac_config_headers="$ac_config_headers config.h"
 
 
@@ -4846,6 +4855,20 @@ _ACEOF
 esac
 
 
+# debug option
+# Check whether --enable-debug was given.
+if test "${enable_debug+set}" = set; then :
+  enableval=$enable_debug;
+fi
+
+if test "$enable_debug" == "yes"; then
+  CFLAGS="-DDEBUG $CFLAGS"
+  CXXFLAGS="-DDEBUG $CXXFLAGS"
+else
+  CFLAGS="-DNDEBUG $CFLAGS"
+  CXXFLAGS="-DNDEBUG $CXXFLAGS"
+fi
+
 # Checks for library functions.
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for pthread_create in -lpthread" >&5
 $as_echo_n "checking for pthread_create in -lpthread... " >&6; }
@@ -4897,13 +4920,14 @@ fi
 
 # Check whether --with-glpk was given.
 if test "${with_glpk+set}" = set; then :
-  withval=$with_glpk; if test "$with_glpk" != "no"; then
-    CPPFLAGS="-DWITH_GLPK $CPPFLAGS"
-  fi
-
-fi
-
-for ac_header in glpk.h
+  withval=$with_glpk;
+    if test "$with_glpk" != "no"; then
+      CPPFLAGS="-DWITH_GLPK $CPPFLAGS"
+      if test "$with_glpk" != "yes"; then
+        CPPFLAGS="-I${with_glpk}/include $CPPFLAGS"
+      	LDFLAGS="-L${with_glpk}/lib $LDFLAGS"
+      fi
+      for ac_header in glpk.h
 do :
   ac_fn_cxx_check_header_mongrel "$LINENO" "glpk.h" "ac_cv_header_glpk_h" "$ac_includes_default"
 if test "x$ac_cv_header_glpk_h" = xyes; then :
@@ -4915,7 +4939,7 @@ fi
 
 done
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lz" >&5
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lz" >&5
 $as_echo_n "checking for main in -lz... " >&6; }
 if ${ac_cv_lib_z_main+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -4954,7 +4978,7 @@ _ACEOF
 
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lgmp" >&5
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lgmp" >&5
 $as_echo_n "checking for main in -lgmp... " >&6; }
 if ${ac_cv_lib_gmp_main+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -4993,7 +5017,7 @@ _ACEOF
 
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -ldl" >&5
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -ldl" >&5
 $as_echo_n "checking for main in -ldl... " >&6; }
 if ${ac_cv_lib_dl_main+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -5032,7 +5056,7 @@ _ACEOF
 
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lltdl" >&5
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lltdl" >&5
 $as_echo_n "checking for main in -lltdl... " >&6; }
 if ${ac_cv_lib_ltdl_main+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -5071,7 +5095,7 @@ _ACEOF
 
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for glp_create_prob in -lglpk" >&5
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for glp_create_prob in -lglpk" >&5
 $as_echo_n "checking for glp_create_prob in -lglpk... " >&6; }
 if ${ac_cv_lib_glpk_glp_create_prob+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -5116,81 +5140,48 @@ _ACEOF
 
 fi
 
+    fi
+
+
+fi
+
 
 # ILOG CPLEX
 
+# Check whether --with-cplex-include was given.
+if test "${with_cplex_include+set}" = set; then :
+  withval=$with_cplex_include; CPPFLAGS="-I$withval ${CPPFLAGS}"
+fi
+
+
+# Check whether --with-cplex-lib was given.
+if test "${with_cplex_lib+set}" = set; then :
+  withval=$with_cplex_lib; LDFLAGS="-L$withval ${LDFLAGS}"
+fi
+
+
 # Check whether --with-cplex was given.
 if test "${with_cplex+set}" = set; then :
-  withval=$with_cplex; if test "$with_cplex" != "no"; then
-    CPPFLAGS="-DWITH_CPLEX -DIL_STD $CPPFLAGS"
-  fi
-
-fi
-
-for ac_header in ilconcert/ilomodel.h
+  withval=$with_cplex;
+    if test "$with_cplex" != "no"; then
+      CPPFLAGS="-DWITH_CPLEX -DIL_STD $CPPFLAGS"
+      if test "$with_cplex" != "yes"; then
+        CPPFLAGS="-I${with_cplex}/include $CPPFLAGS"
+      	LDFLAGS="-L${with_cplex}/lib $LDFLAGS"
+      fi
+      for ac_header in ilcplex/cplex.h
 do :
-  ac_fn_cxx_check_header_mongrel "$LINENO" "ilconcert/ilomodel.h" "ac_cv_header_ilconcert_ilomodel_h" "$ac_includes_default"
-if test "x$ac_cv_header_ilconcert_ilomodel_h" = xyes; then :
+  ac_fn_cxx_check_header_mongrel "$LINENO" "ilcplex/cplex.h" "ac_cv_header_ilcplex_cplex_h" "$ac_includes_default"
+if test "x$ac_cv_header_ilcplex_cplex_h" = xyes; then :
   cat >>confdefs.h <<_ACEOF
-#define HAVE_ILCONCERT_ILOMODEL_H 1
+#define HAVE_ILCPLEX_CPLEX_H 1
 _ACEOF
 
 fi
 
 done
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lconcert" >&5
-$as_echo_n "checking for main in -lconcert... " >&6; }
-if ${ac_cv_lib_concert_main+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lconcert  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-
-int
-main ()
-{
-return main ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  ac_cv_lib_concert_main=yes
-else
-  ac_cv_lib_concert_main=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_concert_main" >&5
-$as_echo "$ac_cv_lib_concert_main" >&6; }
-if test "x$ac_cv_lib_concert_main" = xyes; then :
-  cat >>confdefs.h <<_ACEOF
-#define HAVE_LIBCONCERT 1
-_ACEOF
-
-  LIBS="-lconcert $LIBS"
-
-fi
-
-for ac_header in ilcplex/ilocplex.h
-do :
-  ac_fn_cxx_check_header_mongrel "$LINENO" "ilcplex/ilocplex.h" "ac_cv_header_ilcplex_ilocplex_h" "$ac_includes_default"
-if test "x$ac_cv_header_ilcplex_ilocplex_h" = xyes; then :
-  cat >>confdefs.h <<_ACEOF
-#define HAVE_ILCPLEX_ILOCPLEX_H 1
-_ACEOF
-
-fi
-
-done
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lcplex" >&5
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lcplex" >&5
 $as_echo_n "checking for main in -lcplex... " >&6; }
 if ${ac_cv_lib_cplex_main+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -5229,42 +5220,8 @@ _ACEOF
 
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lilocplex" >&5
-$as_echo_n "checking for main in -lilocplex... " >&6; }
-if ${ac_cv_lib_ilocplex_main+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lilocplex  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
+    fi
 
-
-int
-main ()
-{
-return main ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  ac_cv_lib_ilocplex_main=yes
-else
-  ac_cv_lib_ilocplex_main=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_ilocplex_main" >&5
-$as_echo "$ac_cv_lib_ilocplex_main" >&6; }
-if test "x$ac_cv_lib_ilocplex_main" = xyes; then :
-  cat >>confdefs.h <<_ACEOF
-#define HAVE_LIBILOCPLEX 1
-_ACEOF
-
-  LIBS="-lilocplex $LIBS"
 
 fi
 
@@ -5273,17 +5230,14 @@ fi
 
 # Check whether --with-gurobi was given.
 if test "${with_gurobi+set}" = set; then :
-  withval=$with_gurobi; if test "$with_gurobi" != "no"; then
-    CPPFLAGS="-DWITH_GUROBI $CPPFLAGS"
-    if test "$with_gurobi" != "yes"; then
-      CPPFLAGS="-I${with_gurobi}/include $CPPFLAGS"
-      LDFLAGS="-L${with_gurobi}/lib $LDFLAGS"
-    fi
-  fi
-
-fi
-
-for ac_header in gurobi_c++.h
+  withval=$with_gurobi;
+    if test "$with_gurobi" != "no"; then
+      CPPFLAGS="-DWITH_GUROBI $CPPFLAGS"
+      if test "$with_gurobi" != "yes"; then
+        CPPFLAGS="-I${with_gurobi}/include $CPPFLAGS"
+      	LDFLAGS="-L${with_gurobi}/lib $LDFLAGS"
+      fi
+      for ac_header in gurobi_c++.h
 do :
   ac_fn_cxx_check_header_mongrel "$LINENO" "gurobi_c++.h" "ac_cv_header_gurobi_cpp_h" "$ac_includes_default"
 if test "x$ac_cv_header_gurobi_cpp_h" = xyes; then :
@@ -5295,13 +5249,15 @@ fi
 
 done
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for GRBloadenv in -lgurobi" >&5
-$as_echo_n "checking for GRBloadenv in -lgurobi... " >&6; }
-if ${ac_cv_lib_gurobi_GRBloadenv+:} false; then :
+      for i in `echo ${with_gurobi}/lib/libgurobi*.so | sed 's,.*/,,' | sed -e 's;lib\(gurobi.*\).so;\1;'`; do
+      	  as_ac_Lib=`$as_echo "ac_cv_lib_${i}''_GRBloadenv" | $as_tr_sh`
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for GRBloadenv in -l${i}" >&5
+$as_echo_n "checking for GRBloadenv in -l${i}... " >&6; }
+if eval \${$as_ac_Lib+:} false; then :
   $as_echo_n "(cached) " >&6
 else
   ac_check_lib_save_LIBS=$LIBS
-LIBS="-lgurobi  $LIBS"
+LIBS="-l${i}  $LIBS"
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
@@ -5321,138 +5277,25 @@ return GRBloadenv ();
 }
 _ACEOF
 if ac_fn_cxx_try_link "$LINENO"; then :
-  ac_cv_lib_gurobi_GRBloadenv=yes
+  eval "$as_ac_Lib=yes"
 else
-  ac_cv_lib_gurobi_GRBloadenv=no
+  eval "$as_ac_Lib=no"
 fi
 rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext conftest.$ac_ext
 LIBS=$ac_check_lib_save_LIBS
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_gurobi_GRBloadenv" >&5
-$as_echo "$ac_cv_lib_gurobi_GRBloadenv" >&6; }
-if test "x$ac_cv_lib_gurobi_GRBloadenv" = xyes; then :
-  LIBS="-lgurobi_c++ -lgurobi $LIBS"
+eval ac_res=\$$as_ac_Lib
+	       { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
+$as_echo "$ac_res" >&6; }
+if eval test \"x\$"$as_ac_Lib"\" = x"yes"; then :
+  LIBS="-lgurobi_c++ -l${i} $LIBS"
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for GRBloadenv in -lgurobi20" >&5
-$as_echo_n "checking for GRBloadenv in -lgurobi20... " >&6; }
-if ${ac_cv_lib_gurobi20_GRBloadenv+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lgurobi20  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
+      done
+    fi
 
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char GRBloadenv ();
-int
-main ()
-{
-return GRBloadenv ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  ac_cv_lib_gurobi20_GRBloadenv=yes
-else
-  ac_cv_lib_gurobi20_GRBloadenv=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_gurobi20_GRBloadenv" >&5
-$as_echo "$ac_cv_lib_gurobi20_GRBloadenv" >&6; }
-if test "x$ac_cv_lib_gurobi20_GRBloadenv" = xyes; then :
-  LIBS="-lgurobi_c++ -lgurobi20 $LIBS"
-fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for GRBloadenv in -lgurobi30" >&5
-$as_echo_n "checking for GRBloadenv in -lgurobi30... " >&6; }
-if ${ac_cv_lib_gurobi30_GRBloadenv+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lgurobi30  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char GRBloadenv ();
-int
-main ()
-{
-return GRBloadenv ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  ac_cv_lib_gurobi30_GRBloadenv=yes
-else
-  ac_cv_lib_gurobi30_GRBloadenv=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_gurobi30_GRBloadenv" >&5
-$as_echo "$ac_cv_lib_gurobi30_GRBloadenv" >&6; }
-if test "x$ac_cv_lib_gurobi30_GRBloadenv" = xyes; then :
-  LIBS="-lgurobi_c++ -lgurobi30 $LIBS"
-fi
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for GRBloadenv in -lgurobi40" >&5
-$as_echo_n "checking for GRBloadenv in -lgurobi40... " >&6; }
-if ${ac_cv_lib_gurobi40_GRBloadenv+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lgurobi40  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char GRBloadenv ();
-int
-main ()
-{
-return GRBloadenv ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  ac_cv_lib_gurobi40_GRBloadenv=yes
-else
-  ac_cv_lib_gurobi40_GRBloadenv=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_gurobi40_GRBloadenv" >&5
-$as_echo "$ac_cv_lib_gurobi40_GRBloadenv" >&6; }
-if test "x$ac_cv_lib_gurobi40_GRBloadenv" = xyes; then :
-  LIBS="-lgurobi_c++ -lgurobi40 $LIBS"
 fi
 
 
@@ -5510,6 +5353,61 @@ _ACEOF
 
   LIBS="-lRNA $LIBS"
 
+else
+
+  { $as_echo "$as_me:${as_lineno-$LINENO}: try '-fopenmp'" >&5
+$as_echo "$as_me: try '-fopenmp'" >&6;}
+  CXXFLAGS_BAK=${CXXFLAGS}
+  CXXFLAGS="-fopenmp ${CXXFLAGS}"
+  unset ac_cv_lib_RNA_pf_fold
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for pf_fold in -lRNA" >&5
+$as_echo_n "checking for pf_fold in -lRNA... " >&6; }
+if ${ac_cv_lib_RNA_pf_fold+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lRNA  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char pf_fold ();
+int
+main ()
+{
+return pf_fold ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_cxx_try_link "$LINENO"; then :
+  ac_cv_lib_RNA_pf_fold=yes
+else
+  ac_cv_lib_RNA_pf_fold=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_RNA_pf_fold" >&5
+$as_echo "$ac_cv_lib_RNA_pf_fold" >&6; }
+if test "x$ac_cv_lib_RNA_pf_fold" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_LIBRNA 1
+_ACEOF
+
+  LIBS="-lRNA $LIBS"
+
+else
+   CXXFLAGS=${CXXFLAGS_BAK}
+fi
+
+
 fi
 
 ac_fn_cxx_check_header_mongrel "$LINENO" "ViennaRNA/ribo.h" "ac_cv_header_ViennaRNA_ribo_h" "$ac_includes_default"
@@ -5528,6 +5426,8 @@ $as_echo "#define HAVE_VIENNA20 /**/" >>confdefs.h
 fi
 
 
+# getopt_long
+#AX_FUNC_GETOPT_LONG
 
 ac_config_files="$ac_config_files Makefile src/Makefile"
 

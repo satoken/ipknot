@@ -22,15 +22,16 @@
 #include "../config.h"
 #endif
 #include "aln.h"
-#include <iostream>
+#include <fstream>
 #include <sstream>
-#include <string>
-#include <deque>
-#include <map>
+#include <vector>
 #include <stack>
 #include <stdexcept>
-#include <boost/algorithm/string.hpp>
+#include <algorithm>
 #include <cstring>
+#include <cstdlib>
+#include <cassert>
+#include <cerrno>
 
 #ifdef HAVE_LIBRNA
 namespace Vienna {
@@ -43,120 +44,18 @@ extern "C" {
 };
 #endif
 
-using namespace BOOST_SPIRIT_CLASSIC_NS;
-
-struct aln_parser : public grammar< aln_parser >
+static
+void
+append(std::list<Aln>& data, const std::list<std::string>& name, 
+       const std::map<std::string,std::string>& seq_map)
 {
-  class format_error : public std::logic_error
+  std::list<std::string> seq;
+  for (std::list<std::string>::const_iterator it=name.begin(); it!=name.end(); ++it)
   {
-  public:
-    format_error(const std::string& msg) : std::logic_error(msg) {}
-  };
-  
-  struct WA
-  {
-    WA() : cur_index(0), cur_name(), cur_seq(), names(), seqs() { }
-
-    unsigned int cur_index;
-    std::string cur_name;
-    std::string cur_seq;
-    std::deque<std::string> names;
-    std::deque<std::string> seqs;
-  };
-
-  WA& wa;
-  aln_parser(WA& x) : wa(x) {}
-
-  struct push_seq
-  {
-    WA& wa;
-    push_seq(WA& x) : wa(x) { }
-
-    template < class Ite >
-    void operator()(Ite i1, Ite i2) const
-    {
-      assert(wa.names.size()==wa.seqs.size());
-      if (wa.cur_index >= wa.names.size()) {
-	wa.names.push_back(wa.cur_name);
-	wa.seqs.push_back(wa.cur_seq);
-      } else if (wa.names[wa.cur_index] == wa.cur_name) {
-	wa.seqs[wa.cur_index] += wa.cur_seq;
-      } else {
-	throw format_error("Format error: broken sequence name consistency");
-      }
-      wa.cur_index++;
-    }
-  };
-
-  struct reset_index
-  {
-    WA& wa;
-    reset_index(WA& x) : wa(x) { }
-
-    template < class Ite >
-    void operator()(Ite i1, Ite i2) const
-    {
-      unsigned int l=wa.seqs[0].size();
-      for (unsigned int i=1; i!=wa.seqs.size(); ++i) {
-	if (l!=wa.seqs[i].size())
-	  throw format_error("Format error: broken sequence length consistency");
-      }
-      wa.cur_index = 0;
-    }
-  };
-
-  template <class ScannerT>
-  struct definition
-  {
-    typedef rule<ScannerT> rule_t;
-    rule_t aln;
-    rule_t header;
-    rule_t head_word;
-    rule_t body;
-    rule_t body_part;
-    rule_t empty;
-    rule_t seq;
-    rule_t status;
-    rule_t status_or_empty;
-    
-    definition(const aln_parser& self)
-    {
-      aln = header >> +empty >> body >> *empty;
-      head_word = str_p("CLUSTAL") | str_p("PROBCONS");
-      header =  head_word >> +print_p >> eol_p;
-      empty = *blank_p >> eol_p;
-      body_part = +seq[push_seq(self.wa)];
-      body = +(body_part[reset_index(self.wa)] >> !status >> *empty);
-      seq
-	= (+graph_p - head_word)[assign_a(self.wa.cur_name)]
-	>> +blank_p >> (+graph_p)[assign_a(self.wa.cur_seq)]
-	>> *blank_p >> eol_p;
-      status = blank_p >> *(chset<>("*:.") | blank_p) >> eol_p;
-    }
-
-    const rule_t& start() const { return aln; }
-  };
-};
-
-unsigned int
-Aln::
-load(file_iterator<>& fi)
-{
-  file_iterator<> s = fi;
-  aln_parser::WA wa;
-  aln_parser parser(wa);
-  parse_info<file_iterator<> > info =  parse(fi, fi.make_end(), parser);
-  if (!info.hit) {
-    fi = s;
-    return 0;
-  } else {
-    fi = info.stop;
-    std::copy(wa.names.begin(), wa.names.end(),
-	      std::back_insert_iterator<std::list<std::string> >(name_));
-    std::copy(wa.seqs.begin(), wa.seqs.end(),
-	      std::back_insert_iterator<std::list<std::string> >(seq_));
-    return info.length;
+    seq.push_back(seq_map.find(*it)->second);
   }
+  Aln aln(name, seq);
+  data.push_back(aln);
 }
 
 // static
@@ -164,52 +63,52 @@ unsigned int
 Aln::
 load(std::list<Aln>& data, const char* filename)
 {
-  unsigned int n=0;
-  file_iterator<> fi(filename);
-  if (!fi) {
-    std::ostringstream os;
-    os << filename << ": No such file";
-    throw os.str().c_str();
-    //return false;
-  }
-  while (1) {
-    try {
-      Aln aln;
-      if (aln.load(fi)>0) {
-        n++;
-        data.push_back(aln);
-      } else {
-        break;
+  std::ifstream ifs(filename);
+  if (!ifs) 
+    throw std::runtime_error(std::string(strerror(errno)) + ": " + filename);    
+
+  std::map<std::string,std::string> seq_map;
+  std::list<std::string> name;
+  std::string line;
+  while (std::getline(ifs, line))
+  {
+    if (line.find("CLUSTAL")==0 || line.find("PROBCONS")==0)
+    {
+      if (!name.empty())
+      {
+        append(data, name, seq_map);
+        name.clear();
+        seq_map.clear();
       }
     }
-    catch (aln_parser::format_error err)
+    else if (!line.empty() && line[0]!=' ')
     {
-      throw (std::string(filename)+": "+err.what()).c_str();
+      std::istringstream ss(line);
+      std::string n, s;
+      if (ss >> n >> s)
+      {
+        std::map<std::string,std::string>::iterator it=seq_map.find(n);
+        if (it==seq_map.end())
+        {
+          name.push_back(n);
+          seq_map.insert(std::make_pair(n,s));
+        }
+        else
+        {
+          it->second += s;
+        }
+      }
     }
   }
-  return n;
-}
-
-#ifdef TEST
-int
-main(int argc, char* argv[])
-{
-  boost::spirit::file_iterator<> fi(argv[1]);
-  if (!fi) {
-    //perror(argv[1]);
-    return 1;
+  if (!name.empty())
+  {
+    append(data, name, seq_map);
+    name.clear();
+    seq_map.clear();
   }
-  Aln aln;
-#if 0
-  return aln.load(fi) ? 0 : 1;
-#else
-  std::cout << aln.load(fi) << std::endl;
-  std::copy(aln.seq().begin(), aln.seq().end(),
-	    std::ostream_iterator<std::string>(std::cout, "\n"));
-  return 0;
-#endif
+
+  return data.size();
 }
-#endif
 
 std::string
 Aln::
@@ -226,7 +125,9 @@ consensus() const
     assert(x->size()==length);
     seqs[i] = new char[length+1];
     strcpy(seqs[i], x->c_str());
-    boost::to_upper(seqs[i++]);
+    for (char* p=seqs[i++]; *p!=0; ++p)
+      if (*p>='a' && *p<='z') 
+        *p+='A'-'a';
   }
 
   // make a consensus string
@@ -293,5 +194,28 @@ energy_of_struct(const std::string& paren) const
 #endif
   }
   return e/num_aln();
+}
+#endif
+
+#ifdef TEST
+#include <iostream>
+
+int main(int argc, char* argv[])
+{
+  std::list<Aln> data;
+  Aln::load(data, argv[1]);
+  for (std::list<Aln>::const_iterator a=data.begin(); a!=data.end(); ++a) 
+  {
+    std::list<std::string>::const_iterator n=a->name().begin();
+    std::list<std::string>::const_iterator s=a->seq().begin();
+    while (n!=a->name().end() && s!=a->seq().end())
+    {
+      std::cout << *n << " " << *s << std::endl;
+      ++n; ++s;
+    }
+    std::cout << std::endl;
+  }
+
+  return 0;
 }
 #endif

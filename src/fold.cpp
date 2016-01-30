@@ -23,7 +23,7 @@
 #include "fold.h"
 
 #include <iostream>
-#include <boost/algorithm/string.hpp>
+#include <sstream>
 
 #include "contrafold/SStruct.hpp"
 #include "contrafold/InferenceEngine.hpp"
@@ -41,6 +41,10 @@ extern "C" {
   extern void read_parameter_file(const char fname[]);
 };
 };
+
+#ifndef FLT_OR_DBL
+typedef Vienna::FLT_OR_DBL FLT_OR_DBL;
+#endif
 
 #include "nupack/nupack.h"
 
@@ -488,7 +492,9 @@ calculate_posterior(const char* filename, std::string& seq,
   while (std::getline(in, l))
   {
     std::vector<std::string> v;
-    boost::algorithm::split(v, l, boost::is_space(), boost::algorithm::token_compress_on);
+    std::istringstream ss(l);
+    std::string s;
+    while (ss >> s) v.push_back(s);
     uint up = atoi(v[0].c_str());
     seq[up-1] = v[1][0];
     for (uint i=2; i!=v.size(); ++i)

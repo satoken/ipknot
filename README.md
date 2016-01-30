@@ -4,7 +4,6 @@ IPknot for predicting RNA pseudoknot structures using integer programming
 Requirements
 ------------
 
-* [Boost C++ Library](http://www.boost.org/) (>=1.38.0)
 * [Vienna RNA package](http://www.tbi.univie.ac.at/~ivo/RNA/) (>= 1.8)
 * [GNU Linear Programming Kit](http://www.gnu.org/software/glpk/) (>=4.41)
   or [Gurobi Optimizer](http://www.gurobi.com/) (>=2.0)
@@ -17,26 +16,18 @@ For GLPK,
 
 	./configure --with-vienna-rna=/path/to/vienna-rna --with-glpk
 
-For Gurobi,
+For Gurobi, 
 
-	./configure --with-vienna-rna=/path/to/vienna-rna --with-gurobi
+	./configure --with-vienna-rna=/path/to/vienna-rna --with-gurobi=/path/to/gurobi
 
 For CPLEX,
 
-	./configure --with-vienna-rna=/path/to/vienna-rna --with-cplex
-
-You may have to specify the include path and the library path by CPPFLAGS and LDFLAGS like
-
-	env CPPFLAGS='-I/path/to/gurobi/include' LDFLAGS='-L/path/to/gurobi/lib' \
-	./configure --with-vienna-rna=/path/to/vienna-rna --with-gurobi
-
-Then,
-
-	make
-	make install
+	./configure --with-vienna-rna=/path/to/vienna-rna --with-cplex \
+	            --with-cplex-include=/path/to/cplex/include \
+		    --with-cplex-lib=/path/to/cplex/lib
 
 Usage
-====
+-----
 
 IPknot can take FASTA formatted RNA sequences as input, the
 predict their secondary structures including pseudoknots.
@@ -56,6 +47,6 @@ predict their secondary structures including pseudoknots.
 	.....(((.(((((.((........[[(([[[[[[..((]]]](((((((...)))))))...(((((...........((((((((((((((..............((...((((((((((....))))))))))..))......))))))))))))))......))))).]]))]]...[[....(((((((((....(((....)))...))))))))).(((]]...)))...))...........)).)))))))).
 
 References
-==========
+----------
 
 * Sato, K., Kato, Y., Hamada, M., Akutsu, T., Asai, K.: IPknot: fast and accurate prediction of RNA secondary structures with pseudoknots using integer programming, *Bioinformatics*, 27(13):i85-i93 (Jul. 2011)

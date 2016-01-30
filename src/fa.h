@@ -21,19 +21,10 @@
 #ifndef __INC_FA_H__
 #define __INC_FA_H__
 
-#include <boost/version.hpp>
-#if BOOST_VERSION >= 103800
-#include <boost/spirit/include/classic.hpp>
-#else
-#include <boost/spirit.hpp>
-#endif
 #include <string>
 #include <list>
 //#include "rna.h"
 
-#ifndef BOOST_SPIRIT_CLASSIC_NS
-#define BOOST_SPIRIT_CLASSIC_NS boost::spirit
-#endif
 
 class Fasta
 {
@@ -70,9 +61,6 @@ public:
   static
   unsigned int
   load(std::list<Fasta>& data, const char* file);
-  
-  bool
-  load(BOOST_SPIRIT_CLASSIC_NS::file_iterator<>& fi);
 
 private:
   std::string name_;
