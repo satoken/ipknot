@@ -42,6 +42,10 @@ extern "C" {
 };
 };
 
+#ifndef FLT_OR_DBL
+typedef Vienna::FLT_OR_DBL FLT_OR_DBL;
+#endif
+
 #include "nupack/nupack.h"
 
 extern "C" {
