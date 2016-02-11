@@ -22,6 +22,7 @@
 #include "config.h"
 #include "fold.h"
 
+#include <cstring>
 #include <iostream>
 #include <sstream>
 
@@ -99,8 +100,13 @@ calculate_posterior(const std::string& seq, const std::string& paren,
 RNAfoldModel::
 RNAfoldModel(const char* param)
 {
-  copy_boltzmann_parameters();
-  if (param) Vienna::read_parameter_file(param);
+  if (param)
+  {
+    if (strcmp(param, "default")!=0)
+      Vienna::read_parameter_file(param);
+  }
+  else
+    copy_boltzmann_parameters();
 }
 
 void
@@ -206,8 +212,13 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
 AlifoldModel::
 AlifoldModel(const char* param)
 {
-  copy_boltzmann_parameters();
-  if (param) Vienna::read_parameter_file(param);
+  if (param)
+  {
+    if (strcmp(param, "default")!=0)
+      Vienna::read_parameter_file(param);
+  }
+  else
+    copy_boltzmann_parameters();
 }
 
 static char** alloc_aln(const std::list<std::string>& aln)
