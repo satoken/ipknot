@@ -19,7 +19,9 @@
  * along with IPknot.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/stat.h>
@@ -43,6 +45,7 @@
 #include "fa.h"
 #include "aln.h"
 #include "fold.h"
+#include "nupack/nupack.h"
 
 typedef unsigned int uint;
 typedef std::vector<float> VF;
@@ -496,10 +499,24 @@ static
 void
 output_fa(std::ostream& os,
           const std::string& desc, const std::string& seq,
-          const std::vector<int>& bpseq, const std::vector<int>& plevel)
+          const std::vector<int>& bpseq, const std::vector<int>& plevel, 
+          bool output_energy)
 {
-  os << ">" << desc << std::endl
-     << seq << std::endl
+  if (output_energy)
+  {
+    const long double RT=kB*(ZERO_C_IN_KELVIN+37);
+    Nupack<long double> nupack;
+    nupack.load_default_parameters();
+    nupack.load_sequence(seq);
+    nupack.load_constraints(bpseq);
+    long double e = nupack.calculate_partition_function();
+    os << ">" << desc << " (e=" << -logl(e) << ")" << std::endl;
+  }
+  else
+  {
+    os << ">" << desc << std::endl; 
+  }
+  os << seq << std::endl
      << make_parenthsis(bpseq, plevel) << std::endl;
 }
 
@@ -586,9 +603,10 @@ main(int argc, char* argv[])
   bool aux=false;
   bool levelwise=true;
   bool max_pmcc=false;
+  bool output_energy=false;
   std::ostream *os_bpseq=NULL;
   std::ostream *os_mfa=NULL;
-  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:h"))!=-1)
+  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:dh"))!=-1)
   {
     switch (ch)
     {
@@ -652,6 +670,9 @@ main(int argc, char* argv[])
           return 1;
         }
         break;
+      case 'd':
+        output_energy = true;
+        break;
       case 'h': case '?': default:
         usage(progname);
         return 1;
@@ -712,8 +733,8 @@ main(int argc, char* argv[])
       if (os_bpseq)
         output_bpseq(*os_bpseq, argv[0], seq, bpseq, plevel);
       if (os_bpseq!=&std::cout)
-        output_fa(std::cout, argv[0], seq, bpseq, plevel);
-    }    
+        output_fa(std::cout, argv[0], seq, bpseq, plevel, output_energy);
+    }
     else if (Fasta::load(f, argv[0])>0)
     {
       BPEngineSeq* en=NULL;
@@ -740,7 +761,7 @@ main(int argc, char* argv[])
         usage(progname);
         return 1;
       }
-    
+
       while (!f.empty())
       {
         std::list<Fasta>::iterator fa = f.begin();
@@ -760,7 +781,7 @@ main(int argc, char* argv[])
         if (os_bpseq)
           output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel);
         if (os_bpseq!=&std::cout)
-          output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel);
+          output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel, output_energy);
         f.erase(fa);
       }
 
@@ -831,7 +852,7 @@ main(int argc, char* argv[])
         if (os_mfa)
           output_mfa(*os_mfa, *aln, bpseq, plevel);
         if (os_bpseq!=&std::cout && os_mfa!=&std::cout)
-          output_fa(std::cout, aln->name().front(), aln->consensus(), bpseq, plevel);        
+          output_fa(std::cout, aln->name().front(), aln->consensus(), bpseq, plevel, output_energy);
         a.erase(aln);
       }
 

@@ -26,7 +26,6 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <boost/array.hpp>
 #include "dptable.h"
 
 typedef float energy_t;
@@ -45,24 +44,7 @@ template < class PF_TYPE >
 Nupack<PF_TYPE>::
 Nupack()
   : base_map('z'-'a'+1),
-    pair_map(boost::extents[5][5]),
     RT(kB*(ZERO_C_IN_KELVIN+37)),
-#if 0
-    hairpin37(30),
-    bulge37(30),
-    interior37(30),
-    stack37(boost::extents[6][6]),
-    int11_37(boost::extents[6][6][4][4]),
-    int21_37(boost::extents[6][4][4][6][4]),
-    int22_37(boost::extents[6][6][4][4][4][4]),
-    dangle3_37(boost::extents[6][4]),
-    dangle5_37(boost::extents[6][4]),
-    triloop37(boost::extents[4][4][4][4][4]),
-    tloop37(boost::extents[4][4][4][4][4][4]),
-    mismatch_hairpin37(boost::extents[4][4][6]),
-    mismatch_interior37(boost::extents[4][4][6]),
-    asymmetry_penalty(4),
-#endif
     SALT_CORRECTION(0),
     loop_greater30(1.079 /*=1.75*RT*/),
     hairpin_GGG(0.0)
@@ -74,29 +56,15 @@ Nupack()
   base_map['u'-'a'] = BASE_U;
   base_map['t'-'a'] = BASE_U;
 
-  std::fill(pair_map.data(), pair_map.data()+pair_map.num_elements(), -1);
+  for (uint i=0; i<5; ++i)
+    for (uint j=0; j<5; ++j)
+      pair_map[i][j] = -1;
   pair_map[BASE_A][BASE_U] = PAIR_AU;
   pair_map[BASE_U][BASE_A] = PAIR_UA;
   pair_map[BASE_C][BASE_G] = PAIR_CG;
   pair_map[BASE_G][BASE_C] = PAIR_GC;
   pair_map[BASE_G][BASE_U] = PAIR_GU;
   pair_map[BASE_U][BASE_G] = PAIR_UG;
-#if 0
-  std::fill(hairpin37.begin(), hairpin37.end(), 0);
-  std::fill(bulge37.begin(), bulge37.end(), 0);
-  std::fill(interior37.begin(), interior37.end(), 0);
-  std::fill(stack37.data(), stack37.data()+stack37.num_elements(), 0);
-  std::fill(int11_37.data(), int11_37.data()+int11_37.num_elements(), 0);
-  std::fill(int21_37.data(), int21_37.data()+int21_37.num_elements(), 0);
-  std::fill(int22_37.data(), int22_37.data()+int22_37.num_elements(), 0);
-  std::fill(dangle3_37.data(), dangle3_37.data()+dangle3_37.num_elements(), 0);
-  std::fill(dangle5_37.data(), dangle5_37.data()+dangle5_37.num_elements(), 0);
-  std::fill(triloop37.data(), triloop37.data()+triloop37.num_elements(), 0);
-  std::fill(tloop37.data(), tloop37.data()+tloop37.num_elements(), 0);
-  std::fill(mismatch_hairpin37.data(), mismatch_hairpin37.data()+mismatch_hairpin37.num_elements(), 0);
-  std::fill(mismatch_interior37.data(), mismatch_interior37.data()+mismatch_interior37.num_elements(), 0);
-  std::fill(asymmetry_penalty.begin(), asymmetry_penalty.end(), 0);
-#endif
 }
 
 template < class PF_TYPE >
@@ -149,7 +117,7 @@ bool
 Nupack<PF_TYPE>::
 allow_paired(int i, int j) const
 {
-  return j-i-1>=3 && pair_type(i,j)>=0;
+  return j-i-1>=3 && pair_type(i,j)>=0 && (allow_paired_tbl.size()==0 || allow_paired_tbl(i,j)==1);
 }
 
 template < class PF_TYPE >
@@ -160,6 +128,17 @@ load_sequence(const std::string& s)
   N=s.size();
   seq.resize(N);
   for (int i=0; i!=N; ++i) seq[i] = base(s[i]);
+}
+
+template < class PF_TYPE >
+void
+Nupack<PF_TYPE>::
+load_constraints(const std::vector<int>& bpseq)
+{
+  allow_paired_tbl.resize(N);
+  allow_paired_tbl.fill(0);
+  for (size_t i=0; i!=N; ++i)
+    allow_paired_tbl(i, bpseq[i]) = 1;
 }
 
 int

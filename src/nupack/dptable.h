@@ -30,6 +30,8 @@ public:
   {
   }
 
+  int size() const { return N_; }
+
   void resize(int n)
   {
     N_=n;

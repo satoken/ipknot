@@ -24,7 +24,6 @@
 
 #include <vector>
 #include <string>
-#include <boost/multi_array.hpp>
 #include "dptable.h"
 
 #define kB 0.00198717 // Boltzmann constant in kcal/mol/K
@@ -47,6 +46,7 @@ public:
 public:
   Nupack();
   void load_sequence(const std::string& s);
+  void load_constraints(const std::vector<int>& bpseq);
   void load_parameters_fm363(const std::vector<float>& v);
   void load_default_parameters(/*int which*/);
   bool load_parameters(const char* filename);
@@ -91,10 +91,11 @@ private:
 
 private:
   std::vector<int> base_map;
-  boost::multi_array<int,2> pair_map;
+  int pair_map[5][5];
   std::vector<int> seq;
   int N;
   float RT;
+  DPTable2<int> allow_paired_tbl;
   DPTable2<PF_TYPE> Q;
   DPTable2<PF_TYPE> Qb;
   DPTable2<PF_TYPE> Qm;
@@ -118,22 +119,6 @@ private:
   DPTable4<DBL_TYPE> Pgrs;
   
   // energy parameters
-#if 0
-  std::vector<energy_t> hairpin37;
-  std::vector<energy_t> bulge37;
-  std::vector<energy_t> interior37;
-  boost::multi_array<energy_t,2> stack37;
-  boost::multi_array<energy_t,4> int11_37;
-  boost::multi_array<energy_t,5> int21_37;
-  boost::multi_array<energy_t,6> int22_37;
-  boost::multi_array<energy_t,2> dangle3_37;
-  boost::multi_array<energy_t,2> dangle5_37;
-  boost::multi_array<energy_t,5> triloop37;
-  boost::multi_array<energy_t,6> tloop37;
-  boost::multi_array<energy_t,3> mismatch_hairpin37;
-  boost::multi_array<energy_t,3> mismatch_interior37;
-  std::vector<energy_t> asymmetry_penalty;
-#else
   energy_t hairpin37[30];
   energy_t bulge37[30];
   energy_t interior37[30];
@@ -148,7 +133,6 @@ private:
   energy_t mismatch_hairpin37[4][4][6];
   energy_t mismatch_interior37[4][4][6];
   energy_t asymmetry_penalty[4];
-#endif
   energy_t polyC_penalty, polyC_slope, polyC_int;
   energy_t at_penalty;
   energy_t multiloop_penalty; // alpha1
