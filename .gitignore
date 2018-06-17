@@ -9,3 +9,6 @@ config.log
 config.status
 src/ipknot
 .dirstamp
+CMakeCache.txt
+CMakeFiles
+cmake_install.cmake

@@ -440,6 +440,7 @@ inline bool zerop(const LogValue<short int>& x)
 
 
 // return logged value
+#if 0
 template <class T>
 T std::log(const LogValue<T>& x)
 {
@@ -453,6 +454,7 @@ LogValue<T> std::pow(const LogValue<T>& x, double p)
   r.set_log_value(static_cast<T>(log(x) * p));
   return r;
 }
+#endif
 
 // input from a stream
 template <class T>

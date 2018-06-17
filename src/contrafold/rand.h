@@ -7,6 +7,8 @@
 #include "../../config.h"
 #endif
 
+#define STD_RAND
+
 #ifdef STD_RAND
 #include <cstdlib>
 class Die

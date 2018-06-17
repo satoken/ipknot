@@ -606,7 +606,7 @@ main(int argc, char* argv[])
   bool output_energy=false;
   std::ostream *os_bpseq=NULL;
   std::ostream *os_mfa=NULL;
-  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:dh"))!=-1)
+  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:Eh"))!=-1)
   {
     switch (ch)
     {
@@ -670,7 +670,7 @@ main(int argc, char* argv[])
           return 1;
         }
         break;
-      case 'd':
+      case 'E':
         output_energy = true;
         break;
       case 'h': case '?': default:

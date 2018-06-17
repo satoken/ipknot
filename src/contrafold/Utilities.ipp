@@ -2,6 +2,10 @@
 // Utilities.ipp
 //////////////////////////////////////////////////////////////////////
 
+#include <cmath>
+#include "Utilities.hpp"
+
+#if 0
 template<typename T1, typename T2, typename T3>
 inline triple<T1,T2,T3>::triple() :
     first(), second(), third() 
@@ -82,6 +86,7 @@ std::ostream &operator<<(std::ostream &out, const triple<T1,T2,T3> &x)
     out << '(' << x.first << ',' << x.second << ',' << x.third << ')';
     return out;
 }
+#endif
 
 #ifndef sqrtl
 #define sqrtl(x) (static_cast<long double>(sqrt(double(x))))

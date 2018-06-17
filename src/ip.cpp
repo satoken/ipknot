@@ -439,7 +439,7 @@ IP(DirType dir, int n_th)
 IP::
 ~IP()
 {
-  throw "no IP solver is linked.";
+  //throw "no IP solver is linked.";
 }
 
 int
