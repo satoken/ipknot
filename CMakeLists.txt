@@ -33,6 +33,10 @@ elseif(ENABLE_GUROBI)
 else()
   find_package(GLPK 4.33)
   if(GLPK_FOUND)
+    find_library(ZLIB_LIBRARY z)
+    find_library(GMP_LIBRARY gmp)
+    find_library(DL_LIBRARY dl)
+    find_library(LTDL_LIBRARY ltdl)
     add_definitions(-DWITH_GLPK)
     include_directories(${GLPK_INCLUDE_DIR})
   endif()
@@ -53,4 +57,4 @@ add_executable(
   src/contrafold/Utilities.cpp
   src/nupack/nupack.cpp
   )
-target_link_libraries(ipknot ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ILOG_CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CPP_LIBRARY})
+target_link_libraries(ipknot ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${ILOG_CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CPP_LIBRARY})
