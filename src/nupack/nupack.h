@@ -52,12 +52,14 @@ public:
   bool load_parameters(const char* filename);
   void dump_parameters(std::ostream& os) const;
   pf_type calculate_partition_function();
+  pf_type calculate_minimum_free_energy();
   void calculate_posterior();
   void get_posterior(std::vector<float>& bp, std::vector<int>& offset) const;
   void get_posterior(std::vector<float>& bp1, std::vector<float>& bp2, std::vector<int>& offset) const;
   
 private:
   void fastiloops(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2);
+  void fastiloopsv(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2);
   void fastiloops_pr(int i, int j,
 #ifdef ENABLE_RECALCULATE
                      DPTableX<float>& Precx, DPTableX<float>& Precx2,

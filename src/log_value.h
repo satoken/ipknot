@@ -1,11 +1,5 @@
 /*
- * $Id$
- *
- * PHMMTS -- an implementation of Pair Hidden Markov Models on Tree Structures,
- *           which is based on "Pair Hidden Markov Models on Tree Structures",
- *           Yasubumi Sakakibara, ISMB 2003.
- *
- * Copyright (C) 2003-2006 Kengo Sato
+ * Copyright (C) 2003-2018 Kengo Sato
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -193,29 +187,13 @@ public:
     if (zerop(x)) return *this;
     if (zerop(*this)) return x;
     if (x.val_>val_) {
-#if 0
-      if (x.val_>val_+30) {
-	return x;
-      } else {
-#endif
-	LogValue r;
-	r.val_ = val_ + log1exp0(x.val_-val_);
-	return r;
-#if 0
-      }
-#endif
+      LogValue r;
+      r.val_ = val_ + log1exp0(x.val_-val_);
+      return r;
     } else {
-#if 0
-      if (val_>x.val_+30) {
-	return *this;
-      } else {
-#endif
-	LogValue r;
-	r.val_ = x.val_ + log1exp0(val_-x.val_);
-	return r;
-#if 0
-      }
-#endif
+      LogValue r;
+      r.val_ = x.val_ + log1exp0(val_-x.val_);
+      return r;
     }
   }
 
@@ -224,6 +202,19 @@ public:
   LogValue operator+(const U& v) const
   {
     return *this + LogValue(v);
+  }
+
+  LogValue operator-(const LogValue& x) const
+  {
+    LogValue r;
+    r.val_ = std::log(exp(val_) - exp(x.val_));
+    return r;
+  }
+
+  template <class U>
+  LogValue operator-(const U& x) const
+  {
+    return *this - LogValue(x);
   }
 
   // added and assinged by LogValue
@@ -235,25 +226,9 @@ public:
       return *this;
     }
     if (x.val_>val_) {
-#if 0
-      if (x.val_>val_+30) {
-	val_ = x.val_;
-      } else {
-#endif
-	val_ = val_ + log1exp0(x.val_-val_);
-#if 0
-      }
-#endif
+  	  val_ = val_ + log1exp0(x.val_-val_);
     } else {
-#if 0
-      if (val_>x.val_+30) {
-	
-      } else {
-#endif
-	val_ = x.val_ + log1exp0(val_-x.val_);
-#if 0
-      }
-#endif
+	    val_ = x.val_ + log1exp0(val_-x.val_);
     }
     return *this;
   }
@@ -263,6 +238,18 @@ public:
   LogValue& operator+=(const U& v)
   {
     return operator+=(LogValue(v));
+  }
+
+  LogValue& operator-=(const LogValue& x)
+  {
+    *this = *this - x;  
+    return *this;
+  }
+
+  template <class U>
+  LogValue& operator-=(const U& x)
+  {
+    return operator-=(LogValue(x));
   }
 
   // is equal to LogValue

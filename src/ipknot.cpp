@@ -46,6 +46,7 @@
 #include "aln.h"
 #include "fold.h"
 #include "nupack/nupack.h"
+#include "log_value.h"
 
 typedef unsigned int uint;
 typedef std::vector<float> VF;
@@ -504,13 +505,12 @@ output_fa(std::ostream& os,
 {
   if (output_energy)
   {
-    const long double RT=kB*(ZERO_C_IN_KELVIN+37);
-    Nupack<long double> nupack;
+    Nupack<float> nupack;
     nupack.load_default_parameters();
     nupack.load_sequence(seq);
     nupack.load_constraints(bpseq);
-    long double e = nupack.calculate_partition_function();
-    os << ">" << desc << " (e=" << -logl(e) << ")" << std::endl;
+    long double e = nupack.calculate_minimum_free_energy();
+    os << ">" << desc << " (e=" << e << ")" << std::endl;
   }
   else
   {
