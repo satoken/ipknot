@@ -46,7 +46,7 @@
 #include "aln.h"
 #include "fold.h"
 #include "nupack/nupack.h"
-#include "log_value.h"
+#include "bpseq.h"
 
 typedef unsigned int uint;
 typedef std::vector<float> VF;
@@ -72,11 +72,18 @@ public:
   }
 
   void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel) const
+             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
   {
     IP ip(IP::MAX, n_th_);
     VVVI v(pk_level_, VVI(L, VI(L, -1)));
     VVVI w(pk_level_, VVI(L));
+    VI c_l(L, 0), c_r(L, 0);
+
+    if (!constraint)
+    {
+      bpseq.resize(L);
+      std::fill(bpseq.begin(), bpseq.end(), -2);
+    }
     
     // make objective variables with their weights
     for (uint j=1; j!=L; ++j)
@@ -89,6 +96,7 @@ public:
           {
             v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
             w[lv][i].push_back(j);
+            c_l[i]++; c_r[j]++;
           }
       }
     }
@@ -97,15 +105,67 @@ public:
     // constraint 1: each s_i is paired with at most one base
     for (uint i=0; i!=L; ++i)
     {
-      int row = ip.make_constraint(IP::UP, 0, 1);
+      int row_l = -1, row_r = -1;
+      switch (bpseq[i])
+      {
+        default:
+        case BPSEQ::DOT: // no constraints
+          row_l = row_r = ip.make_constraint(IP::UP, 0, 1);
+          break;
+        case BPSEQ::U: // unpaired
+          row_l = row_r = ip.make_constraint(IP::UP, 0, 0);
+          break;
+        case BPSEQ::LR: // paired with left or right
+          if (c_l[i]+c_r[i]>0)
+            row_l = row_r = ip.make_constraint(IP::FX, 1, 1);
+          break;
+        case BPSEQ::L: // paired with right j
+          //std::cout << "L " << i << " " << c_l[i] << std::endl;
+          if (c_l[i]>0) 
+          {
+            row_l = ip.make_constraint(IP::FX, 1, 1);
+            row_r = ip.make_constraint(IP::UP, 0, 0);
+          }
+          break;
+        case BPSEQ::R: // paired with left j
+          //std::cout << "R " << i << " " << c_l[i] << std::endl;
+          if (c_l[i]>0) 
+          {
+            row_l = ip.make_constraint(IP::UP, 0, 0);
+            row_r = ip.make_constraint(IP::FX, 1, 1);
+          }
+          break;
+      }
+      if (row_l<0 || row_r<0)
+      {
+        std::cerr << "invalid constraint for the base " << i+1 << std::endl;
+        row_l = row_r = ip.make_constraint(IP::UP, 0, 1); // fallback to no constraint
+      }
+      
       for (uint lv=0; lv!=pk_level_; ++lv)
       {
         for (uint j=0; j<i; ++j)
           if (v[lv][j][i]>=0)
-            ip.add_constraint(row, v[lv][j][i], 1);
+            ip.add_constraint(row_r, v[lv][j][i], 1);
         for (uint j=i+1; j<L; ++j)
           if (v[lv][i][j]>=0)
-            ip.add_constraint(row, v[lv][i][j], 1);
+            ip.add_constraint(row_l, v[lv][i][j], 1);
+      }
+
+      if (bpseq[i]>=0 && i<bpseq[i]) // paired with j=bpseq[i]
+      {
+        int c=0;
+        for (uint lv=0; lv!=pk_level_; ++lv)
+          if (v[lv][i][bpseq[i]]>=0) c++;
+        if (c>0)
+        {
+          int row = ip.make_constraint(IP::FX, 1, 1);
+          for (uint lv=0; lv!=pk_level_; ++lv)
+            if (v[lv][i][bpseq[i]]>=0)  
+              ip.add_constraint(row, v[lv][i][bpseq[i]], 1);
+        }
+        else
+          std::cerr << "invalid constraint for the bases " << i+1 << " and " << bpseq[i]+1 << std::endl;
       }
     }
 
@@ -222,7 +282,7 @@ public:
   }
 
   void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             EnumParam<float>& ep, std::vector<int>& bpseq, std::vector<int>& plevel) const
+             EnumParam<float>& ep, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
   {
     std::vector<float> th(ep.size());
     std::vector<int> bpseq_temp;
@@ -233,7 +293,7 @@ public:
       ep.get(th);
       std::cerr << "th=";
       std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
-      solve(L, bp, offset, th, bpseq_temp, plevel_temp);
+      solve(L, bp, offset, th, bpseq_temp, plevel_temp, constraint);
       float sen, ppv, mcc;
       compute_expected_accuracy(bpseq_temp, bp, offset, sen, ppv, mcc);
       std::cerr << " pMCC=" << mcc << std::endl;
@@ -606,7 +666,8 @@ main(int argc, char* argv[])
   bool output_energy=false;
   std::ostream *os_bpseq=NULL;
   std::ostream *os_mfa=NULL;
-  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:Eh"))!=-1)
+  std::string constraint;
+  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:Ec:h"))!=-1)
   {
     switch (ch)
     {
@@ -673,6 +734,10 @@ main(int argc, char* argv[])
       case 'E':
         output_energy = true;
         break;
+      case 'c':
+        constraint = optarg;
+        break;
+
       case 'h': case '?': default:
         usage(progname);
         return 1;
@@ -718,18 +783,29 @@ main(int argc, char* argv[])
     IPknot::EnumParam<float> ep(th);
     std::vector<float> t(th.size());
     ep.get(t);
-  
+
     std::list<Fasta> f;
     std::list<Aln> a;
+
+    if (!constraint.empty()) {
+      BPSEQ c;
+      c.load(constraint.c_str());
+      bpseq.resize(c.seq().size());
+      for (uint i=0; i!=bpseq.size(); i++) {
+        bpseq[i] = c.bp()[i+1];
+        if (bpseq[i]>=0) bpseq[i]--;
+      }
+    }
+
     if (aux)
     {
       AuxModel aux;
       std::string seq;
       aux.calculate_posterior(argv[0], seq, bp, offset);
       if (max_pmcc)
-        ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel);
+        ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
       else
-        ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel);
+        ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel, !constraint.empty());
       if (os_bpseq)
         output_bpseq(*os_bpseq, argv[0], seq, bpseq, plevel);
       if (os_bpseq!=&std::cout)
@@ -767,16 +843,16 @@ main(int argc, char* argv[])
         std::list<Fasta>::iterator fa = f.begin();
         en->calculate_posterior(fa->seq(), bp, offset);
         if (max_pmcc)
-          ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel);
+          ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
         else
-          ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
+          ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
         for (int i=0; i!=n_refinement; ++i)
         {
           update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
           if (max_pmcc)
-            ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel);
+            ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
           else
-            ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel);
+            ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
         }
         if (os_bpseq)
           output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel);
@@ -836,16 +912,16 @@ main(int argc, char* argv[])
         std::list<Aln>::iterator aln = a.begin();
         en->calculate_posterior(aln->seq(), bp, offset);
         if (max_pmcc)
-          ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel);
+          ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
         else
-          ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
+          ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
         for (int i=0; i!=n_refinement; ++i)
         {
           update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, bp, offset);
           if (max_pmcc)
-            ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel);
+            ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
           else
-            ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel);
+            ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
         }
         if (os_bpseq)
           output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);

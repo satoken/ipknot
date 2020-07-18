@@ -30,6 +30,7 @@
 #include "dptable.h"
 
 typedef float energy_t;
+typedef unsigned int uint;
 
 #include "nupack.h"
 

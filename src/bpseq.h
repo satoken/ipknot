@@ -17,6 +17,15 @@ public:
   const std::string& seq() const { return seq_; }
   const std::vector<int>& bp() const { return bp_; }
 
+public:
+  enum { 
+    U = -1,   // unpaired
+    DOT = -2, // . 
+    L = -3,   // <
+    R = -4,   // > 
+    LR = -5   // |
+  };
+
 private:
   std::string seq_;
   std::vector<int> bp_;

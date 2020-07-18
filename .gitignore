@@ -12,3 +12,4 @@ src/ipknot
 CMakeCache.txt
 CMakeFiles
 cmake_install.cmake
+build

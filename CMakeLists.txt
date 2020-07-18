@@ -44,17 +44,21 @@ endif()
 
 add_executable(
   ipknot
-  src/InferenceEngine.cpp
-  src/aln.cpp
-  src/boltzmann_param.c
-  src/fa.cpp
-  src/ip.cpp
-  src/bpseq.cpp
-  src/fold.cpp
   src/ipknot.cpp
-  src/ScoringModel.cpp
-  src/contrafold/SStruct.cpp
-  src/contrafold/Utilities.cpp
-  src/nupack/nupack.cpp
+  src/ip.h src/ip.cpp
+  src/fa.cpp src/fa.h
+  src/aln.cpp src/aln.h
+  src/fold.cpp src/fold.h
+  src/bpseq.h src/bpseq.cpp
+  src/boltzmann_param.c src/boltzmann_param.h
+  src/nupack/nupack.h src/nupack/nupack.cpp
+  src/nupack/dptable.h src/nupack/def_param.h
+	src/contrafold/Config.hpp src/contrafold/LogSpace.hpp 
+  # src/contrafold/Defaults.ipp 
+  src/contrafold/rand.h 
+	src/contrafold/InferenceEngine.hpp #src/contrafold/InferenceEngine.ipp
+	src/contrafold/ParameterManager.hpp #src/contrafold/ParameterManager.ipp 
+	src/contrafold/SStruct.cpp src/contrafold/SStruct.hpp 
+  src/contrafold/Utilities.cpp src/contrafold/Utilities.hpp #src/contrafold/Utilities.ipp 
   )
 target_link_libraries(ipknot ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${ILOG_CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CPP_LIBRARY})
