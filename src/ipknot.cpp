@@ -365,7 +365,8 @@ private:
     const std::vector<int>& count_;
   };
 
-  static void
+public:
+  static int
   decompose_plevel(const std::vector<int>& bpseq, std::vector<int>& plevel)
   {
     // resolve the symbol of parenthsis by the graph coloring problem
@@ -426,8 +427,11 @@ private:
     plevel.resize(L);
     for (uint i=0; i!=c.size(); ++i)
       plevel[i]= c[i]>=0 ? rev[c[i]] : -1;
+
+    return max_color+1;
   }
 
+private:
   static void
   compute_expected_accuracy(const std::vector<int>& bpseq,
                             const std::vector<float>& bp, const std::vector<int>& offset,
@@ -520,7 +524,8 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
 {
   // update the base-pairing probability matrix by the previous result
   uint L=bpseq.size();
-  //bp.resize(L);
+  bp.resize((L+1)*(L+2)/2, 0.0);
+  offset.resize(L+1);
   std::fill(bp.begin(), bp.end(), 0.0);
   for (uint i=0; i<=L; ++i)
     offset[i] = i*((L+1)+(L+1)-i-1)/2;
@@ -841,7 +846,15 @@ main(int argc, char* argv[])
       while (!f.empty())
       {
         std::list<Fasta>::iterator fa = f.begin();
-        en->calculate_posterior(fa->seq(), bp, offset);
+        if (constraint.empty())
+        {
+          en->calculate_posterior(fa->seq(), bp, offset);
+        }
+        else
+        {
+          int pl = IPknot::decompose_plevel(bpseq, plevel);
+          update_bpm(pl, fa->seq(), *en, bpseq, plevel, bp, offset);
+        }
         if (max_pmcc)
           ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
         else
