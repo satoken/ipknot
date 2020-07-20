@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <stack>
+#include <cstdlib>
 
 BPSEQ::
 BPSEQ()
