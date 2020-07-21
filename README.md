@@ -4,33 +4,25 @@ IPknot for predicting RNA pseudoknot structures using integer programming
 Requirements
 ------------
 
-* [Vienna RNA package](http://www.tbi.univie.ac.at/~ivo/RNA/) (>= 1.8)
+* [Vienna RNA package](https://www.tbi.univie.ac.at/RNA/) (>= 2.2.0)
 * [GNU Linear Programming Kit](http://www.gnu.org/software/glpk/) (>=4.41)
-  or [Gurobi Optimizer](http://www.gurobi.com/) (>=2.0)
-  or [ILOG CPLEX](http://www.ibm.com/software/products/ibmilogcple/) (>=12.0)
+  <!-- [Gurobi Optimizer](http://www.gurobi.com/) (>=2.0)
+  or [ILOG CPLEX](http://www.ibm.com/software/products/ibmilogcple/) (>=12.0) -->
 
 Install
 -------
 
-For GLPK,
-
-	./configure --with-vienna-rna=/path/to/vienna-rna --with-glpk
-
-For Gurobi, 
-
-	./configure --with-vienna-rna=/path/to/vienna-rna --with-gurobi=/path/to/gurobi
-
-For CPLEX,
-
-	./configure --with-vienna-rna=/path/to/vienna-rna --with-cplex \
-	            --with-cplex-include=/path/to/cplex/include \
-		        --with-cplex-lib=/path/to/cplex/lib
+	export PKG_CONFIG_PATH=/path/to/viennarna/lib/pkgconfig:$PKG_CONFIG_PATH
+	mkdir build && cd build
+	cmake -DCMAKE_BUILD_TYPE=Release .. && make 
+	make install # optional
 
 Usage
 -----
 
-IPknot can take FASTA formatted RNA sequences as input, the
-predict their secondary structures including pseudoknots.
+### Single sequences
+
+IPknot can take FASTA formatted RNA sequences as input, then predicts their secondary structures including pseudoknots.
 
 	% ipknot: [options] fasta
 	 -h:       show this message
@@ -41,10 +33,35 @@ predict their secondary structures including pseudoknots.
      -i:       allow isolated base-pairs
      -b:       output the prediction via BPSEQ format
 
-	% ipknot ASE00001.fa
-	> ASE_00001
-	gaggaaagucccgccUCCAGAUCAAGGGAAGUCCCGCGAGGGACAAGGGUAGUACCCUUGGCAACUGCACAGAAAACUUACCCCUAAAUAUUCAAUGAGGAUUUGAUUCGACUCUUACCUUGGCGACAAGGUAAGAUAGAUGAAGAGAAUAUUUAGGGGUUGAAACGCAGUCCUUCCCGGAGCAAGUAGGGGGGUCAAUGAGAAUGAUCUGAAGACCUCCCUUGACGCAUAGUCGAAUCCCCCAAAUacagaagcgggcuua
-	.....(((.(((((.((........[[(([[[[[[..((]]]](((((((...)))))))...(((((...........((((((((((((((..............((...((((((((((....))))))))))..))......))))))))))))))......))))).]]))]]...[[....(((((((((....(((....)))...))))))))).(((]]...)))...))...........)).)))))))).
+	% ipknot drz_Ppac_1_1.fa
+	>drz_Ppac_1_1
+	GACUCGCUUGACUGUUCACCUCCCCGUGGUGCGAGUUGGACACCCACCACUCGCAUUCUUCACCUAUUGUUUAAUUGUGCUUGUGGUGGGUGACUGAGAAACAGUC
+	.((((((..[[..[[..(((.......)))))))))....((((((((((..((((..((............))..))))..)))))))))).((.....]]))]]
+
+### Aligned sequences
+
+IPknot can also take CLUSTAL formatted RNA alignments produced by CLUSTALW and MAFFT, then predicts their common secondary structures.
+
+	% clustalw RF00005:0.fa
+	% ipknot RF00005:0.aln
+	>J01390-1/6861-6
+	--------CAGGUUAGAGCCAGGUGGUU--AGGCGUCUUGUUUGGGUCAAGAAAUU-GUUAUGUUCGAAUCAUAAUAACCUGA-
+	........(((((((..(((...........))).(((((.......)))))......(((((.......))))))))))))..
+
+### Folding with constraints
+
+IPknot can fold a given sequence or alignment with some constraints. The constraint is given by a 2-columned TSV file. The first column indicates the position *i* of the base to be constrained. If the second column is given by the number *j*, this line means a base-pair constraint, that is, *i*th base and *j*th base form a base pair. If the second column is respectively given by a character `x`, `|`, `<`, `>`, the *i*th base should be unpaired, paired with another base, paired with a downstream base, paired with a upstream base, respectively.
+
+	% cat constraint.txt
+	16 100
+	41 x
+	42 x
+	% ipknot -c constraint.txt drz_Ppac_1_1.fa
+	>drz_Ppac_1_1
+	GACUCGCUUGACUGUUCACCUCCCCGUGGUGCGAGUUGGACACCCACCACUCGCAUUCUUCACCUAUUGUUUAAUUGUGCUUGUGGUGGGUGACUGAGAAACAGUC
+	.........(((((((............((((((((.((.......))))))))))....((((....((........))....))))...........)))))))
+
+This example shows folding with constraints that 16th base and 100th base are paired, 41st and 42nd bases are unpaired.
 
 References
 ----------
