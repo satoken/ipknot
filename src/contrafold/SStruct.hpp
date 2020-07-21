@@ -53,6 +53,9 @@ public:
     // unpaired or whose pairing is not known
     static const int UNPAIRED;
     static const int UNKNOWN;
+    static const int LEFT; // a base paired with right j
+    static const int RIGHT; // a base paired with left j
+    static const int LEFTRIGHT; // a base paired with left or right j
 
     // constructor and destructor
     SStruct();
