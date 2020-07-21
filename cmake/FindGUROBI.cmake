@@ -1,20 +1,46 @@
-set(GUROBI_ROOT_DIR "" CACHE PATH "GUROBI root directory.")
+find_path(GUROBI_INCLUDE_DIRS
+    NAMES gurobi_c.h
+    HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
+    PATH_SUFFIXES include)
 
-STRING(REGEX MATCH "^[0-9]+" GUROBI_VERSION "${GUROBI_ROOT_DIR}")
+find_library(GUROBI_LIBRARY
+    NAMES gurobi gurobi81 gurobi90
+    HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
+    PATH_SUFFIXES lib)
 
-find_path(GUROBI_INCLUDE_DIR gurobi_c++.h HINTS "${GUROBI_ROOT_DIR}/include")
-find_library(GUROBI_LIBRARY libgurobi70.so libgurobi80.so HINTS ${GUROBI_ROOT_DIR}/lib)
-find_library(GUROBI_CPP_LIBRARY libgurobi_c++.a HINTS ${GUROBI_ROOT_DIR}/lib)
+if(CXX)
+    if(MSVC)
+        # determine Visual Studio year
+        if(MSVC_TOOLSET_VERSION EQUAL 142)
+            set(MSVC_YEAR "2019")
+        elseif(MSVC_TOOLSET_VERSION EQUAL 141)
+            set(MSVC_YEAR "2017")
+        elseif(MSVC_TOOLSET_VERSION EQUAL 140)
+            set(MSVC_YEAR "2015")
+        endif()
+
+        if(MT)
+            set(M_FLAG "mt")
+        else()
+            set(M_FLAG "md")
+        endif()
+        
+        find_library(GUROBI_CXX_LIBRARY
+            NAMES gurobi_c++${M_FLAG}${MSVC_YEAR}
+            HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
+            PATH_SUFFIXES lib)
+        find_library(GUROBI_CXX_DEBUG_LIBRARY
+            NAMES gurobi_c++${M_FLAG}d${MSVC_YEAR}
+            HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
+            PATH_SUFFIXES lib)
+    else()
+        find_library(GUROBI_CXX_LIBRARY
+            NAMES gurobi_c++
+            HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
+            PATH_SUFFIXES lib)
+        set(GUROBI_CXX_DEBUG_LIBRARY ${GUROBI_CXX_LIBRARY})
+    endif()
+endif()
 
 include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(GUROBI DEFAULT_MSG GUROBI_LIBRARY GUROBI_CPP_LIBRARY GUROBI_INCLUDE_DIR)
-
-if(GUROBI_FOUND)
-    set(GUROBI_INCLUDE_DIRS ${GUROBI_INCLUDE_DIR})
-    set(GUROBI_LIBRARIES ${GUROBI_CPP_LIBRARY} ${GUROBI_LIBRARY})
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set(GUROBI_LIBRARIES "${GUROBI_LIBRARIES};m;pthread")
-    endif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-endif(GUROBI_FOUND)
-
-mark_as_advanced(GUROBI_LIBRARY GUROBI_CPP_LIBRARY GUROBI_INCLUDE_DIR)
+find_package_handle_standard_args(GUROBI DEFAULT_MSG GUROBI_LIBRARY)

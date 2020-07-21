@@ -19,10 +19,10 @@ add_definitions(-DHAVE_VIENNA18)
 add_definitions(-DHAVE_VIENNA20)
 
 if(ENABLE_CPLEX)
-  find_package(ILOG)
-  if (ILOG_FOUND)
+  find_package(CPLEX)
+  if (CPLEX_FOUND)
     add_definitions(-DWITH_CPLEX)
-    include_directories(${ILOG_CPLEX_INCLUDE_DIR})
+    include_directories(${CPLEX_INCLUDE_DIR})
   endif()
 elseif(ENABLE_GUROBI)
   find_package(GUROBI)
@@ -36,7 +36,7 @@ else()
     find_library(ZLIB_LIBRARY z)
     find_library(GMP_LIBRARY gmp)
     find_library(DL_LIBRARY dl)
-    #find_library(LTDL_LIBRARY ltdl)
+    find_library(LTDL_LIBRARY ltdl)
     add_definitions(-DWITH_GLPK)
     include_directories(${GLPK_INCLUDE_DIR})
   endif()
@@ -61,4 +61,8 @@ add_executable(
 	src/contrafold/SStruct.cpp src/contrafold/SStruct.hpp 
   src/contrafold/Utilities.cpp src/contrafold/Utilities.hpp #src/contrafold/Utilities.ipp 
   )
-target_link_libraries(ipknot ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${ILOG_CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CPP_LIBRARY})
+target_link_libraries(ipknot 
+  ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY}
+  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CPP_LIBRARY})
+
+install(TARGETS ipknot RUNTIME DESTINATION bin)

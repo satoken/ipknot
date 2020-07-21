@@ -582,6 +582,39 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
 
 static
 void
+read_constraints(const char* filename, VI& bpseq)
+{
+  std::ifstream is(filename);
+  std::string s;
+  int i;
+  while (is >> i >> s)
+  {
+    if (i<=0 && i>bpseq.size())
+      std::cerr << "invalid format base number i=" << i << ", ignored." << std::endl;
+    else switch (s[0]) {
+      default: 
+        if (std::isdigit(s[0]))
+        {
+          int j = std::atoi(s.c_str());
+          if (j>0 && j<=bpseq.size()) {
+            bpseq[i-1] = j-1; bpseq[j-1] = i-1;
+          } 
+          else
+            std::cerr << "invalid format base number j=" << j << ", ignored." << std::endl;
+        }
+        break;
+      case '.': bpseq[i-1] = BPSEQ::DOT; break;
+      case 'x': case 'X': bpseq[i-1] = BPSEQ::U; break;
+      case '|': bpseq[i-1] = BPSEQ::LR; break;
+      case '<': bpseq[i-1] = BPSEQ::L; break;
+      case '>': bpseq[i-1] = BPSEQ::R; break;
+    }
+    
+  }
+}
+
+static
+void
 output_fa(std::ostream& os,
           const std::string& desc, const std::string& seq,
           const std::vector<int>& bpseq, const std::vector<int>& plevel, 
@@ -811,25 +844,15 @@ main(int argc, char* argv[])
     std::list<Fasta> f;
     std::list<Aln> a;
 
-    if (!constraint.empty()) {
-      BPSEQ c;
-      c.load(constraint.c_str());
-      bpseq.resize(c.seq().size());
-      for (uint i=0; i!=bpseq.size(); i++) {
-        bpseq[i] = c.bp()[i+1];
-        if (bpseq[i]>=0) bpseq[i]--;
-      }
-    }
-
     if (aux)
     {
       AuxModel aux;
       std::string seq;
       aux.calculate_posterior(argv[0], seq, bp, offset);
       if (max_pmcc)
-        ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+        ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel, false);
       else
-        ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+        ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel, false);
       if (os_bpseq)
         output_bpseq(*os_bpseq, argv[0], seq, bpseq, plevel);
       if (os_bpseq!=&std::cout)
@@ -870,6 +893,8 @@ main(int argc, char* argv[])
           en->calculate_posterior(fa->seq(), bp, offset);
         else
         { // constraint folding
+          bpseq.resize(fa->size(), BPSEQ::DOT);
+          read_constraints(constraint.c_str(), bpseq);
           int pl = IPknot::decompose_plevel(bpseq, plevel);
           update_bpm(pl, fa->seq(), *en, bpseq, plevel, bp, offset);
         }
@@ -944,7 +969,17 @@ main(int argc, char* argv[])
       while (!a.empty())
       {
         std::list<Aln>::iterator aln = a.begin();
-        en->calculate_posterior(aln->seq(), bp, offset);
+
+        if (constraint.empty()) // default behaiviro
+          en->calculate_posterior(aln->seq(), bp, offset);
+        else
+        { // constraint folding
+          bpseq.resize(aln->size(), BPSEQ::DOT);
+          read_constraints(constraint.c_str(), bpseq);
+          int pl = IPknot::decompose_plevel(bpseq, plevel);
+          update_bpm(pl, aln->seq(), *en, bpseq, plevel, bp, offset);
+        }
+        
         if (max_pmcc)
           ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
         else

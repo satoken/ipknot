@@ -24,7 +24,7 @@ RUN apt-get update \
     #
     # Install C++ tools
     && apt-get -y install build-essential cmake cppcheck valgrind \
-            libglpk-dev libgsl-dev libgmp-dev pkg-config \
+            libglpk-dev libgsl-dev libgmp-dev libltdl-dev pkg-config \
     #
     # [Optional] Update UID/GID if needed
     && if [ "$USER_GID" != "1000" ] || [ "$USER_UID" != "1000" ]; then \
@@ -38,7 +38,7 @@ RUN apt-get update \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget https://www.tbi.univie.ac.at/RNA/download/sourcecode/2_4_x/ViennaRNA-2.4.14.tar.gz \
+RUN wget -q https://www.tbi.univie.ac.at/RNA/download/sourcecode/2_4_x/ViennaRNA-2.4.14.tar.gz \
     && tar zxvf ViennaRNA-2.4.14.tar.gz \
     && cd ViennaRNA-2.4.14 \
     && ./configure --without-perl --without-python --without-python3 --without-forester --without-rnalocmin \
