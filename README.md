@@ -29,8 +29,7 @@ IPknot can take FASTA formatted RNA sequences as input, then predicts their seco
 	 -t th:    threshold of base-pairing probabilities for each level
 	 -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)
                (default: -g 4 -g 8)
-     -m:       use McCaskill model (default: CONTRAfold model)
-     -i:       allow isolated base-pairs
+	 -e model: probabilistic model (default: McCaskill)
      -b:       output the prediction via BPSEQ format
 
 	% ipknot drz_Ppac_1_1.fa
@@ -42,8 +41,8 @@ IPknot can take FASTA formatted RNA sequences as input, then predicts their seco
 
 IPknot can also take CLUSTAL formatted RNA alignments produced by CLUSTALW and MAFFT, then predicts their common secondary structures.
 
-	% clustalw RF00005:0.fa
-	% ipknot RF00005:0.aln
+	% clustalw RF00005.fa
+	% ipknot RF00005.aln
 	>J01390-1/6861-6
 	--------CAGGUUAGAGCCAGGUGGUU--AGGCGUCUUGUUUGGGUCAAGAAAUU-GUUAUGUUCGAAUCAUAAUAACCUGA-
 	........(((((((..(((...........))).(((((.......)))))......(((((.......))))))))))))..

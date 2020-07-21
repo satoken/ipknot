@@ -693,6 +693,7 @@ usage(const char* progname)
             << "           (default: -g 2 -g 4)" << std::endl
     //      << " -m:       select thresholds that maxmize pseudo MCC" << std::endl
             << " -e model: probabilistic model (default: McCaskill)" << std::endl
+            << " -c file:  constraint folding" << std::endl
             << " -r n:     the number of the iterative refinement (default: 0)" << std::endl
             << " -i:       allow isolated base-pairs" << std::endl
             << " -b:       output the prediction by BPSEQ format" << std::endl
