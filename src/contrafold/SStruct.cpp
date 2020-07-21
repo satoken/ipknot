@@ -13,6 +13,9 @@ enum FileFormat
 
 const int SStruct::UNPAIRED = 0;
 const int SStruct::UNKNOWN = -1;
+const int SStruct::LEFT = -2;
+const int SStruct::RIGHT = -3;
+const int SStruct::LEFTRIGHT = -4;
 
 //////////////////////////////////////////////////////////////////////
 // SStruct::SStruct()
@@ -371,7 +374,7 @@ std::string SStruct::FilterParens(std::string sequence) const
         switch (sequence[i])
         {
             case '-': sequence[i] = '.'; break;
-            case '?': case '.': case '(': case ')': break;
+            case '?': case '.': case '(': case ')': case '<': case '>': case '|': break;
             default: Error("Unexpected character '%c' in parenthesized structure.", sequence[i]);
         }
     }
@@ -398,6 +401,9 @@ std::vector<int> SStruct::ConvertParensToMapping(const std::string &parens) cons
         {
             case '?': break;
             case '.': mapping[i] = UNPAIRED; break;
+            case '<': mapping[i] = LEFT; break;
+            case '>': mapping[i] = RIGHT; break;
+            case '|': mapping[i] = LEFTRIGHT; break;
             case '(': stack.push_back(i); break;
             case ')':
                 if (stack.size() == 0) Error("Parentheses mismatch.");

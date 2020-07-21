@@ -120,7 +120,6 @@ public:
             row_l = row_r = ip.make_constraint(IP::FX, 1, 1);
           break;
         case BPSEQ::L: // paired with right j
-          //std::cout << "L " << i << " " << c_l[i] << std::endl;
           if (c_l[i]>0) 
           {
             row_l = ip.make_constraint(IP::FX, 1, 1);
@@ -128,8 +127,7 @@ public:
           }
           break;
         case BPSEQ::R: // paired with left j
-          //std::cout << "R " << i << " " << c_l[i] << std::endl;
-          if (c_l[i]>0) 
+          if (c_r[i]>0) 
           {
             row_l = ip.make_constraint(IP::UP, 0, 0);
             row_r = ip.make_constraint(IP::FX, 1, 1);
@@ -138,7 +136,7 @@ public:
       }
       if (row_l<0 || row_r<0)
       {
-        std::cerr << "invalid constraint for the base " << i+1 << std::endl;
+        std::cerr << "invalid constraint for the base " << i+1 << ", ignored." << std::endl;
         row_l = row_r = ip.make_constraint(IP::UP, 0, 1); // fallback to no constraint
       }
       
@@ -165,7 +163,7 @@ public:
               ip.add_constraint(row, v[lv][i][bpseq[i]], 1);
         }
         else
-          std::cerr << "invalid constraint for the bases " << i+1 << " and " << bpseq[i]+1 << std::endl;
+          std::cerr << "invalid constraint for the bases " << i+1 << " and " << bpseq[i]+1 << ", ignored." << std::endl;
       }
     }
 
@@ -525,8 +523,8 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
   // update the base-pairing probability matrix by the previous result
   uint L=bpseq.size();
   bp.resize((L+1)*(L+2)/2, 0.0);
-  offset.resize(L+1);
   std::fill(bp.begin(), bp.end(), 0.0);
+  offset.resize(L+1);
   for (uint i=0; i<=L; ++i)
     offset[i] = i*((L+1)+(L+1)-i-1)/2;
   
@@ -537,24 +535,45 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
     // make the constraint string
     std::string str(L, '?');
     for (uint i=0; i!=bpseq.size(); ++i)
-      if (bpseq[i]>=0 && (int)i<bpseq[i])
+    {
+      switch (bpseq[i])
       {
-        if ((int)l==plevel[i])
-        {
-          str[i]='('; str[bpseq[i]]=')';
-        }
-        else
-        {
-          str[i]=str[bpseq[i]]='.';
-        }
+        case BPSEQ::U: str[i] = '.'; break;
+        case BPSEQ::L: str[i] = '<'; break;
+        case BPSEQ::R: str[i] = '>'; break;
+        case BPSEQ::LR: str[i] = '|'; break;
+        case BPSEQ::DOT: str[i] = '?'; break;
+        default:
+          if (bpseq[i]>=0 && (int)i<bpseq[i])
+          {
+            if ((int)l==plevel[i])
+            {
+              str[i]='('; str[bpseq[i]]=')';
+            }
+            else
+            {
+              str[i]=str[bpseq[i]]='.';
+            }
+          }
+          break;
       }
+    }
 
     // re-folding the seq with the constraint
     std::fill(bpl.begin(), bpl.end(), 0.0);
     en.calculate_posterior(seq, str, bpl, offsetl);
     assert(bp.size()==bpl.size());
     // update the base-pairing probability matrix
+#if 0 // original hehaivior
     for (uint k=0; k!=bp.size(); ++k) bp[k]+=bpl[k];
+#else
+    for (uint j=1; j!=L; ++j)
+      for (uint i=j-1; i!=-1u; --i)
+        if (bpseq[i]>=0)
+          bp[offset[i+1]+(j+1)] += bpl[offset[i+1]+(j+1)];
+        else
+          bp[offset[i+1]+(j+1)] += bpl[offset[i+1]+(j+1)] / pk_level;
+#endif
   }
 #ifndef NDEBUG
   for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
@@ -846,20 +865,21 @@ main(int argc, char* argv[])
       while (!f.empty())
       {
         std::list<Fasta>::iterator fa = f.begin();
-        if (constraint.empty())
-        {
+
+        if (constraint.empty()) // default behaivior
           en->calculate_posterior(fa->seq(), bp, offset);
-        }
         else
-        {
+        { // constraint folding
           int pl = IPknot::decompose_plevel(bpseq, plevel);
           update_bpm(pl, fa->seq(), *en, bpseq, plevel, bp, offset);
         }
+
         if (max_pmcc)
           ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
         else
           ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
-        for (int i=0; i!=n_refinement; ++i)
+
+        for (int i=0; i!=n_refinement; ++i) // iterative refinement
         {
           update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
           if (max_pmcc)
@@ -867,6 +887,7 @@ main(int argc, char* argv[])
           else
             ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
         }
+
         if (os_bpseq)
           output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel);
         if (os_bpseq!=&std::cout)

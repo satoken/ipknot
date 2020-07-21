@@ -1892,11 +1892,9 @@ void InferenceEngine<RealT>::UseConstraints(const std::vector<int> &true_mapping
             allow_unpaired[offset[i]+j] = 
                 allow_unpaired[offset[i]+j-1] && 
                 allow_unpaired_position[j];
-            allow_paired[offset[i]+j] =
-                (i > 0 &&
-                 (true_mapping[i] == SStruct::UNKNOWN || true_mapping[i] == j) &&
-                 (true_mapping[j] == SStruct::UNKNOWN || true_mapping[j] == i) &&
-                 (allow_noncomplementary || IsComplementary(i,j)));
+            allow_paired[offset[i]+j] = i>0 && (allow_noncomplementary || IsComplementary(i,j)) &&
+                (true_mapping[i] == SStruct::UNKNOWN || true_mapping[i] == SStruct::LEFT || true_mapping[i] == SStruct::LEFTRIGHT || true_mapping[i] == j) &&
+                (true_mapping[j] == SStruct::UNKNOWN || true_mapping[j] == SStruct::RIGHT || true_mapping[j] == SStruct::LEFTRIGHT || true_mapping[j] == i); 
         }
     }
 }
