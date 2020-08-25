@@ -21,14 +21,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/viennarna_2.4.15-1_amd64.deb .
 ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/viennarna-dev_2.4.15-1_amd64.deb .
-ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/python3-rna_2.4.15-1_amd64.deb .
+# ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/python3-rna_2.4.15-1_amd64.deb .
 
 # Configure apt and install packages
 RUN apt-get update \
     #
     # Install C++ tools
     && apt-get -y install build-essential cmake cppcheck valgrind \
-            libglpk-dev libgsl-dev libgmp-dev libltdl-dev pkg-config \
+            libglpk-dev libgsl-dev libgmp-dev libltdl-dev libmpfr-dev pkg-config \
     #
     # [Optional] Update UID/GID if needed
     && if [ "$USER_GID" != "1000" ] || [ "$USER_UID" != "1000" ]; then \
@@ -37,7 +37,7 @@ RUN apt-get update \
         && chown -R $USER_UID:$USER_GID /home/$USERNAME; \
     fi \
     #
-    && apt -y install ./vienna*.deb ./python3-rna*.deb \
+    && apt -y install ./vienna*.deb \
     # Clean up
     && rm -f *.deb \
     && apt-get autoremove -y \
