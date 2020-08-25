@@ -2,8 +2,8 @@
 // https://github.com/microsoft/vscode-dev-containers/tree/v0.112.0/containers/cpp
 {
 	"name": "IPknot development container",
-	//"dockerFile": "Dockerfile",
-	"image": "satoken/vsc-viennarna-dev:latest",
+	"dockerFile": "Dockerfile",
+	//"image": "satoken/vsc-viennarna-dev:latest",
 	"runArgs": [ "--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"],
 
 	// Set *default* container specific settings.json values on container create.

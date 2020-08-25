@@ -37,6 +37,7 @@ else()
     find_library(GMP_LIBRARY gmp)
     find_library(DL_LIBRARY dl)
     find_library(LTDL_LIBRARY ltdl)
+    find_library(MPFR_LIBRARY mpfr)
     add_definitions(-DWITH_GLPK)
     include_directories(${GLPK_INCLUDE_DIR})
   endif()
@@ -62,7 +63,7 @@ add_executable(
   src/contrafold/Utilities.cpp src/contrafold/Utilities.hpp #src/contrafold/Utilities.ipp 
   )
 target_link_libraries(ipknot 
-  ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY}
+  ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
   ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CPP_LIBRARY})
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)

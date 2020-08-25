@@ -19,6 +19,10 @@ ARG USER_GID=$USER_UID
 # Avoid warnings by switching to noninteractive
 ENV DEBIAN_FRONTEND=noninteractive
 
+ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/viennarna_2.4.15-1_amd64.deb .
+ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/viennarna-dev_2.4.15-1_amd64.deb .
+ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/python3-rna_2.4.15-1_amd64.deb .
+
 # Configure apt and install packages
 RUN apt-get update \
     #
@@ -33,17 +37,20 @@ RUN apt-get update \
         && chown -R $USER_UID:$USER_GID /home/$USERNAME; \
     fi \
     #
+    && apt -y install ./vienna*.deb ./python3-rna*.deb \
     # Clean up
+    && rm -f *.deb \
     && apt-get autoremove -y \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget -q https://www.tbi.univie.ac.at/RNA/download/sourcecode/2_4_x/ViennaRNA-2.4.14.tar.gz \
-    && tar zxvf ViennaRNA-2.4.14.tar.gz \
-    && cd ViennaRNA-2.4.14 \
-    && ./configure --without-perl --without-python --without-python3 --without-forester --without-rnalocmin \
-    && make && make install \
-    && cd .. && rm -rf ViennaRNA-2.4.14 ViennaRNA-2.4.14.tar.gz 
+# RUN wget -q https://www.tbi.univie.ac.at/RNA/download/sourcecode/2_4_x/ViennaRNA-2.4.14.tar.gz \
+#     && tar zxvf ViennaRNA-2.4.14.tar.gz \
+#     && cd ViennaRNA-2.4.14 \
+#     && ./configure --without-perl --without-python --without-python3 --without-forester --without-rnalocmin \
+#     && make && make install \
+#     && cd .. && rm -rf ViennaRNA-2.4.14 ViennaRNA-2.4.14.tar.gz 
+
 
 
 # Switch back to dialog for any ad-hoc use of apt-get
