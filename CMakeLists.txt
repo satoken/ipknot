@@ -1,15 +1,15 @@
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.8)
 
-#enable_language(cxx)
-#set(CMAKE_CXX_STANDARD 11)
+#enable_language(CXX)
+set(CMAKE_CXX_STANDARD 11)
 #set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #set(CMAKE_CXX_EXTENSIONS OFF)
 
-project(IPknot)
+project(IPknot CXX C)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-add_definitions(-DPACKAGE_VERSION="0.0.5")
+add_definitions(-DPACKAGE_VERSION="0.0.6")
 
 find_package(PkgConfig REQUIRED)
 
@@ -55,15 +55,16 @@ add_executable(
   src/nupack/nupack.h src/nupack/nupack.cpp
   src/nupack/dptable.h src/nupack/def_param.h
 	src/contrafold/Config.hpp src/contrafold/LogSpace.hpp 
-  # src/contrafold/Defaults.ipp 
+  src/contrafold/Defaults.hpp 
   src/contrafold/rand.h 
-	src/contrafold/InferenceEngine.hpp #src/contrafold/InferenceEngine.ipp
-	src/contrafold/ParameterManager.hpp #src/contrafold/ParameterManager.ipp 
+	src/contrafold/InferenceEngine.hpp src/contrafold/InferenceEngine.cpp
+	src/contrafold/ParameterManager.hpp src/contrafold/ParameterManager.cpp 
 	src/contrafold/SStruct.cpp src/contrafold/SStruct.hpp 
   src/contrafold/Utilities.cpp src/contrafold/Utilities.hpp #src/contrafold/Utilities.ipp 
   )
 target_link_libraries(ipknot 
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
   ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CPP_LIBRARY})
+target_compile_features(ipknot PUBLIC cxx_std_11)
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)

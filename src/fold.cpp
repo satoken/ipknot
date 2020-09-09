@@ -30,7 +30,7 @@
 
 #include "contrafold/SStruct.hpp"
 #include "contrafold/InferenceEngine.hpp"
-#include "contrafold/Defaults.ipp"
+#include "contrafold/Defaults.hpp"
 
 namespace Vienna {
 extern "C" {

@@ -275,6 +275,4 @@ public:
     int GetOffset(int i) const { return offset[i]; }
 };
 
-#include "InferenceEngine.ipp"
-
 #endif

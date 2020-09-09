@@ -10,6 +10,7 @@
 #include <utility>
 #include <cassert>
 #include <cstdlib>
+#include "InferenceEngine.hpp"
 
 extern "C" { double genrand_real2(); }
 
@@ -6907,3 +6908,6 @@ RealT *InferenceEngine<RealT>::GetPosterior2(const RealT posterior_cutoff,
         p[i] = (posterior2[i] >= posterior_cutoff ? posterior2[i] : RealT(0));
     return &p[0];
 }
+
+// instantiation
+template class InferenceEngine<float>;

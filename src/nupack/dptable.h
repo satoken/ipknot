@@ -22,6 +22,8 @@
 #ifndef __INC_DP_TABLE_H__
 #define __INC_DP_TABLE_H__
 
+#include <cassert>
+
 template < class T >
 class DPTable2
 {
