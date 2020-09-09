@@ -681,7 +681,7 @@ void
 usage(const char* progname)
 {
   std::cout << "IPknot version " << PACKAGE_VERSION << std::endl
-            << "  Available probabilistic models: McCaskill, CONTRAfold, Alifold, NUPACK"
+            << "  Available probabilistic models: McCaskill, CONTRAfold, Alifold, NUPACK, LinearPartition"
             << std::endl << std::endl;
 
   std::cout << progname << ": [options] fasta" << std::endl
@@ -880,6 +880,8 @@ main(int argc, char* argv[])
       else if (strcasecmp(model[0], "nupack")==0)
         en = new NupackModel(param);
 #endif
+      else if (strcasecmp(model[0], "LinearPartition")==0)
+        en = new LinearPartitionModel();
       else
       {
         usage(progname);

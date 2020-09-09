@@ -55,6 +55,8 @@ extern "C" {
 #include "boltzmann_param.h"
 };
 
+#include "linearpartition/LinearPartition.h"
+
 typedef unsigned int uint;
 
 // CONTRAfold model
@@ -206,6 +208,23 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
   nu.calculate_partition_function();
   nu.calculate_posterior();
   nu.get_posterior(bp, offset);
+}
+
+// LinearPartition model
+
+void
+LinearPartitionModel::
+calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
+{
+  auto seq2 = seq;
+  // convert to uppercase
+  transform(seq2.begin(), seq2.end(), seq2.begin(), ::toupper);
+  // convert T to U
+  replace(seq2.begin(), seq2.end(), 'T', 'U');
+
+  LinearPartition::BeamCKYParser parser;
+  parser.parse(seq2);
+  parser.get_posterior(bp, offset);
 }
 
 
