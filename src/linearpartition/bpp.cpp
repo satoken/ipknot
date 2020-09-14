@@ -7,10 +7,23 @@
 */
 
 #include <stdio.h> 
+#include <sys/time.h>
 #include "LinearPartition.h"
+#include "Utils/utility.h"
+#include "Utils/utility_v.h"
+
+#define SPECIAL_HP
+
+#define pf
 
 using namespace std;
 using namespace LinearPartition;
+
+#ifdef lpv
+  typedef int value_type;
+#else
+  typedef float value_type;
+#endif
 
 void BeamCKYParser::output_to_file(string file_name, const char * type) {
 
@@ -21,7 +34,8 @@ void BeamCKYParser::output_to_file(string file_name, const char * type) {
             printf("Could not open file!\n"); 
             return; 
         }
-
+        int turn = no_sharp_turn?3:0;
+#if 0
         int turn = no_sharp_turn?3:0;
         for (int i = 1; i <= seq_length; i++) {
             for (int j = i + turn + 1; j <= seq_length; j++) {
@@ -32,6 +46,12 @@ void BeamCKYParser::output_to_file(string file_name, const char * type) {
                 }
             }
         }
+#else
+        for (int i=1; i<=seq_length; i++)
+            for (const auto [j, p]: Pij[i]) 
+                if (i+turn<j)
+                    fprintf(fptr, "%d %d %.4e\n", i, j, p);
+#endif
         fprintf(fptr, "\n");
         fclose(fptr); 
         printf("Done!\n"); 
@@ -51,6 +71,7 @@ void BeamCKYParser::get_posterior(vector<float>& bp, vector<int>& offset) const
 
   int turn = no_sharp_turn?3:0;
   for (int i=1; i<=L; ++i)
+#if 0
     for (int j=i+turn+1; j<=L; ++j) {
         pair<int, int> key = make_pair(i,j);
         auto got = Pij.find(key);
@@ -59,9 +80,21 @@ void BeamCKYParser::get_posterior(vector<float>& bp, vector<int>& offset) const
             bp[offset[i]+j] = got->second;
         }
     }
+#else
+    for (const auto [j, p]: Pij[i])
+        if (i+turn<j)
+            bp[offset[i]+j] = p;
+#endif
+}
+
+void BeamCKYParser::get_posterior(vector<vector<pair<unsigned int, float>>>& bp) const 
+{
+    bp = Pij;
 }
 
 void BeamCKYParser::cal_PairProb(State& viterbi) {
+
+    Pij.resize(seq_length+1);
 
     for(int j=0; j<seq_length; j++){
         for(auto &item : bestP[j]){
@@ -73,7 +106,8 @@ void BeamCKYParser::cal_PairProb(State& viterbi) {
                 float prob = Fast_Exp(temp_prob_inside);
                 if(prob > 1.0) prob = 1.0;
                 if(prob < bpp_cutoff) continue;
-                Pij[make_pair(i+1, j+1)] = prob;
+                Pij[i+1].emplace_back(j+1, prob);
+                Pij[j+1].emplace_back(i+1, prob);
             }
         }
     }

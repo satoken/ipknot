@@ -81,6 +81,7 @@ public:
     // DecoderResult parse(string& seq);
     void parse(const std::string& seq);
     void get_posterior(std::vector<float>& bp, std::vector<int>& offset) const;
+    void get_posterior(std::vector<std::vector<std::pair<unsigned int,float>>>& bp) const;
 
 private:
     //void get_parentheses(char* result, std::string& seq);
@@ -109,7 +110,8 @@ private:
     std::vector<std::pair<float, int>> scores;
 
     // vector<tuple<int, int, float>> Pij;
-    std::unordered_map<std::pair<int,int>, float, hash_pair> Pij;
+    // std::unordered_map<std::pair<int,int>, float, hash_pair> Pij;
+    std::vector<std::vector<std::pair<unsigned int, float>>> Pij;
 
     void output_to_file(std::string file_name, const char * type);
 

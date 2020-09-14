@@ -107,6 +107,7 @@ public:
   }
     
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
+  void calculate_posterior(const std::string& seq, std::vector<std::vector<std::pair<uint, float>>>& bp) const;
 };
 
 class AlifoldModel : public BPEngineAln

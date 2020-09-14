@@ -48,12 +48,15 @@
 #include "nupack/nupack.h"
 #include "bpseq.h"
 
-typedef unsigned int uint;
-typedef std::vector<float> VF;
-typedef std::vector<VF> VVF;
-typedef std::vector<int> VI;
-typedef std::vector<VI> VVI;
-typedef std::vector<VVI> VVVI;
+using uint = unsigned int;
+using VF = std::vector<float>;
+using VVF = std::vector<VF>;
+using VI = std::vector<int>;
+using VVI = std::vector<VI>;
+using VVVI = std::vector<VVI>;
+using SVI = std::vector<std::pair<uint,int>>;
+using VSVI = std::vector<SVI>; 
+using VVSVI = std::vector<VSVI>;
 
 class IPknot
 {
@@ -71,24 +74,15 @@ public:
   {
   }
 
+public:
   void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
              const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
   {
     IP ip(IP::MAX, n_th_);
-    typedef std::pair<uint, int> P;
-    typedef std::vector<P> VP;
-    typedef std::vector<VP> VVP;
-    typedef std::vector<VVP> VVVP;
-    VVVP v_l(pk_level_, VVP(L));
-    VVVP v_r(pk_level_, VVP(L));
+    VVSVI v_l(pk_level_, VSVI(L));
+    VVSVI v_r(pk_level_, VSVI(L));
     VI c_l(L, 0), c_r(L, 0);
 
-    if (!constraint)
-    {
-      bpseq.resize(L);
-      std::fill(bpseq.begin(), bpseq.end(), -2);
-    }
-    
     // make objective variables with their weights
     for (uint j=1; j!=L; ++j)
     {
@@ -107,6 +101,46 @@ public:
     }
     ip.update();
 
+    solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+  }
+
+  void solve(uint L, const std::vector<std::vector<std::pair<uint, float>>>& bp,
+             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+  {
+    IP ip(IP::MAX, n_th_);
+    VVSVI v_l(pk_level_, VSVI(L));
+    VVSVI v_r(pk_level_, VSVI(L));
+    VI c_l(L, 0), c_r(L, 0);
+
+    // make objective variables with their weights
+    for (uint i=1; i<=L; ++i)
+    {
+      for (const auto [j, p]: bp[i])
+        if (i<j)
+          for (uint lv=0; lv!=pk_level_; ++lv)
+            if (p>th[lv])
+            {
+              const auto v_ij = ip.make_variable(p*alpha_[lv]);
+              v_l[lv][i-1].emplace_back(j-1, v_ij);
+              v_r[lv][j-1].emplace_back(i-1, v_ij);
+              c_l[i-1]++; c_r[j-1]++;
+            }
+    }
+    ip.update();
+
+    solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+  }
+
+private:
+  void solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
+             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+  {
+    if (!constraint)
+    {
+      bpseq.resize(L);
+      std::fill(bpseq.begin(), bpseq.end(), -2);
+    }
+    
     // constraint 1: each s_i is paired with at most one base
     for (uint i=0; i!=L; ++i)
     {
@@ -270,6 +304,7 @@ public:
       decompose_plevel(bpseq, plevel);
   }
 
+public:
   void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
              EnumParam<float>& ep, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
   {
@@ -883,28 +918,37 @@ main(int argc, char* argv[])
       {
         std::list<Fasta>::iterator fa = f.begin();
 
-        if (constraint.empty()) // default behaivior
-          en->calculate_posterior(fa->seq(), bp, offset);
-        else
-        { // constraint folding
-          bpseq.resize(fa->size(), BPSEQ::DOT);
-          read_constraints(constraint.c_str(), bpseq);
-          int pl = IPknot::decompose_plevel(bpseq, plevel);
-          update_bpm(pl, fa->seq(), *en, bpseq, plevel, bp, offset);
-        }
-
-        if (max_pmcc)
-          ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
-        else
-          ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
-
-        for (int i=0; i!=n_refinement; ++i) // iterative refinement
+        if (strcasecmp(model[0], "LinearPartition") == 0)
         {
-          update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
+          std::vector<std::vector<std::pair<uint, float>>> sbp;
+          ((LinearPartitionModel*)en)->calculate_posterior(fa->seq(), sbp);
+          ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
+        }
+        else
+        {
+          if (constraint.empty()) // default behaivior
+            en->calculate_posterior(fa->seq(), bp, offset);
+          else
+          { // constraint folding
+            bpseq.resize(fa->size(), BPSEQ::DOT);
+            read_constraints(constraint.c_str(), bpseq);
+            int pl = IPknot::decompose_plevel(bpseq, plevel);
+            update_bpm(pl, fa->seq(), *en, bpseq, plevel, bp, offset);
+          }
+
           if (max_pmcc)
             ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
           else
             ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+
+          for (int i=0; i!=n_refinement; ++i) // iterative refinement
+          {
+            update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
+            if (max_pmcc)
+              ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+            else
+              ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+          }
         }
 
         if (os_bpseq)

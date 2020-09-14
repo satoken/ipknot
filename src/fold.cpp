@@ -227,6 +227,21 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
   parser.get_posterior(bp, offset);
 }
 
+void
+LinearPartitionModel::
+calculate_posterior(const std::string& seq, std::vector<std::vector<std::pair<uint, float>>>& bp) const
+{
+  auto seq2 = seq;
+  // convert to uppercase
+  transform(seq2.begin(), seq2.end(), seq2.begin(), ::toupper);
+  // convert T to U
+  replace(seq2.begin(), seq2.end(), 'T', 'U');
+
+  LinearPartition::BeamCKYParser parser;
+  parser.parse(seq2);
+  parser.get_posterior(bp);
+}
+
 
 // Alifold model
 

@@ -60,6 +60,7 @@ add_executable(
 	src/contrafold/SStruct.cpp 
   src/contrafold/Utilities.cpp 
   src/linearpartition/LinearPartition.cpp 
+  #src/linearpartition/bpp.cpp
   )
 target_link_libraries(ipknot 
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
