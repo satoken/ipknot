@@ -75,8 +75,12 @@ public:
              const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
   {
     IP ip(IP::MAX, n_th_);
-    VVVI v(pk_level_, VVI(L, VI(L, -1)));
-    VVVI w(pk_level_, VVI(L));
+    typedef std::pair<uint, int> P;
+    typedef std::vector<P> VP;
+    typedef std::vector<VP> VVP;
+    typedef std::vector<VVP> VVVP;
+    VVVP v_l(pk_level_, VVP(L));
+    VVVP v_r(pk_level_, VVP(L));
     VI c_l(L, 0), c_r(L, 0);
 
     if (!constraint)
@@ -94,8 +98,9 @@ public:
         for (uint lv=0; lv!=pk_level_; ++lv)
           if (p>th[lv])
           {
-            v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
-            w[lv][i].push_back(j);
+            const auto v_ij = ip.make_variable(p*alpha_[lv]);
+            v_l[lv][i].emplace_back(j, v_ij);
+            v_r[lv][j].emplace_back(i, v_ij);
             c_l[i]++; c_r[j]++;
           }
       }
@@ -142,25 +147,33 @@ public:
       
       for (uint lv=0; lv!=pk_level_; ++lv)
       {
-        for (uint j=0; j<i; ++j)
-          if (v[lv][j][i]>=0)
-            ip.add_constraint(row_r, v[lv][j][i], 1);
-        for (uint j=i+1; j<L; ++j)
-          if (v[lv][i][j]>=0)
-            ip.add_constraint(row_l, v[lv][i][j], 1);
+        for (const auto [j, v_ij]: v_r[lv][i]) 
+          ip.add_constraint(row_r, v_ij, 1);
+        for (const auto [j, v_ij]: v_l[lv][i])
+          ip.add_constraint(row_l, v_ij, 1);
       }
 
       if (bpseq[i]>=0 && i<bpseq[i]) // paired with j=bpseq[i]
       {
+        const auto j = bpseq[i];
         int c=0;
+        std::vector<int> vals(pk_level_, -1);
         for (uint lv=0; lv!=pk_level_; ++lv)
-          if (v[lv][i][bpseq[i]]>=0) c++;
+        {
+          for (const auto [temp, v_ij]: v_l[lv][i])
+            if (j==temp) 
+            { 
+              vals[lv] = v_ij; 
+              c++;
+              break; 
+            }
+        }
         if (c>0)
         {
           int row = ip.make_constraint(IP::FX, 1, 1);
           for (uint lv=0; lv!=pk_level_; ++lv)
-            if (v[lv][i][bpseq[i]]>=0)  
-              ip.add_constraint(row, v[lv][i][bpseq[i]], 1);
+            if (vals[lv]>=0)
+              ip.add_constraint(row, vals[lv], 1);
         }
         else
           std::cerr << "invalid constraint for the bases " << i+1 << " and " << bpseq[i]+1 << ", ignored." << std::endl;
@@ -171,49 +184,35 @@ public:
     {
       // constraint 2: disallow pseudoknots in x[lv]
       for (uint lv=0; lv!=pk_level_; ++lv)
-        for (uint i=0; i<w[lv].size(); ++i)
-          for (uint p=0; p<w[lv][i].size(); ++p)
-          {
-            uint j=w[lv][i][p];
+        for (uint i=0; i<v_l[lv].size(); ++i)
+          for (const auto [j, v_ij]: v_l[lv][i])
             for (uint k=i+1; k<j; ++k)
-              for (uint q=0; q<w[lv][k].size(); ++q)
-              {
-                uint l=w[lv][k][q];
+              for (const auto [l, v_kl]: v_l[lv][k])
                 if (j<l)
                 {
                   int row = ip.make_constraint(IP::UP, 0, 1);
-                  ip.add_constraint(row, v[lv][i][j], 1);
-                  ip.add_constraint(row, v[lv][k][l], 1);
+                  ip.add_constraint(row, v_ij, 1);
+                  ip.add_constraint(row, v_kl, 1);
                 }
-              }
-          }
 
       // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
       for (uint lv=1; lv!=pk_level_; ++lv)
-        for (uint k=0; k<w[lv].size(); ++k)
-          for (uint q=0; q<w[lv][k].size(); ++q)
-          {
-            uint l=w[lv][k][q];
+        for (uint k=0; k<v_l[lv].size(); ++k)
+          for (const auto [l, v_kl]: v_l[lv][k])
             for (uint plv=0; plv!=lv; ++plv)
             {
               int row = ip.make_constraint(IP::LO, 0, 0);
-              ip.add_constraint(row, v[lv][k][l], -1);
+              ip.add_constraint(row, v_kl, -1);
               for (uint i=0; i<k; ++i)
-                for (uint p=0; p<w[plv][i].size(); ++p)
-                {
-                  uint j=w[plv][i][p];
+                for (const auto [j, v_ij]: v_l[plv][i])
                   if (k<j && j<l)
-                    ip.add_constraint(row, v[plv][i][j], 1);
-                }
+                    ip.add_constraint(row, v_ij, 1);
+
               for (uint i=k+1; i<l; ++i)
-                for (uint p=0; p<w[plv][i].size(); ++p)
-                {
-                  uint j=w[plv][i][p];
+                for (const auto [j, v_ij]: v_l[plv][i])
                   if (l<j)
-                    ip.add_constraint(row, v[plv][i][j], 1);
-                }
+                    ip.add_constraint(row, v_ij, 1);
             }
-          }
     }
 
     if (stacking_constraints_)
@@ -224,34 +223,28 @@ public:
         for (uint i=0; i<L; ++i)
         {
           int row = ip.make_constraint(IP::LO, 0, 0);
-          for (uint j=0; j<i; ++j)
-            if (v[lv][j][i]>=0)
-              ip.add_constraint(row, v[lv][j][i], -1);
+          for (const auto [j, v_ji]: v_r[lv][i])
+            ip.add_constraint(row, v_ji, -1);
           if (i>0)
-            for (uint j=0; j<i-1; ++j)
-              if (v[lv][j][i-1]>=0)
-                ip.add_constraint(row, v[lv][j][i-1], 1);
+            for (const auto [j, v_ji]: v_r[lv][i-1])
+              ip.add_constraint(row, v_ji, 1);
           if (i+1<L)
-            for (uint j=0; j<i+1; ++j)
-              if (v[lv][j][i+1]>=0)
-                ip.add_constraint(row, v[lv][j][i+1], 1);
+            for (const auto [j, v_ji]: v_r[lv][i+1])
+              ip.add_constraint(row, v_ji, 1);
         }
 
         // downstream
         for (uint i=0; i<L; ++i)
         {
           int row = ip.make_constraint(IP::LO, 0, 0);
-          for (uint j=i+1; j<L; ++j)
-            if (v[lv][i][j]>=0)
-              ip.add_constraint(row, v[lv][i][j], -1);
+          for (const auto [j, v_ij]: v_l[lv][i])
+            ip.add_constraint(row, v_ij, -1);
           if (i>0)
-            for (uint j=i; j<L; ++j)
-              if (v[lv][i-1][j]>=0)
-                ip.add_constraint(row, v[lv][i-1][j], 1);
+            for (const auto [j, v_ij]: v_l[lv][i-1])
+              ip.add_constraint(row, v_ij, 1);
           if (i+1<L)
-            for (uint j=i+2; j<L; ++j)
-              if (v[lv][i+1][j]>=0)
-                ip.add_constraint(row, v[lv][i+1][j], 1);
+            for (const auto [j, v_ij]: v_l[lv][i+1])
+              ip.add_constraint(row, v_ij, 1);
         }
       }
     }
@@ -265,15 +258,13 @@ public:
     plevel.resize(L);
     std::fill(plevel.begin(), plevel.end(), -1);
     for (uint lv=0; lv!=pk_level_; ++lv)
-    {
       for (uint i=0; i<L; ++i)
-        for (uint j=i+1; j<L; ++j)
-          if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
+        for (const auto [j, v_ij]: v_l[lv][i])
+          if (ip.get_value(v_ij)>0.5)
           {
             bpseq[i]=j; bpseq[j]=i;
             plevel[i]=plevel[j]=lv;
           }
-    }
 
     if (!levelwise_)
       decompose_plevel(bpseq, plevel);
