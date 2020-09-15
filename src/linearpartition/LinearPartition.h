@@ -55,12 +55,9 @@ public:
     int beam;
     bool no_sharp_turn;
     bool is_verbose;
-#if 0
-    std::string bpp_file;
-    std::string bpp_file_index;
-#endif
     bool pf_only;
     float bpp_cutoff;
+    bool use_constraints;
 
     // struct DecoderResult {
     //     float alpha;
@@ -71,15 +68,12 @@ public:
     BeamCKYParser(int beam_size=100,
                   bool nosharpturn=true,
                   bool is_verbose=false,
-#if 0
-                  std::string bppfile="",
-                  std::string bppfileindex="",
-#endif
                   bool pf_only=false,
-                  float bpp_cutoff=0.0);
+                  float bpp_cutoff=0.0,
+                  bool is_constraints=false);
 
     // DecoderResult parse(string& seq);
-    void parse(const std::string& seq);
+    void parse(const std::string& seq, const std::vector<int>* cons = NULL);
     void get_posterior(std::vector<float>& bp, std::vector<int>& offset) const;
     void get_posterior(std::vector<std::vector<std::pair<unsigned int,float>>>& bp) const;
 
@@ -98,12 +92,16 @@ private:
 
     int *nucs;
 
+    std::vector<int> allow_unpaired_position;
+    std::vector<int> allow_unpaired_range;
+    bool allow_paired(int i, int j, const std::vector<int>* cons, char nuci, char nucj);
+
     void prepare(unsigned len);
     void postprocess();
 
     void cal_PairProb(State& viterbi); 
 
-    void outside(std::vector<int> next_pair[]);
+    void outside(std::vector<int> next_pair[], const std::vector<int>* cons = NULL);
 
     float beam_prune(std::unordered_map<int, State>& beamstep);
 

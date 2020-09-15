@@ -918,7 +918,7 @@ main(int argc, char* argv[])
       {
         std::list<Fasta>::iterator fa = f.begin();
 
-        if (strcasecmp(model[0], "LinearPartition") == 0)
+        if (!model.empty() && strcasecmp(model[0], "LinearPartition") == 0)
         {
           std::vector<std::vector<std::pair<uint, float>>> sbp;
           ((LinearPartitionModel*)en)->calculate_posterior(fa->seq(), sbp);

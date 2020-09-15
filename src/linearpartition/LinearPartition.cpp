@@ -23,6 +23,7 @@
 #include "LinearPartition.h"
 #include "Utils/utility.h"
 #include "Utils/utility_v.h"
+#include "../bpseq.h"
 
 #define SPECIAL_HP
 
@@ -110,6 +111,21 @@ void BeamCKYParser::prepare(unsigned len) {
     bestMulti = new unordered_map<int, State>[seq_length];
     
     scores.reserve(seq_length);
+
+    if (use_constraints){
+        allow_unpaired_position.clear();
+        allow_unpaired_position.resize(seq_length);
+
+        allow_unpaired_range.clear();
+        allow_unpaired_range.resize(seq_length);
+    }
+}
+
+bool BeamCKYParser::allow_paired(int i, int j, const vector<int>* cons, char nuci, char nucj) {
+    assert(i<=j);
+    return ((*cons)[i] == BPSEQ::DOT || (*cons)[i] == BPSEQ::L || (*cons)[i] == BPSEQ::LR || (*cons)[i] == j) 
+        && ((*cons)[j] == BPSEQ::DOT || (*cons)[j] == BPSEQ::R || (*cons)[j] == BPSEQ::LR || (*cons)[j] == i)
+        && _allowed_pairs[nuci][nucj];
 }
 
 void BeamCKYParser::postprocess() {
@@ -127,7 +143,7 @@ void BeamCKYParser::postprocess() {
 
 
 // BeamCKYParser::DecoderResult BeamCKYParser::parse(string& seq) {
-void BeamCKYParser::parse(const string& seq) {
+void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NULL*/) {
       
     struct timeval parse_starttime, parse_endtime;
 
@@ -138,19 +154,50 @@ void BeamCKYParser::parse(const string& seq) {
     for (int i = 0; i < seq_length; ++i)
         nucs[i] = GET_ACGU_NUM(seq[i]);
 
-    vector<int> next_pair[NOTON];
-    {
-        for (int nuci = 0; nuci < NOTON; ++nuci) {
-            // next_pair
-            next_pair[nuci].resize(seq_length, -1);
-            int next = -1;
-            for (int j = seq_length-1; j >=0; --j) {
-                next_pair[nuci][j] = next;
-                if (_allowed_pairs[nuci][nucs[j]]) next = j;
+    if (use_constraints) {
+        for (int i=0; i<seq_length; i++){
+            int cons_idx = (*cons)[i];
+            allow_unpaired_position[i] = cons_idx == BPSEQ::DOT || cons_idx == BPSEQ::U;
+#if 0
+            if (cons_idx > -1){
+                if (!_allowed_pairs[nucs[i]][nucs[cons_idx]]){
+                    printf("Constrains on non-classical base pairs (non AU, CG, GU pairs)\n");
+                    exit(1);
+                }
             }
+#endif
+        }
+        int firstpair = seq_length;
+        for (int i=seq_length-1; i>-1; i--){
+            allow_unpaired_range[i] = firstpair;
+            if ((*cons)[i] != BPSEQ::DOT && (*cons)[i] != BPSEQ::U)
+                firstpair = i;
         }
     }
 
+    vector<int> next_pair[NOTON];
+    {
+        if (use_constraints){
+            for (int nuci = 0; nuci < NOTON; ++nuci) {
+                next_pair[nuci].resize(seq_length, -1);
+                int next = -1;
+                for (int j = seq_length-1; j >=0; --j) {
+                    next_pair[nuci][j] = next;
+                    if ((*cons)[j] != BPSEQ::U && _allowed_pairs[nuci][nucs[j]]) next = j;
+                }
+            }
+        } else {
+            for (int nuci = 0; nuci < NOTON; ++nuci) {
+                // next_pair
+                next_pair[nuci].resize(seq_length, -1);
+                int next = -1;
+                for (int j = seq_length-1; j >=0; --j) {
+                    next_pair[nuci][j] = next;
+                    if (_allowed_pairs[nuci][nucs[j]]) next = j;
+                }
+            }
+        }
+    }
 
 #ifdef SPECIAL_HP
 #ifdef lpv
@@ -189,6 +236,18 @@ void BeamCKYParser::parse(const string& seq) {
                 // for nucj put H(j, j_next) into H[j_next]
                 int jnext = next_pair[nucj][j];
                 if (no_sharp_turn) while (jnext - j < 4 && jnext != -1) jnext = next_pair[nucj][jnext];
+
+                if (use_constraints){
+                    if (!allow_unpaired_position[j]){
+                        jnext = (*cons)[j] > j ? (*cons)[j] : -1;
+                    }
+                    if (jnext != -1){
+                        int nucjnext = nucs[jnext];
+                        if (jnext > allow_unpaired_range[j] || !allow_paired(j, jnext, cons, nucj, nucjnext))
+                            jnext = -1;
+                    }
+                }
+
                 if (jnext != -1) {
                     int nucjnext = nucs[jnext];
                     int nucjnext_1 = (jnext - 1) > -1 ? nucs[jnext - 1] : -1;
@@ -221,6 +280,15 @@ void BeamCKYParser::parse(const string& seq) {
                     int nuci = nucs[i];
                     int jnext = next_pair[nuci][j];
 
+                    // 2. generate p(i, j)
+                    Fast_LogPlusEquals(beamstepP[i].alpha, state.alpha);
+
+                    if (jnext != -1 && use_constraints){
+                        int nucjnext = nucs[jnext];
+                        if (jnext > allow_unpaired_range[i] || !allow_paired(i, jnext, cons, nuci, nucjnext))
+                            continue;
+                    }
+
                     if (jnext != -1) {
                         int nuci1 = (i + 1) < seq_length ? nucs[i + 1] : -1;
                         int nucjnext = nucs[jnext];
@@ -246,9 +314,6 @@ void BeamCKYParser::parse(const string& seq) {
                             Fast_LogPlusEquals(bestH[jnext][i].alpha, newscore);
 #endif
                     }
-
-                    // 2. generate p(i, j)
-                    Fast_LogPlusEquals(beamstepP[i].alpha, state.alpha);
                 }
             }
         }
@@ -266,6 +331,23 @@ void BeamCKYParser::parse(const string& seq) {
                 int nuci1 = nucs[i+1];
                 int jnext = next_pair[nuci][j];
 
+                // 2. generate P (i, j)
+                {
+#ifdef lpv
+                    value_type score_multi = - v_score_multi(i, j, nuci, nuci1, nucs[j-1], nucj, seq_length);
+                    Fast_LogPlusEquals(beamstepP[i].alpha, (state.alpha + score_multi/kT));
+#else
+                    newscore = score_multi(i, j, nuci, nuci1, nucs[j-1], nucj, seq_length);
+                    Fast_LogPlusEquals(beamstepP[i].alpha, state.alpha + newscore);
+#endif
+                }
+
+                if (jnext != -1 && use_constraints){
+                    int nucjnext = nucs[jnext];
+                    if (jnext > allow_unpaired_range[j] || !allow_paired(i, jnext, cons, nuci, nucjnext))
+                        continue;
+                }
+
                 // 1. extend (i, j) to (i, jnext)
                 {
                     if (jnext != -1) {
@@ -278,16 +360,6 @@ void BeamCKYParser::parse(const string& seq) {
                     }
                 }
 
-                // 2. generate P (i, j)
-                {
-#ifdef lpv
-                    value_type score_multi = - v_score_multi(i, j, nuci, nuci1, nucs[j-1], nucj, seq_length);
-                    Fast_LogPlusEquals(beamstepP[i].alpha, (state.alpha + score_multi/kT));
-#else
-                    newscore = score_multi(i, j, nuci, nuci1, nucs[j-1], nucj, seq_length);
-                    Fast_LogPlusEquals(beamstepP[i].alpha, state.alpha + newscore);
-#endif
-                }
             }
         }
 
@@ -305,50 +377,6 @@ void BeamCKYParser::parse(const string& seq) {
                 State& state = item.second;
                 int nuci = nucs[i];
                 int nuci_1 = (i-1>-1) ? nucs[i-1] : -1;
-
-                // 1. generate new helix / single_branch
-                // new state is of shape p..i..j..q
-                if (i >0 && j<seq_length-1) {
-#ifndef lpv
-                    value_type precomputed = score_junction_B(j, i, nucj, nucj1, nuci_1, nuci);
-#endif
-                    for (int p = i - 1; p >= std::max(i - SINGLE_MAX_LEN, 0); --p) {
-                        int nucp = nucs[p];
-                        int nucp1 = nucs[p + 1]; 
-                        int q = next_pair[nucp][j];
-                        while (q != -1 && ((i - p) + (q - j) - 2 <= SINGLE_MAX_LEN)) {
-                            int nucq = nucs[q];
-                            int nucq_1 = nucs[q - 1];
-
-                            if (p == i - 1 && q == j + 1) {
-                                // helix
-#ifdef lpv
-                                    int score_single = -v_score_single(p,q,i,j, nucp, nucp1, nucq_1, nucq,
-                                                             nuci_1, nuci, nucj, nucj1);
-                                    Fast_LogPlusEquals(bestP[q][p].alpha, (state.alpha + score_single/kT));
-#else
-                                    newscore = score_helix(nucp, nucp1, nucq_1, nucq);
-                                    Fast_LogPlusEquals(bestP[q][p].alpha, state.alpha + newscore);
-
-#endif
-                            } else {
-                                // single branch
-#ifdef lpv
-                                    int score_single = - v_score_single(p,q,i,j, nucp, nucp1, nucq_1, nucq,
-                                                   nuci_1, nuci, nucj, nucj1);
-                                    Fast_LogPlusEquals(bestP[q][p].alpha, (state.alpha + score_single/kT));
-#else
-                                    newscore = score_junction_B(p, q, nucp, nucp1, nucq_1, nucq) +
-                                        precomputed +
-                                        score_single_without_junctionB(p, q, i, j,
-                                                                       nuci_1, nuci, nucj, nucj1);
-                                    Fast_LogPlusEquals(bestP[q][p].alpha, state.alpha + newscore);
-#endif
-                            }
-                            q = next_pair[nucp][q];
-                        }
-                    }
-                }
 
                 // 2. M = P
                 if(i > 0 && j < seq_length-1){
@@ -406,6 +434,69 @@ void BeamCKYParser::parse(const string& seq) {
 #endif
                     }
                 }
+
+                // 1. generate new helix / single_branch
+                // new state is of shape p..i..j..q
+                if (i >0 && j<seq_length-1) {
+#ifndef lpv
+                    value_type precomputed = score_junction_B(j, i, nucj, nucj1, nuci_1, nuci);
+#endif
+                    for (int p = i - 1; p >= std::max(i - SINGLE_MAX_LEN, 0); --p) {
+                        int nucp = nucs[p];
+                        int nucp1 = nucs[p + 1]; 
+                        int q = next_pair[nucp][j];
+
+                        if (use_constraints){
+                            if (p < i-1 && !allow_unpaired_position[p+1]) // p+1 can be unpaired
+                                break;
+                            if (!allow_unpaired_position[p]){ // p must be paired
+                                q = (*cons)[p];
+                                if (q < p) break; // p is )
+                            }
+                        }
+
+                        while (q != -1 && ((i - p) + (q - j) - 2 <= SINGLE_MAX_LEN)) {
+                            int nucq = nucs[q];
+
+                            if (use_constraints){
+                                if (q>j+1 && q > allow_unpaired_range[j]) // loop
+                                    break;
+                                if (!allow_paired(p, q, cons, nucp, nucq)) // p q is ) (
+                                    break;
+                            }
+
+                            int nucq_1 = nucs[q - 1];
+
+                            if (p == i - 1 && q == j + 1) {
+                                // helix
+#ifdef lpv
+                                    int score_single = -v_score_single(p,q,i,j, nucp, nucp1, nucq_1, nucq,
+                                                             nuci_1, nuci, nucj, nucj1);
+                                    Fast_LogPlusEquals(bestP[q][p].alpha, (state.alpha + score_single/kT));
+#else
+                                    newscore = score_helix(nucp, nucp1, nucq_1, nucq);
+                                    Fast_LogPlusEquals(bestP[q][p].alpha, state.alpha + newscore);
+
+#endif
+                            } else {
+                                // single branch
+#ifdef lpv
+                                    int score_single = - v_score_single(p,q,i,j, nucp, nucp1, nucq_1, nucq,
+                                                   nuci_1, nuci, nucj, nucj1);
+                                    Fast_LogPlusEquals(bestP[q][p].alpha, (state.alpha + score_single/kT));
+#else
+                                    newscore = score_junction_B(p, q, nucp, nucp1, nucq_1, nucq) +
+                                        precomputed +
+                                        score_single_without_junctionB(p, q, i, j,
+                                                                       nuci_1, nuci, nucj, nucj1);
+                                    Fast_LogPlusEquals(bestP[q][p].alpha, state.alpha + newscore);
+#endif
+                            }
+                            q = next_pair[nucp][q];
+                        }
+                    }
+                }
+
             }
         }
 
@@ -418,11 +509,29 @@ void BeamCKYParser::parse(const string& seq) {
                 int i = item.first;
                 State& state = item.second;
 
+                // 2. M = M2
+                Fast_LogPlusEquals(beamstepM[i].alpha, state.alpha);  
+
                 // 1. multi-loop
                 {
                     for (int p = i-1; p >= std::max(i - SINGLE_MAX_LEN, 0); --p) {
                         int nucp = nucs[p];
                         int q = next_pair[nucp][j];
+
+                        if (use_constraints){
+                            if (p < i - 1 && !allow_unpaired_position[p+1])
+                                break;
+                            if (!allow_unpaired_position[p]){
+                                q = (*cons)[p];
+                                if (q < p) break;
+                            }
+                            if (q > j+1 && q > allow_unpaired_range[j])
+                                continue;
+                            int nucq = nucs[q];
+                            if (!allow_paired(p, q, cons, nucp, nucq))
+                                continue;
+                        }
+
                         if (q != -1 && ((i - p - 1) <= SINGLE_MAX_LEN)) {
 #ifdef lpv
                         Fast_LogPlusEquals(bestMulti[q][p].alpha, state.alpha);      
@@ -436,8 +545,6 @@ void BeamCKYParser::parse(const string& seq) {
                     }
                 }
 
-                // 2. M = M2
-                Fast_LogPlusEquals(beamstepM[i].alpha, state.alpha);  
             }
         }
 
@@ -451,6 +558,8 @@ void BeamCKYParser::parse(const string& seq) {
                 int i = item.first;
                 State& state = item.second;
                 if (j < seq_length-1) {
+                    if (use_constraints && !allow_unpaired_position[j+1])
+                        continue;
 #ifdef lpv
                     Fast_LogPlusEquals(bestM[j+1][i].alpha, state.alpha); 
 #else
@@ -465,6 +574,8 @@ void BeamCKYParser::parse(const string& seq) {
         {
             // C = C + U
             if (j < seq_length-1) {
+                if (use_constraints && !allow_unpaired_position[j+1])
+                        continue;
 #ifdef lpv
                 Fast_LogPlusEquals(bestC[j+1].alpha, beamstepC.alpha); 
                     
@@ -495,7 +606,7 @@ void BeamCKYParser::parse(const string& seq) {
     fflush(stdout);
 
     if(!pf_only){
-        outside(next_pair);
+        outside(next_pair, cons);
         cal_PairProb(viterbi);
     }
 
@@ -514,7 +625,8 @@ BeamCKYParser::BeamCKYParser(int beam_size,
                              string bppfileindex,
 #endif
                              bool pfonly,
-                             float bppcutoff)
+                             float bppcutoff,
+                             bool is_constraints)
     : beam(beam_size), 
       no_sharp_turn(nosharpturn), 
       is_verbose(verbose),
@@ -523,7 +635,9 @@ BeamCKYParser::BeamCKYParser(int beam_size,
       bpp_file_index(bppfileindex),
 #endif
       pf_only(pfonly),
-      bpp_cutoff(bppcutoff) {
+      bpp_cutoff(bppcutoff),
+      use_constraints(is_constraints)
+    {
 #ifdef lpv
         initialize();
 #else
