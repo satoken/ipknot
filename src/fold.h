@@ -100,14 +100,10 @@ class LinearPartitionModel : public BPEngineSeq
 public:
   LinearPartitionModel() : BPEngineSeq() { }
   
-  void calculate_posterior(const std::string& seq, const std::string& paren,
-                           std::vector<float>& bp, std::vector<int>& offset) const
-  {
-    throw std::runtime_error("not supported yet");
-  }
-    
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
   void calculate_posterior(const std::string& seq, std::vector<std::vector<std::pair<uint, float>>>& bp) const;
+  void calculate_posterior(const std::string& seq, const std::string& paren, std::vector<float>& bp, std::vector<int>& offset) const;
+  void calculate_posterior(const std::string& seq, const std::string& paren, std::vector<std::vector<std::pair<uint, float>>>& bp) const;
 };
 
 class AlifoldModel : public BPEngineAln

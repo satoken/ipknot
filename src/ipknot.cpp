@@ -590,7 +590,7 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
     en.calculate_posterior(seq, str, bpl, offsetl);
     assert(bp.size()==bpl.size());
     // update the base-pairing probability matrix
-#if 0 // original hehaivior
+#if 0 // original behaivior
     for (uint k=0; k!=bp.size(); ++k) bp[k]+=bpl[k];
 #else
     for (uint j=1; j!=L; ++j)
@@ -604,6 +604,67 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
 #ifndef NDEBUG
   for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
 #endif
+}
+
+template < class SEQ>
+void
+update_bpm(uint pk_level, const SEQ& seq, LinearPartitionModel& en,
+           const std::vector<int>& bpseq, const std::vector<int>& plevel,
+           std::vector<std::vector<std::pair<uint, float>>>& sbp)
+{
+  // update the base-pairing probability matrix by the previous result
+  uint L=bpseq.size();
+  sbp.resize(L+1);
+  
+  for (uint l=0; l!=pk_level; ++l)
+  {
+    // make the constraint string
+    std::string str(L, '?');
+    for (uint i=0; i!=bpseq.size(); ++i)
+    {
+      switch (bpseq[i])
+      {
+        case BPSEQ::U: str[i] = '.'; break;
+        case BPSEQ::L: str[i] = '<'; break;
+        case BPSEQ::R: str[i] = '>'; break;
+        case BPSEQ::LR: str[i] = '|'; break;
+        case BPSEQ::DOT: str[i] = '?'; break;
+        default:
+          if (bpseq[i]>=0 && (int)i<bpseq[i])
+          {
+            if ((int)l==plevel[i])
+            {
+              str[i]='('; str[bpseq[i]]=')';
+            }
+            else
+            {
+              str[i]=str[bpseq[i]]='.';
+            }
+          }
+          break;
+      }
+    }
+
+    std::vector<std::vector<std::pair<uint, float>>> sbpl;
+    // re-folding the seq with the constraint
+    en.calculate_posterior(seq, str, sbpl);
+    assert(sbp.size()==sbpl.size());
+
+    // update the base-pairing probability matrix
+    for (uint i=1; i!=sbpl.size(); i++) 
+    {
+      for (const auto [jl, vl]: sbpl[i]) 
+      {
+        auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
+        auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
+                            [&](const auto& x) { return x.first == jl; });
+        if (re != std::end(sbp[i]))
+          re->second += v;
+        else
+          sbp[i].emplace_back(jl, v);
+      }
+    }
+  }
 }
 
 static
@@ -921,7 +982,15 @@ main(int argc, char* argv[])
         if (!model.empty() && strcasecmp(model[0], "LinearPartition") == 0)
         {
           std::vector<std::vector<std::pair<uint, float>>> sbp;
-          ((LinearPartitionModel*)en)->calculate_posterior(fa->seq(), sbp);
+          if (constraint.empty())
+            ((LinearPartitionModel*)en)->calculate_posterior(fa->seq(), sbp);
+          else
+          { // constraint folding
+            bpseq.resize(fa->size(), BPSEQ::DOT);
+            read_constraints(constraint.c_str(), bpseq);
+            int pl = IPknot::decompose_plevel(bpseq, plevel);
+            update_bpm(pl, fa->seq(), *((LinearPartitionModel*)en), bpseq, plevel, sbp);
+          }
           ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }
         else

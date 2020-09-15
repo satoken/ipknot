@@ -29,6 +29,13 @@ const double kT = 61.63207755;
   typedef double pf_type;
 #endif
 
+enum CONSTRAINT { 
+    U = -1,   // unpaired
+    DOT = -2, // . 
+    L = -3,   // <
+    R = -4,   // > 
+    LR = -5   // |
+};
 
 // A hash function used to hash a pair of any kind 
 struct hash_pair { 
@@ -74,6 +81,7 @@ public:
 
     // DecoderResult parse(string& seq);
     void parse(const std::string& seq, const std::vector<int>* cons = NULL);
+    void parse(const std::string& seq, const std::string& str);
     void get_posterior(std::vector<float>& bp, std::vector<int>& offset) const;
     void get_posterior(std::vector<std::vector<std::pair<unsigned int,float>>>& bp) const;
 
@@ -113,6 +121,7 @@ private:
 
     void output_to_file(std::string file_name, const char * type);
 
+    std::vector<int> parse_constraints(const std::string& str) const;
 };
 
 

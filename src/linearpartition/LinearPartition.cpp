@@ -23,7 +23,6 @@
 #include "LinearPartition.h"
 #include "Utils/utility.h"
 #include "Utils/utility_v.h"
-#include "../bpseq.h"
 
 #define SPECIAL_HP
 
@@ -123,8 +122,8 @@ void BeamCKYParser::prepare(unsigned len) {
 
 bool BeamCKYParser::allow_paired(int i, int j, const vector<int>* cons, char nuci, char nucj) {
     assert(i<=j);
-    return ((*cons)[i] == BPSEQ::DOT || (*cons)[i] == BPSEQ::L || (*cons)[i] == BPSEQ::LR || (*cons)[i] == j) 
-        && ((*cons)[j] == BPSEQ::DOT || (*cons)[j] == BPSEQ::R || (*cons)[j] == BPSEQ::LR || (*cons)[j] == i)
+    return ((*cons)[i] == CONSTRAINT::DOT || (*cons)[i] == CONSTRAINT::L || (*cons)[i] == CONSTRAINT::LR || (*cons)[i] == j) 
+        && ((*cons)[j] == CONSTRAINT::DOT || (*cons)[j] == CONSTRAINT::R || (*cons)[j] == CONSTRAINT::LR || (*cons)[j] == i)
         && _allowed_pairs[nuci][nucj];
 }
 
@@ -141,6 +140,10 @@ void BeamCKYParser::postprocess() {
   
 }
 
+void BeamCKYParser::parse(const string& seq, const std::string& str) {
+    auto cons = parse_constraints(str);
+    parse(seq, &cons);
+}
 
 // BeamCKYParser::DecoderResult BeamCKYParser::parse(string& seq) {
 void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NULL*/) {
@@ -157,7 +160,7 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
     if (use_constraints) {
         for (int i=0; i<seq_length; i++){
             int cons_idx = (*cons)[i];
-            allow_unpaired_position[i] = cons_idx == BPSEQ::DOT || cons_idx == BPSEQ::U;
+            allow_unpaired_position[i] = cons_idx == CONSTRAINT::DOT || cons_idx == CONSTRAINT::U;
 #if 0
             if (cons_idx > -1){
                 if (!_allowed_pairs[nucs[i]][nucs[cons_idx]]){
@@ -170,7 +173,7 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
         int firstpair = seq_length;
         for (int i=seq_length-1; i>-1; i--){
             allow_unpaired_range[i] = firstpair;
-            if ((*cons)[i] != BPSEQ::DOT && (*cons)[i] != BPSEQ::U)
+            if ((*cons)[i] != CONSTRAINT::DOT && (*cons)[i] != CONSTRAINT::U)
                 firstpair = i;
         }
     }
@@ -183,7 +186,7 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                 int next = -1;
                 for (int j = seq_length-1; j >=0; --j) {
                     next_pair[nuci][j] = next;
-                    if ((*cons)[j] != BPSEQ::U && _allowed_pairs[nuci][nucs[j]]) next = j;
+                    if ((*cons)[j] != CONSTRAINT::U && _allowed_pairs[nuci][nucs[j]]) next = j;
                 }
             }
         } else {
@@ -644,6 +647,36 @@ BeamCKYParser::BeamCKYParser(int beam_size,
         initialize();
         initialize_cachesingle();
 #endif
+}
+
+std::vector<int>
+BeamCKYParser::parse_constraints(const std::string& str) const
+{
+    std::vector<int> cons(str.size(), CONSTRAINT::DOT);
+    std::stack<unsigned int> st;
+    for (unsigned int i=0; i!=str.size(); ++i)
+    {
+        switch (str[i])
+        {
+            case '.': cons[i] = CONSTRAINT::U; break;
+            case '?': cons[i] = CONSTRAINT::DOT; break;
+            case '<': cons[i] = CONSTRAINT::L; break;
+            case '>': cons[i] = CONSTRAINT::R; break;
+            case '|': cons[i] = CONSTRAINT::LR; break;
+            case '(':
+                st.push(i); break;
+            case ')':
+            {
+                int j=st.top();
+                st.pop();
+                cons[i]=j;
+                cons[j]=i;
+            }
+            break;
+            default: break;
+        }
+    }
+    return cons;
 }
 
 #include "bpp.cpp"
