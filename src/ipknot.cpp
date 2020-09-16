@@ -32,6 +32,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <cassert>
+#include <typeinfo>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -40,6 +41,7 @@
 #include <stdexcept>
 #include <iterator>
 #include <algorithm>
+#include <memory>
 
 #include "ip.h"
 #include "fa.h"
@@ -331,6 +333,32 @@ public:
     std::cerr << "max pMCC=" << max_mcc << std::endl << std::endl;
   }
 
+  void solve(uint L, const std::vector<std::vector<std::pair<uint, float>>>& bp,
+             EnumParam<float>& ep, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+  {
+    std::vector<float> th(ep.size());
+    std::vector<int> bpseq_temp;
+    std::vector<int> plevel_temp;
+    float max_mcc=-100.0;
+    std::cerr << "Search for the best thresholds by pseudo expected MCC:" << std::endl;
+    do {
+      ep.get(th);
+      std::cerr << "th=";
+      std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
+      solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
+      float sen, ppv, mcc;
+      compute_expected_accuracy(bpseq_temp, bp, sen, ppv, mcc);
+      std::cerr << " pMCC=" << mcc << std::endl;
+      if (mcc>max_mcc)
+      {
+        max_mcc = mcc;
+        bpseq = bpseq_temp;
+        plevel = plevel_temp;
+      }
+    } while (!ep.succ());
+    std::cerr << "max pMCC=" << max_mcc << std::endl << std::endl;
+  }
+
 public:
   template < class T >
   class EnumParam
@@ -490,6 +518,47 @@ private:
       mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
   }
 
+  static void
+  compute_expected_accuracy(const std::vector<int>& bpseq,
+                            const std::vector<std::vector<std::pair<uint, float>>>& bp,
+                            float& sen, float& ppv, float& mcc)
+  {
+    int L  = bpseq.size();
+    int L2 = L*(L-1)/2;
+    int N = 0;
+
+    float sump = 0.0;
+    float etp  = 0.0;
+
+    for (uint i=1; i!=bp.size(); ++i) 
+      for (const auto [j, p]: bp[i])
+        if (i<j) sump += p;
+
+    for (uint i=0; i!=bpseq.size(); ++i)
+    {
+      if (bpseq[i]!=-1 && bpseq[i]>(int)i)
+      {
+        const auto j=bpseq[i];
+        auto res = std::find_if(std::cbegin(bp[i+1]), std::cend(bp[i+1]),
+                          [&](const auto& x) { return x.first==j+1; });
+        if (res!=std::cend(bp[i+1])) {
+          etp += res->second;
+          N++;
+        }
+      }
+    }
+
+    float etn = L2 - N - sump + etp;
+    float efp = N - etp;
+    float efn = sump - etp;
+
+    sen = ppv = mcc = 0;
+    if (etp+efn!=0) sen = etp / (etp + efn);
+    if (etp+efp!=0) ppv = etp / (etp + efp);
+    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
+      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
+  }
+
   static uint length(const std::string& seq) { return seq.size(); }
   static uint length(const std::list<std::string>& aln) { return aln.front().size(); }
 
@@ -606,9 +675,9 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
 #endif
 }
 
-template < class SEQ>
+template < class SEQ, class EN>
 void
-update_bpm(uint pk_level, const SEQ& seq, LinearPartitionModel& en,
+update_bpm(uint pk_level, const SEQ& seq, EN& en,
            const std::vector<int>& bpseq, const std::vector<int>& plevel,
            std::vector<std::vector<std::pair<uint, float>>>& sbp)
 {
@@ -645,9 +714,8 @@ update_bpm(uint pk_level, const SEQ& seq, LinearPartitionModel& en,
       }
     }
 
-    std::vector<std::vector<std::pair<uint, float>>> sbpl;
     // re-folding the seq with the constraint
-    en.calculate_posterior(seq, str, sbpl);
+    auto sbpl = en.calculate_posterior(seq, str);
     assert(sbp.size()==sbpl.size());
 
     // update the base-pairing probability matrix
@@ -762,6 +830,77 @@ parse_csv_line(const char* l)
   while (std::getline(ss, s, ','))
     r.push_back(atof(s.c_str()));
   return r;
+}
+
+std::unique_ptr<BPEngineSeq> 
+build_engine_seq(const char* model, const char* param)
+{
+  std::unique_ptr<BPEngineSeq> en;
+  if (model==NULL || strcasecmp(model, "McCaskill")==0)
+    en = std::make_unique<RNAfoldModel>(param);
+  else if (strcasecmp(model, "CONTRAfold")==0)
+    en = std::make_unique<CONTRAfoldModel>();
+#if 0
+  else if (strcasecmp(model, "nupack")==0)
+    if (param)
+      en = std::make_unique<NupackModel>(param);
+    else
+      en = std::make_unique<NupackModel>(2);
+  else if (strcasecmp(model, "nupack03")==0)
+    en = std::make_unique<NupackModel>(0);
+  else if (strcasecmp(model, "nupack09")==0)
+    en = std::make_unique<NupackModel>(1);
+#else
+  else if (strcasecmp(model, "nupack")==0)
+    en = std::make_unique<NupackModel>(param);
+#endif
+  else if (strcasecmp(model, "LinearPartition")==0)
+    en = std::make_unique<LinearPartitionModel>();
+  return en;
+}
+
+std::unique_ptr<BPEngineAln>
+build_engine_aln(const std::vector<const char*>& model, const char* param)
+{
+  std::unique_ptr<BPEngineAln> mix_en;
+  std::vector<std::unique_ptr<BPEngineAln>> en_a;
+  if (model.empty())
+  {
+    auto e = std::make_unique<RNAfoldModel>(param);
+    en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+    en_a.push_back(std::make_unique<AlifoldModel>(param));
+    mix_en = std::make_unique<MixtureModel>(std::move(en_a));
+  }
+  else
+  {
+    for (uint i=0; i!=model.size(); ++i)
+    {
+      if (strcasecmp(model[i], "McCaskill")==0)
+      {
+        auto e = std::make_unique<RNAfoldModel>(param);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(model[i], "CONTRAfold")==0)
+      {
+        auto e = std::make_unique<CONTRAfoldModel>();
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(model[i], "Alifold")==0)
+      {
+        en_a.push_back(std::make_unique<AlifoldModel>(param));
+      }
+      else if (strcasecmp(model[i], "LinearPartition")==0)
+      {
+        auto e = std::make_unique<LinearPartitionModel>();
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else
+        return std::unique_ptr<BPEngineAln>();
+    }
+    if (en_a.size()>1)
+      mix_en = std::make_unique<MixtureModel>(std::move(en_a));
+  }
+  return std::move(mix_en ? mix_en : en_a[0]);
 }
 
 void
@@ -920,8 +1059,6 @@ main(int argc, char* argv[])
   try
   {
     IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th);
-    std::vector<float> bp;
-    std::vector<int> offset;
     std::vector<int> bpseq;
     std::vector<int> plevel;
 
@@ -934,6 +1071,8 @@ main(int argc, char* argv[])
 
     if (aux)
     {
+      std::vector<float> bp;
+      std::vector<int> offset;
       AuxModel aux;
       std::string seq;
       aux.calculate_posterior(argv[0], seq, bp, offset);
@@ -948,28 +1087,8 @@ main(int argc, char* argv[])
     }
     else if (Fasta::load(f, argv[0])>0)
     {
-      BPEngineSeq* en=NULL;
-      if (model.empty() || strcasecmp(model[0], "McCaskill")==0)
-        en = new RNAfoldModel(param);
-      else if (strcasecmp(model[0], "CONTRAfold")==0)
-        en = new CONTRAfoldModel();
-#if 0
-      else if (strcasecmp(model[0], "nupack")==0)
-        if (param)
-          en = new NupackModel(param);
-        else
-          en = new NupackModel(2);
-      else if (strcasecmp(model[0], "nupack03")==0)
-        en = new NupackModel(0);
-      else if (strcasecmp(model[0], "nupack09")==0)
-        en = new NupackModel(1);
-#else
-      else if (strcasecmp(model[0], "nupack")==0)
-        en = new NupackModel(param);
-#endif
-      else if (strcasecmp(model[0], "LinearPartition")==0)
-        en = new LinearPartitionModel();
-      else
+      auto en = build_engine_seq(model.empty() ? NULL : model[0], param);
+      if (!en) 
       {
         usage(progname);
         return 1;
@@ -979,45 +1098,29 @@ main(int argc, char* argv[])
       {
         std::list<Fasta>::iterator fa = f.begin();
 
-        if (!model.empty() && strcasecmp(model[0], "LinearPartition") == 0)
-        {
-          std::vector<std::vector<std::pair<uint, float>>> sbp;
-          if (constraint.empty())
-            ((LinearPartitionModel*)en)->calculate_posterior(fa->seq(), sbp);
-          else
-          { // constraint folding
-            bpseq.resize(fa->size(), BPSEQ::DOT);
-            read_constraints(constraint.c_str(), bpseq);
-            int pl = IPknot::decompose_plevel(bpseq, plevel);
-            update_bpm(pl, fa->seq(), *((LinearPartitionModel*)en), bpseq, plevel, sbp);
-          }
-          ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
-        }
+        std::vector<std::vector<std::pair<uint, float>>> sbp;
+        if (constraint.empty())
+          sbp = en->calculate_posterior(fa->seq());
         else
+        { // constraint folding
+          bpseq.resize(fa->size(), BPSEQ::DOT);
+          read_constraints(constraint.c_str(), bpseq);
+          int pl = IPknot::decompose_plevel(bpseq, plevel);
+          update_bpm(pl, fa->seq(), *en, bpseq, plevel, sbp);
+        }
+
+        if (max_pmcc)
+          ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+        else
+          ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
+
+        for (int i=0; i!=n_refinement; ++i) // iterative refinement
         {
-          if (constraint.empty()) // default behaivior
-            en->calculate_posterior(fa->seq(), bp, offset);
-          else
-          { // constraint folding
-            bpseq.resize(fa->size(), BPSEQ::DOT);
-            read_constraints(constraint.c_str(), bpseq);
-            int pl = IPknot::decompose_plevel(bpseq, plevel);
-            update_bpm(pl, fa->seq(), *en, bpseq, plevel, bp, offset);
-          }
-
+          update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, sbp);
           if (max_pmcc)
-            ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+            ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty());
           else
-            ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
-
-          for (int i=0; i!=n_refinement; ++i) // iterative refinement
-          {
-            update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
-            if (max_pmcc)
-              ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
-            else
-              ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
-          }
+            ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }
 
         if (os_bpseq)
@@ -1026,79 +1129,45 @@ main(int argc, char* argv[])
           output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel, output_energy);
         f.erase(fa);
       }
-
-      delete en;
     }
     else if (Aln::load(a, argv[0])>0)
     {
-      BPEngineAln* mix_en=NULL;
-      std::vector<BPEngineSeq*> en_s;
-      std::vector<BPEngineAln*> en_a;
-      if (model.empty())
+      auto en = build_engine_aln(model, param);
+      if (!en) 
       {
-        BPEngineSeq* e = new RNAfoldModel(param);
-        en_s.push_back(e);
-        en_a.push_back(new AveragedModel(e));
-        en_a.push_back(new AlifoldModel(param));
-        mix_en = new MixtureModel(en_a);
+        usage(progname);
+        return 1;
       }
-      else
-      {
-        for (uint i=0; i!=model.size(); ++i)
-        {
-          if (strcasecmp(model[i], "McCaskill")==0)
-          {
-            BPEngineSeq* e = new RNAfoldModel(param);
-            en_s.push_back(e);
-            en_a.push_back(new AveragedModel(e));
-          }
-          else if (strcasecmp(model[0], "CONTRAfold")==0)
-          {
-            BPEngineSeq* e = new CONTRAfoldModel();
-            en_s.push_back(e);
-            en_a.push_back(new AveragedModel(e));
-          }
-          else if (strcasecmp(model[0], "Alifold")==0)
-          {
-            en_a.push_back(new AlifoldModel(param));
-          }
-          else
-          {
-            usage(progname);
-            return 1;
-          }
-        }
-        if (en_a.size()>1)
-          mix_en = new MixtureModel(en_a);
-      }
-      BPEngineAln* en= mix_en ? mix_en : en_a[0];
 
       while (!a.empty())
       {
         std::list<Aln>::iterator aln = a.begin();
 
+        std::vector<std::vector<std::pair<uint, float>>> sbp;
         if (constraint.empty()) // default behaiviro
-          en->calculate_posterior(aln->seq(), bp, offset);
+          sbp = en->calculate_posterior(aln->seq());
         else
         { // constraint folding
           bpseq.resize(aln->size(), BPSEQ::DOT);
           read_constraints(constraint.c_str(), bpseq);
           int pl = IPknot::decompose_plevel(bpseq, plevel);
-          update_bpm(pl, aln->seq(), *en, bpseq, plevel, bp, offset);
+          update_bpm(pl, aln->seq(), *en, bpseq, plevel, sbp);
         }
         
         if (max_pmcc)
-          ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+          ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty());
         else
-          ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+          ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
+
         for (int i=0; i!=n_refinement; ++i)
         {
-          update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, bp, offset);
+          update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, sbp);
           if (max_pmcc)
-            ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+            ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty());
           else
-            ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+            ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }
+
         if (os_bpseq)
           output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
         if (os_mfa)
@@ -1107,10 +1176,6 @@ main(int argc, char* argv[])
           output_fa(std::cout, aln->name().front(), aln->consensus(), bpseq, plevel, output_energy);
         a.erase(aln);
       }
-
-      if (mix_en) delete mix_en;
-      for (uint i=0; i!=en_s.size(); ++i) delete en_s[i];
-      for (uint i=0; i!=en_a.size(); ++i) delete en_a[i];
     }
     else
     {
