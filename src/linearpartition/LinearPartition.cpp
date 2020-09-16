@@ -26,18 +26,10 @@
 
 #define SPECIAL_HP
 
-#define pf
-
 using namespace std;
 using namespace LinearPartition;
 
-#ifdef lpv
-  typedef int value_type;
-  const auto VALUE_MIN = std::numeric_limits<double>::lowest();
-#else
-  typedef float value_type;
-  const auto VALUE_MIN = std::numeric_limits<double>::lowest();
-#endif
+const auto VALUE_MIN = std::numeric_limits<double>::lowest();
 
 State::State(): alpha(VALUE_MIN), beta(VALUE_MIN) {};
 
@@ -140,13 +132,16 @@ void BeamCKYParser::postprocess() {
   
 }
 
+template <bool LPV, class T>
 void BeamCKYParser::parse(const string& seq, const std::string& str) {
     auto cons = parse_constraints(str);
-    parse(seq, &cons);
+    parse<LPV,T>(seq, &cons);
 }
 
 // BeamCKYParser::DecoderResult BeamCKYParser::parse(string& seq) {
+template <bool LPV, class T>
 void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NULL*/) {
+    typedef T value_type;
       
     struct timeval parse_starttime, parse_endtime;
 
@@ -203,21 +198,21 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
     }
 
 #ifdef SPECIAL_HP
-#ifdef lpv
-    v_init_tetra_hex_tri(seq, seq_length, if_tetraloops, if_hexaloops, if_triloops);
-#else // only for eval
-    if (is_verbose)
+    if (LPV) {
         v_init_tetra_hex_tri(seq, seq_length, if_tetraloops, if_hexaloops, if_triloops);
-#endif
+    } else {
+        if (is_verbose)
+            v_init_tetra_hex_tri(seq, seq_length, if_tetraloops, if_hexaloops, if_triloops);
+    }
 #endif
 
-#ifdef lpv
+    if (LPV) {
         if(seq_length > 0) bestC[0].alpha = 0.0;
         if(seq_length > 1) bestC[1].alpha = 0.0;
-#else
+    } else {
         if(seq_length > 0) Fast_LogPlusEquals(bestC[0].alpha, score_external_unpaired(0, 0));
         if(seq_length > 1) Fast_LogPlusEquals(bestC[1].alpha, score_external_unpaired(0, 1));
-#endif
+    }
 
     value_type newscore;
     for(int j = 0; j < seq_length; ++j) {
@@ -254,7 +249,7 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                 if (jnext != -1) {
                     int nucjnext = nucs[jnext];
                     int nucjnext_1 = (jnext - 1) > -1 ? nucs[jnext - 1] : -1;
-#ifdef lpv
+                    if (LPV) {
                         int tetra_hex_tri = -1;
 #ifdef SPECIAL_HP
                         if (jnext-j-1 == 4) // 6:tetra
@@ -266,10 +261,10 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
 #endif
                         newscore = - v_score_hairpin(j, jnext, nucj, nucj1, nucjnext_1, nucjnext, tetra_hex_tri);
                         Fast_LogPlusEquals(bestH[jnext][j].alpha, newscore/kT);
-#else
+                    } else {
                         newscore = score_hairpin(j, jnext, nucj, nucj1, nucjnext_1, nucjnext);
                         Fast_LogPlusEquals(bestH[jnext][j].alpha, newscore);
-#endif
+                    }
                 }
             }
 
@@ -300,7 +295,7 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                         // 1. extend h(i, j) to h(i, jnext)
                         // value_type newscore;
 
-#ifdef lpv
+                        if (LPV) {
                             int tetra_hex_tri = -1;
 #ifdef SPECIAL_HP
                             if (jnext-i-1 == 4) // 6:tetra
@@ -312,10 +307,10 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
 #endif
                             newscore = - v_score_hairpin(i, jnext, nuci, nuci1, nucjnext_1, nucjnext, tetra_hex_tri);
                             Fast_LogPlusEquals(bestH[jnext][i].alpha, (newscore/kT));
-#else
+                        } else {
                             newscore = score_hairpin(i, jnext, nuci, nuci1, nucjnext_1, nucjnext);
                             Fast_LogPlusEquals(bestH[jnext][i].alpha, newscore);
-#endif
+                        }
                     }
                 }
             }
@@ -335,14 +330,12 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                 int jnext = next_pair[nuci][j];
 
                 // 2. generate P (i, j)
-                {
-#ifdef lpv
+                if (LPV) {
                     value_type score_multi = - v_score_multi(i, j, nuci, nuci1, nucs[j-1], nucj, seq_length);
                     Fast_LogPlusEquals(beamstepP[i].alpha, (state.alpha + score_multi/kT));
-#else
+                } else {
                     newscore = score_multi(i, j, nuci, nuci1, nucs[j-1], nucj, seq_length);
                     Fast_LogPlusEquals(beamstepP[i].alpha, state.alpha + newscore);
-#endif
                 }
 
                 if (jnext != -1 && use_constraints){
@@ -354,12 +347,12 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                 // 1. extend (i, j) to (i, jnext)
                 {
                     if (jnext != -1) {
-#ifdef lpv
+                        if (LPV) {
                             Fast_LogPlusEquals(bestMulti[jnext][i].alpha, (state.alpha));
-#else
+                        } else {
                             newscore = score_multi_unpaired(j, jnext - 1);
                             Fast_LogPlusEquals(bestMulti[jnext][i].alpha, state.alpha + newscore);
-#endif
+                        }
                     }
                 }
 
@@ -383,25 +376,26 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
 
                 // 2. M = P
                 if(i > 0 && j < seq_length-1){
-#ifdef lpv
+                    if (LPV) {
                         int score_M1 = - v_score_M1(i, j, j, nuci_1, nuci, nucj, nucj1, seq_length);
                         Fast_LogPlusEquals(beamstepM[i].alpha, (state.alpha + score_M1/kT));
-#else
+                    } else {
                         newscore = score_M1(i, j, j, nuci_1, nuci, nucj, nucj1, seq_length);
                         Fast_LogPlusEquals(beamstepM[i].alpha, state.alpha + newscore);
-#endif
+                    }
                 }
 
                 // 3. M2 = M + P
                 int k = i - 1;
                 if ( k > 0 && !bestM[k].empty()) {
-#ifdef lpv
-                    int M1_score = - v_score_M1(i, j, j, nuci_1, nuci, nucj, nucj1, seq_length);
-                    float m1_alpha = state.alpha + M1_score/kT;
-#else
-                    value_type M1_score = score_M1(i, j, j, nuci_1, nuci, nucj, nucj1, seq_length);
-                    float m1_alpha = state.alpha + M1_score;
-#endif
+                    float m1_alpha;
+                    if (LPV) {
+                        int M1_score = - v_score_M1(i, j, j, nuci_1, nuci, nucj, nucj1, seq_length);
+                        m1_alpha = state.alpha + M1_score/kT;
+                    } else {
+                        value_type M1_score = score_M1(i, j, j, nuci_1, nuci, nucj, nucj1, seq_length);
+                        m1_alpha = state.alpha + M1_score;
+                    }
                     for (auto &m : bestM[k]) {
                         int newi = m.first;
                         State& m_state = m.second;
@@ -416,34 +410,35 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                       State& prefix_C = bestC[k];
                         int nuck = nuci_1;
                         int nuck1 = nuci;
-#ifdef lpv
-                        int score_external_paired = - v_score_external_paired(k+1, j, nuck, nuck1,
-                                                             nucj, nucj1, seq_length);
-                        Fast_LogPlusEquals(beamstepC.alpha, prefix_C.alpha + state.alpha + score_external_paired/kT);      
-#else
-                        newscore = score_external_paired(k+1, j, nuck, nuck1,
-                                                             nucj, nucj1, seq_length);
-                        Fast_LogPlusEquals(beamstepC.alpha, prefix_C.alpha + state.alpha + newscore);
-#endif
+                        if (LPV) {
+                            int score_external_paired = - v_score_external_paired(k+1, j, nuck, nuck1,
+                                                                nucj, nucj1, seq_length);
+                            Fast_LogPlusEquals(beamstepC.alpha, prefix_C.alpha + state.alpha + score_external_paired/kT);      
+                        } else {
+                            newscore = score_external_paired(k+1, j, nuck, nuck1,
+                                                                nucj, nucj1, seq_length);
+                            Fast_LogPlusEquals(beamstepC.alpha, prefix_C.alpha + state.alpha + newscore);
+                        }
                     } else {
-#ifdef lpv
-                        int score_external_paired = - v_score_external_paired(0, j, -1, nucs[0],
-                                                                 nucj, nucj1, seq_length);
-                        Fast_LogPlusEquals(beamstepC.alpha, state.alpha + score_external_paired/kT);       
-#else
-                        newscore = score_external_paired(0, j, -1, nucs[0],
-                                                             nucj, nucj1, seq_length);
-                        Fast_LogPlusEquals(beamstepC.alpha, state.alpha + newscore);
-#endif
+                        if (LPV) {
+                            int score_external_paired = - v_score_external_paired(0, j, -1, nucs[0],
+                                                                    nucj, nucj1, seq_length);
+                            Fast_LogPlusEquals(beamstepC.alpha, state.alpha + score_external_paired/kT);       
+                        } else {
+                            newscore = score_external_paired(0, j, -1, nucs[0],
+                                                                nucj, nucj1, seq_length);
+                            Fast_LogPlusEquals(beamstepC.alpha, state.alpha + newscore);
+                        }
                     }
                 }
 
                 // 1. generate new helix / single_branch
                 // new state is of shape p..i..j..q
                 if (i >0 && j<seq_length-1) {
-#ifndef lpv
-                    value_type precomputed = score_junction_B(j, i, nucj, nucj1, nuci_1, nuci);
-#endif
+                    value_type precomputed;
+                    if (!LPV)
+                        precomputed = score_junction_B(j, i, nucj, nucj1, nuci_1, nuci);
+
                     for (int p = i - 1; p >= std::max(i - SINGLE_MAX_LEN, 0); --p) {
                         int nucp = nucs[p];
                         int nucp1 = nucs[p + 1]; 
@@ -472,28 +467,27 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
 
                             if (p == i - 1 && q == j + 1) {
                                 // helix
-#ifdef lpv
+                                if (LPV) {
                                     int score_single = -v_score_single(p,q,i,j, nucp, nucp1, nucq_1, nucq,
                                                              nuci_1, nuci, nucj, nucj1);
                                     Fast_LogPlusEquals(bestP[q][p].alpha, (state.alpha + score_single/kT));
-#else
+                                } else {
                                     newscore = score_helix(nucp, nucp1, nucq_1, nucq);
                                     Fast_LogPlusEquals(bestP[q][p].alpha, state.alpha + newscore);
-
-#endif
+                                }
                             } else {
                                 // single branch
-#ifdef lpv
+                                if (LPV) {
                                     int score_single = - v_score_single(p,q,i,j, nucp, nucp1, nucq_1, nucq,
                                                    nuci_1, nuci, nucj, nucj1);
                                     Fast_LogPlusEquals(bestP[q][p].alpha, (state.alpha + score_single/kT));
-#else
+                                } else {
                                     newscore = score_junction_B(p, q, nucp, nucp1, nucq_1, nucq) +
                                         precomputed +
                                         score_single_without_junctionB(p, q, i, j,
                                                                        nuci_1, nuci, nucj, nucj1);
                                     Fast_LogPlusEquals(bestP[q][p].alpha, state.alpha + newscore);
-#endif
+                                }
                             }
                             q = next_pair[nucp][q];
                         }
@@ -536,14 +530,13 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                         }
 
                         if (q != -1 && ((i - p - 1) <= SINGLE_MAX_LEN)) {
-#ifdef lpv
-                        Fast_LogPlusEquals(bestMulti[q][p].alpha, state.alpha);      
-
-#else
-                        newscore = score_multi_unpaired(p+1, i-1) +
-                                    score_multi_unpaired(j+1, q-1);
-                        Fast_LogPlusEquals(bestMulti[q][p].alpha, state.alpha + newscore);      
-#endif
+                            if (LPV) {
+                                Fast_LogPlusEquals(bestMulti[q][p].alpha, state.alpha);      
+                            } else {
+                                newscore = score_multi_unpaired(p+1, i-1) +
+                                            score_multi_unpaired(j+1, q-1);
+                                Fast_LogPlusEquals(bestMulti[q][p].alpha, state.alpha + newscore);      
+                            }
                         }
                     }
                 }
@@ -563,12 +556,12 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                 if (j < seq_length-1) {
                     if (use_constraints && !allow_unpaired_position[j+1])
                         continue;
-#ifdef lpv
-                    Fast_LogPlusEquals(bestM[j+1][i].alpha, state.alpha); 
-#else
-                    newscore = score_multi_unpaired(j + 1, j + 1);
-                    Fast_LogPlusEquals(bestM[j+1][i].alpha, state.alpha + newscore); 
-#endif
+                    if (LPV) {
+                        Fast_LogPlusEquals(bestM[j+1][i].alpha, state.alpha); 
+                    } else {
+                        newscore = score_multi_unpaired(j + 1, j + 1);
+                        Fast_LogPlusEquals(bestM[j+1][i].alpha, state.alpha + newscore); 
+                    }
                 }
             }
         }
@@ -579,13 +572,12 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
             if (j < seq_length-1) {
                 if (use_constraints && !allow_unpaired_position[j+1])
                         continue;
-#ifdef lpv
-                Fast_LogPlusEquals(bestC[j+1].alpha, beamstepC.alpha); 
-                    
-#else
-                newscore = score_external_unpaired(j+1, j+1);
-                Fast_LogPlusEquals(bestC[j+1].alpha, beamstepC.alpha + newscore); 
-#endif
+                if (LPV) {
+                    Fast_LogPlusEquals(bestC[j+1].alpha, beamstepC.alpha); 
+                } else {
+                    newscore = score_external_unpaired(j+1, j+1);
+                    Fast_LogPlusEquals(bestC[j+1].alpha, beamstepC.alpha + newscore); 
+                }
             }
         }
 
@@ -598,18 +590,18 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
 
     // unsigned long nos_tot = nos_H + nos_P + nos_M2 + nos_Multi + nos_M + nos_C;
 
-#ifdef lpv
-    //printf("Free Energy of Ensemble: %.2f kcal/mol\n", -kT * viterbi.alpha / 100.0);
-#else
-    //printf("Log Partition Coefficient: %.5f\n", viterbi.alpha);
-#endif
+    if (LPV) {
+        //printf("Free Energy of Ensemble: %.2f kcal/mol\n", -kT * viterbi.alpha / 100.0);
+    } else {
+        //printf("Log Partition Coefficient: %.5f\n", viterbi.alpha);
+    }
 
     if(is_verbose) printf("Partition Function Calculation Time: %.2f seconds.\n", parse_elapsed_time);
 
     fflush(stdout);
 
     if(!pf_only){
-        outside(next_pair, cons);
+        outside<LPV,T>(next_pair, cons);
         cal_PairProb(viterbi);
     }
 
@@ -620,23 +612,20 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
     return;
 }
 
+template void BeamCKYParser::parse<false,float>(const std::string& seq, const std::vector<int>* cons);
+template void BeamCKYParser::parse<false,float>(const std::string& seq, const std::string& str);
+template void BeamCKYParser::parse<true,int>(const std::string& seq, const std::vector<int>* cons);
+template void BeamCKYParser::parse<true,int>(const std::string& seq, const std::string& str);
+
 BeamCKYParser::BeamCKYParser(int beam_size,
                              bool nosharpturn,
                              bool verbose,
-#if 0
-                             string bppfile,
-                             string bppfileindex,
-#endif
                              bool pfonly,
                              float bppcutoff,
                              bool is_constraints)
     : beam(beam_size), 
       no_sharp_turn(nosharpturn), 
       is_verbose(verbose),
-#if 0
-      bpp_file(bppfile),
-      bpp_file_index(bppfileindex),
-#endif
       pf_only(pfonly),
       bpp_cutoff(bppcutoff),
       use_constraints(is_constraints)

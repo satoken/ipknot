@@ -855,7 +855,9 @@ build_engine_seq(const char* model, const char* param)
     en = std::make_unique<NupackModel>(param);
 #endif
   else if (strcasecmp(model, "LinearPartition")==0)
-    en = std::make_unique<LinearPartitionModel>();
+    en = std::make_unique<LinearPartitionModel>(false);
+  else if (strcasecmp(model, "LinearPartitionV")==0)
+    en = std::make_unique<LinearPartitionModel>(true);
   return en;
 }
 
@@ -891,7 +893,12 @@ build_engine_aln(const std::vector<const char*>& model, const char* param)
       }
       else if (strcasecmp(model[i], "LinearPartition")==0)
       {
-        auto e = std::make_unique<LinearPartitionModel>();
+        auto e = std::make_unique<LinearPartitionModel>(false);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(model[i], "LinearPartitionV")==0)
+      {
+        auto e = std::make_unique<LinearPartitionModel>(true);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
       else

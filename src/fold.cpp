@@ -378,7 +378,10 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
   replace(seq2.begin(), seq2.end(), 'T', 'U');
 
   LinearPartition::BeamCKYParser parser;
-  parser.parse(seq2);
+  if (use_vienna_)
+    parser.parse<true,int>(seq2);
+  else
+    parser.parse<false,float>(seq2);
   parser.get_posterior(bp, offset);
 }
 
@@ -394,7 +397,10 @@ calculate_posterior(const std::string& seq, float th) const
   replace(seq2.begin(), seq2.end(), 'T', 'U');
 
   LinearPartition::BeamCKYParser parser(100, true, false, false, th, false);
-  parser.parse(seq2);
+  if (use_vienna_)
+    parser.parse<true,int>(seq2);
+  else
+    parser.parse<false,float>(seq2);
   std::vector<std::vector<std::pair<uint, float>>> bp;
   parser.get_posterior(bp);
   return bp;
@@ -411,7 +417,10 @@ calculate_posterior(const std::string& seq, const std::string& paren, std::vecto
   std::replace(seq2.begin(), seq2.end(), 'T', 'U');
 
   LinearPartition::BeamCKYParser parser(100, true, false, false, 0.0, true);
-  parser.parse(seq2, paren);
+  if (use_vienna_)
+    parser.parse<true,int>(seq2, paren);
+  else
+    parser.parse<false,float>(seq2, paren);
   parser.get_posterior(bp, offset);
 }
 
@@ -427,7 +436,10 @@ calculate_posterior(const std::string& seq, const std::string& paren, float th) 
   std::replace(seq2.begin(), seq2.end(), 'T', 'U');
 
   LinearPartition::BeamCKYParser parser(100, true, false, false, th, true);
-  parser.parse(seq2, paren);
+  if (use_vienna_)
+    parser.parse<true,int>(seq2, paren);
+  else
+    parser.parse<false,float>(seq2, paren);
   std::vector<std::vector<std::pair<uint, float>>> bp;
   parser.get_posterior(bp);
   return bp;

@@ -80,8 +80,8 @@ public:
                   bool is_constraints=false);
 
     // DecoderResult parse(string& seq);
-    void parse(const std::string& seq, const std::vector<int>* cons = NULL);
-    void parse(const std::string& seq, const std::string& str);
+    template<bool LPV, class T> void parse(const std::string& seq, const std::vector<int>* cons = NULL);
+    template<bool LPV, class T> void parse(const std::string& seq, const std::string& str);
     void get_posterior(std::vector<float>& bp, std::vector<int>& offset) const;
     void get_posterior(std::vector<std::vector<std::pair<unsigned int,float>>>& bp) const;
 
@@ -109,7 +109,7 @@ private:
 
     void cal_PairProb(State& viterbi); 
 
-    void outside(std::vector<int> next_pair[], const std::vector<int>* cons = NULL);
+    template <bool LPV, class T> void outside(std::vector<int> next_pair[], const std::vector<int>* cons = NULL);
 
     float beam_prune(std::unordered_map<int, State>& beamstep);
 
