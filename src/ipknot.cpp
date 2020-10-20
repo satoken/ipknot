@@ -84,6 +84,7 @@ public:
     VVSVI v_l(pk_level_, VSVI(L));
     VVSVI v_r(pk_level_, VSVI(L));
     VI c_l(L, 0), c_r(L, 0);
+    uint n=0;
 
     // make objective variables with their weights
     for (uint j=1; j!=L; ++j)
@@ -98,12 +99,21 @@ public:
             v_l[lv][i].emplace_back(j, v_ij);
             v_r[lv][j].emplace_back(i, v_ij);
             c_l[i]++; c_r[j]++;
+            n++;
           }
       }
     }
     ip.update();
 
-    solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+    if (n>0)
+      solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+    else
+    {
+      bpseq.resize(L);
+      std::fill(std::begin(bpseq), std::end(bpseq), -1);
+      plevel.resize(L);
+      std::fill(std::begin(plevel), std::end(plevel), -1);
+    }
   }
 
   void solve(uint L, const std::vector<std::vector<std::pair<uint, float>>>& bp,
@@ -113,6 +123,7 @@ public:
     VVSVI v_l(pk_level_, VSVI(L));
     VVSVI v_r(pk_level_, VSVI(L));
     VI c_l(L, 0), c_r(L, 0);
+    uint n=0;
 
     // make objective variables with their weights
     for (uint i=1; i<=L; ++i)
@@ -126,11 +137,20 @@ public:
               v_l[lv][i-1].emplace_back(j-1, v_ij);
               v_r[lv][j-1].emplace_back(i-1, v_ij);
               c_l[i-1]++; c_r[j-1]++;
+              n++;
             }
     }
     ip.update();
 
-    solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+    if (n>0)
+      solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+    else
+    {
+      bpseq.resize(L);
+      std::fill(std::begin(bpseq), std::end(bpseq), -1);
+      plevel.resize(L);
+      std::fill(std::begin(plevel), std::end(plevel), -1);
+    }
   }
 
 private:
