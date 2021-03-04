@@ -377,7 +377,7 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
   // convert T to U
   replace(seq2.begin(), seq2.end(), 'T', 'U');
 
-  LinearPartition::BeamCKYParser parser;
+  LinearPartition::BeamCKYParser parser(beam_size_, true, false, false,  0.0, true);
   if (use_vienna_)
     parser.parse<true,int>(seq2);
   else
@@ -396,7 +396,7 @@ calculate_posterior(const std::string& seq, float th) const
   // convert T to U
   replace(seq2.begin(), seq2.end(), 'T', 'U');
 
-  LinearPartition::BeamCKYParser parser(100, true, false, false, th, false);
+  LinearPartition::BeamCKYParser parser(beam_size_, true, false, false, th, false);
   if (use_vienna_)
     parser.parse<true,int>(seq2);
   else
@@ -416,7 +416,7 @@ calculate_posterior(const std::string& seq, const std::string& paren, std::vecto
   // convert T to U
   std::replace(seq2.begin(), seq2.end(), 'T', 'U');
 
-  LinearPartition::BeamCKYParser parser(100, true, false, false, 0.0, true);
+  LinearPartition::BeamCKYParser parser(beam_size_, true, false, false, 0.0, true);
   if (use_vienna_)
     parser.parse<true,int>(seq2, paren);
   else
@@ -435,7 +435,7 @@ calculate_posterior(const std::string& seq, const std::string& paren, float th) 
   // convert T to U
   std::replace(seq2.begin(), seq2.end(), 'T', 'U');
 
-  LinearPartition::BeamCKYParser parser(100, true, false, false, th, true);
+  LinearPartition::BeamCKYParser parser(beam_size_, true, false, false, th, true);
   if (use_vienna_)
     parser.parse<true,int>(seq2, paren);
   else

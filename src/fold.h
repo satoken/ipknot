@@ -132,7 +132,7 @@ private:
 class LinearPartitionModel : public BPEngineSeq
 {
 public:
-  LinearPartitionModel(bool use_vienna=false) : BPEngineSeq(), use_vienna_(use_vienna) { }
+  LinearPartitionModel(bool use_vienna=false, uint beam_size=100) : BPEngineSeq(), use_vienna_(use_vienna), beam_size_(beam_size) { }
   
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
   auto calculate_posterior(const std::string& seq, float th=0.0) const -> std::vector<std::vector<std::pair<uint, float>>>;
@@ -141,6 +141,7 @@ public:
 
 private:
   bool use_vienna_;
+  uint beam_size_;
 };
 
 class AlifoldModel : public BPEngineAln

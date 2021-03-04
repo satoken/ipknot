@@ -49,6 +49,7 @@
 #include "fold.h"
 #include "nupack/nupack.h"
 #include "bpseq.h"
+#include "cxxopts.hpp"
 
 using uint = unsigned int;
 using VF = std::vector<float>;
@@ -852,11 +853,11 @@ parse_csv_line(const char* l)
   return r;
 }
 
-std::unique_ptr<BPEngineSeq> 
-build_engine_seq(const char* model, const char* param)
+auto
+build_engine_seq(const char* model, const char* param, uint beam_size=100)
 {
   std::unique_ptr<BPEngineSeq> en;
-  if (model==NULL || strcasecmp(model, "McCaskill")==0)
+  if (model==nullptr || strcasecmp(model, "McCaskill")==0)
     en = std::make_unique<RNAfoldModel>(param);
   else if (strcasecmp(model, "CONTRAfold")==0)
     en = std::make_unique<CONTRAfoldModel>();
@@ -874,15 +875,15 @@ build_engine_seq(const char* model, const char* param)
   else if (strcasecmp(model, "nupack")==0)
     en = std::make_unique<NupackModel>(param);
 #endif
-  else if (strcasecmp(model, "LinearPartition")==0)
-    en = std::make_unique<LinearPartitionModel>(false);
-  else if (strcasecmp(model, "LinearPartitionV")==0)
-    en = std::make_unique<LinearPartitionModel>(true);
+  else if (strcasecmp(model, "LinearPartition")==0 || strcasecmp(model, "lpc")==0)
+    en = std::make_unique<LinearPartitionModel>(false, beam_size);
+  else if (strcasecmp(model, "LinearPartitionV")==0 || strcasecmp(model, "lpv")==0)
+    en = std::make_unique<LinearPartitionModel>(true, beam_size);
   return en;
 }
 
-std::unique_ptr<BPEngineAln>
-build_engine_aln(const std::vector<const char*>& model, const char* param)
+auto
+build_engine_aln(const std::vector<std::string>& model, const char* param, uint beam_size=100)
 {
   std::unique_ptr<BPEngineAln> mix_en;
   std::vector<std::unique_ptr<BPEngineAln>> en_a;
@@ -895,30 +896,31 @@ build_engine_aln(const std::vector<const char*>& model, const char* param)
   }
   else
   {
-    for (uint i=0; i!=model.size(); ++i)
+    for (const auto mo : model) 
     {
-      if (strcasecmp(model[i], "McCaskill")==0)
+      auto m = mo.c_str();
+      if (strcasecmp(m, "McCaskill")==0)
       {
         auto e = std::make_unique<RNAfoldModel>(param);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
-      else if (strcasecmp(model[i], "CONTRAfold")==0)
+      else if (strcasecmp(m, "CONTRAfold")==0)
       {
         auto e = std::make_unique<CONTRAfoldModel>();
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
-      else if (strcasecmp(model[i], "Alifold")==0)
+      else if (strcasecmp(m, "Alifold")==0)
       {
         en_a.push_back(std::make_unique<AlifoldModel>(param));
       }
-      else if (strcasecmp(model[i], "LinearPartition")==0)
+      else if (strcasecmp(m, "LinearPartition")==0 || strcasecmp(m, "lpc")==0)
       {
-        auto e = std::make_unique<LinearPartitionModel>(false);
+        auto e = std::make_unique<LinearPartitionModel>(false, beam_size);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
-      else if (strcasecmp(model[i], "LinearPartitionV")==0)
+      else if (strcasecmp(m, "LinearPartitionV")==0 || strcasecmp(m, "lpv")==0)
       {
-        auto e = std::make_unique<LinearPartitionModel>(true);
+        auto e = std::make_unique<LinearPartitionModel>(true, beam_size);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
       else
@@ -930,31 +932,13 @@ build_engine_aln(const std::vector<const char*>& model, const char* param)
   return std::move(mix_en ? mix_en : en_a[0]);
 }
 
-void
-usage(const char* progname)
+template <typename ... Args>
+std::string format(const std::string& fmt, Args ... args )
 {
-  std::cout << "IPknot version " << PACKAGE_VERSION << std::endl
-            << "  Available probabilistic models: McCaskill, CONTRAfold, Alifold, NUPACK, LinearPartition"
-            << std::endl << std::endl;
-
-  std::cout << progname << ": [options] fasta" << std::endl
-            << ""
-            << " -h:       show this message" << std::endl
-    //      << " -a alpha: weight for each level" << std::endl
-            << " -t th:    threshold of base-pairing probabilities for each level" << std::endl
-            << " -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)" << std::endl
-            << "           (default: -g 2 -g 4)" << std::endl
-    //      << " -m:       select thresholds that maxmize pseudo MCC" << std::endl
-            << " -e model: probabilistic model (default: McCaskill)" << std::endl
-            << " -c file:  constraint folding" << std::endl
-            << " -r n:     the number of the iterative refinement (default: 0)" << std::endl
-            << " -i:       allow isolated base-pairs" << std::endl
-            << " -b:       output the prediction by BPSEQ format" << std::endl
-            << " -P param: read the energy parameter file for the Vienna RNA package" << std::endl
-#ifndef WITH_GLPK
-            << " -n n_th:  specify the number of threads (default: 1)" << std::endl
-#endif
-    ;
+    size_t len = std::snprintf( nullptr, 0, fmt.c_str(), args ... );
+    std::vector<char> buf(len + 1);
+    std::snprintf(&buf[0], len + 1, fmt.c_str(), args ... );
+    return std::string(&buf[0], &buf[0] + len);
 }
 
 int
@@ -963,105 +947,143 @@ main(int argc, char* argv[])
   char* progname=argv[0];
   // parse options
   uint pk_level=0;
-  char ch;
   std::vector< std::vector<float> > th;
   std::vector<float> alpha;
   bool isolated_bp=false;
-  std::vector<const char*> model;
+  std::vector<std::string> model;
   int n_th=1;
   int n_refinement=0;
-  const char* param=NULL;
+  std::string param;
   bool aux=false;
   bool levelwise=true;
   bool max_pmcc=false;
   bool output_energy=false;
-  std::ostream *os_bpseq=NULL;
-  std::ostream *os_mfa=NULL;
+  std::ostream *os_bpseq=nullptr;
+  std::ostream *os_mfa=nullptr;
   std::string constraint;
-  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:Ec:h"))!=-1)
-  {
-    switch (ch)
-    {
-      case 'e':
-        model.push_back(optarg);
-        break;
-      case 'f': case 'r':
-        n_refinement=atoi(optarg);
-        break;
-      case 'a':
-        alpha.push_back(atof(optarg));
-        break;
-      case 'm':
-        max_pmcc=true;
-        break;
-      case 't':
-        th.push_back(parse_csv_line<float>(optarg));
-        break;
-      case 'g':
-      {
-        std::vector<float> temp = parse_csv_line<float>(optarg);
-        for (uint i=0; i!=temp.size(); ++i)
-          temp[i] = 1/(temp[i]+1);
-        th.push_back(temp);
-        break;
-      }
-      case 'i':
-        isolated_bp=true;
-        break;
-      case 'b':
-        os_bpseq=&std::cout;
-        break;
-      case 'B':
-        os_bpseq=new std::ofstream(optarg);
-        if (!dynamic_cast<std::ofstream*>(os_bpseq)->is_open())
-        {
-          perror(optarg);
-          return 1;
-        }
-        break;
-      case 'n':
-        n_th=atoi(optarg);
-        break;
-      case 'P':
-        param=optarg;
-        break;
-      case 'x':
-        aux=true;
-        break;
-      case 'u':
-        levelwise=false;
-        break;
-      case 'l':
-        os_mfa=&std::cout;
-        break;
-      case 'L':
-        os_mfa=new std::ofstream(optarg);
-        if (!dynamic_cast<std::ofstream*>(os_mfa)->is_open())
-        {
-          perror(optarg);
-          return 1;
-        }
-        break;
-      case 'E':
-        output_energy = true;
-        break;
-      case 'c':
-        constraint = optarg;
-        break;
+  uint beam_size;
+  std::string input;
 
-      case 'h': case '?': default:
-        usage(progname);
-        return 1;
-        break;
+  cxxopts::Options options{progname, format("IPknot version %s", PACKAGE_VERSION)};
+  options.add_options()
+    ("input", "FASTA-formatted file or ALN-formatted file",
+      cxxopts::value<std::string>(), "FASTA_OR_ALN")
+    ("e,model", "Probabilistic model",
+      cxxopts::value<std::vector<std::string>>()->default_value("McCaskill"), "MODEL")
+    ("r,refinement", "The number of the iterative refinement",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("a,alpha", "The weight for each level",
+      cxxopts::value<std::vector<float>>(), "ALPHA")
+    ("m,mcc", "Select thresholds that maximize pseudo MCC",
+      cxxopts::value<bool>()->default_value("false"))
+    ("t,threshold", "The threshold of base-pairing probabilities for each level",
+      cxxopts::value<std::vector<std::string>>(), "TH")
+    ("g,gamma", "The weight for true base-pairs equivalent to '-t 1/(gamma+1)'",
+      cxxopts::value<std::vector<std::string>>(), "G")
+    ("i,allow-isolated", "Allow isolated base-pairs",
+      cxxopts::value<bool>()->default_value("false"))
+    ("b,bpseq", "Output the prediction by BPSEQ format",
+      cxxopts::value<bool>()->default_value("false"))
+    ("B,bpseq-file", "Output file for BPSEQ format",
+      cxxopts::value<std::string>(), "FILE")
+#ifndef WITH_GLPK
+    ("n,threads", "The number of threads for the available solvers",
+      cxxopts::value<uint>()->default_value("1"), "N")
+#endif
+    ("P,param", "Read the energy parameter file for Vienna RNA package",
+      cxxopts::value<std::string>(), "FILE")
+    ("x,aux", "Import an auxiliary file for base-pairing probabilities",
+      cxxopts::value<bool>()->default_value("false"))
+    ("u,levelwise", "Perform the levelwise prediction",
+      cxxopts::value<bool>()->default_value("false"))
+    ("l,mfa", "Output the prediction with the given mulple alignment",
+      cxxopts::value<bool>()->default_value("false"))
+    ("L,mfa-file", "Output file for the multiple alignment",
+      cxxopts::value<std::string>(), "FILE")
+    ("E,energy", "Output with the free energy",
+      cxxopts::value<bool>()->default_value("false"))
+    ("c,constraint", "Specify the structure constraint by a BPSEQ formatted file",
+      cxxopts::value<std::string>(), "FILE")
+    ("beam-size", "Beam size for LinearPartition algorithm",
+      cxxopts::value<uint>()->default_value("100"), "N")
+    ("h,help", "Print usage"); 
+  options.parse_positional({"input"});
+  options
+    .positional_help("FASTA_OR_ALN")
+    .show_positional_help();
+
+  auto res = options.parse(argc, argv);
+  if (res.count("help") || res.count("input")==0)
+  {
+    std::cout << options.help() << std::endl;
+    exit(0);
+  }
+
+  model = res["model"].as<std::vector<std::string>>();
+  n_refinement = res["refinement"].as<int>();
+  max_pmcc = res["mcc"].as<bool>();
+  isolated_bp = res["allow-isolated"].as<bool>();
+  if (res.count("param")) param = res["param"].as<std::string>();
+  aux = res["aux"].as<bool>();
+  levelwise = res["levelwise"].as<bool>();
+#ifndef WITH_GLPK
+  n_th = res["threads"].as<uint>();
+#endif
+  output_energy = res["energy"].as<bool>();
+  if (res.count("constraint")) constraint = res["constraint"].as<std::string>();
+  beam_size = res["beam-size"].as<uint>();
+  input = res["input"].as<std::string>();
+
+  if (res.count("bpseq"))
+    os_bpseq = &std::cout;
+  if (res.count("bpseq-file"))
+  {
+    auto f = res["bpseq-file"].as<std::string>().c_str();
+    os_bpseq = new std::ofstream(f);
+    if (!dynamic_cast<std::ofstream*>(os_bpseq)->is_open())
+    {
+      perror(f);
+      return 1;
     }
   }
-  argc -= optind;
-  argv += optind;
 
-  if (argc!=1) { usage(progname); return 1; }
+  if (res.count("mfa"))
+    os_mfa = &std::cout;
+  if (res.count("mfa-file"))
+  {
+    auto f = res["mfa-file"].as<std::string>().c_str();
+    os_mfa = new std::ofstream(f);
+    if (!dynamic_cast<std::ofstream*>(os_mfa)->is_open())
+    {
+      perror(f);
+      return 1;
+    }
+  }
 
-  // set default parameters
-  if (th.empty())
+  if (res.count("threshold"))
+  {
+    const auto& arg_th = res["threshold"].as<std::vector<std::string>>();
+    th.resize(arg_th.size());
+    for (uint i=0; i!=th.size(); ++i)
+    {
+      th[i] = parse_csv_line<float>(arg_th[i].c_str());
+    }
+  }
+  else if (res.count("gamma"))
+  {
+    const auto& arg_gamma = res["gamma"].as<std::vector<std::string>>();
+    th.resize(arg_gamma.size());
+    for (uint i=0; i!=th.size(); ++i)
+    {
+      auto temp = parse_csv_line<float>(arg_gamma[i].c_str());
+      th[i].resize(temp.size());
+      std::transform(std::cbegin(temp), std::cend(temp), std::begin(th[i]),
+        [&](auto v) { return 1./(v+1.); });
+      // for (uint j=0; j!=temp.size(); ++j)
+      //   temp[j] = 1./(temp[i]+1.);
+    }
+  }
+  else // default
   {
     th.resize(2);
     if (n_refinement==0)
@@ -1075,13 +1097,17 @@ main(int argc, char* argv[])
       th[1].resize(1, 1/(1.0+1)); // -g 1
     }
   }
-  if (alpha.empty())
+
+  if (res.count("alpha"))
+  {
+    alpha = res["alpha"].as<std::vector<float>>();
+  }
+  else
   {
     alpha.resize(th.size());
-    for (uint i=0; i!=alpha.size(); ++i)
-      alpha[i]=1.0/alpha.size();
+    std::fill(std::begin(alpha), std::end(alpha), 1./alpha.size());
   }
-  pk_level=alpha.size();
+  pk_level = alpha.size();
 
   try
   {
@@ -1102,22 +1128,23 @@ main(int argc, char* argv[])
       std::vector<int> offset;
       AuxModel aux;
       std::string seq;
-      aux.calculate_posterior(argv[0], seq, bp, offset);
+      aux.calculate_posterior(input.c_str(), seq, bp, offset);
       if (max_pmcc)
         ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel, false);
       else
         ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel, false);
       if (os_bpseq)
-        output_bpseq(*os_bpseq, argv[0], seq, bpseq, plevel);
+        output_bpseq(*os_bpseq, input.c_str(), seq, bpseq, plevel);
       if (os_bpseq!=&std::cout)
-        output_fa(std::cout, argv[0], seq, bpseq, plevel, output_energy);
+        output_fa(std::cout, input.c_str(), seq, bpseq, plevel, output_energy);
     }
-    else if (Fasta::load(f, argv[0])>0)
+    else if (Fasta::load(f, input.c_str())>0)
     {
-      auto en = build_engine_seq(model.empty() ? NULL : model[0], param);
+      auto en = build_engine_seq(model.empty() ? nullptr : model[0].c_str(), 
+                                  param.empty() ? nullptr : param.c_str(), beam_size);
       if (!en) 
       {
-        usage(progname);
+        std::cout << options.help() << std::endl;
         return 1;
       }
 
@@ -1157,12 +1184,12 @@ main(int argc, char* argv[])
         f.erase(fa);
       }
     }
-    else if (Aln::load(a, argv[0])>0)
+    else if (Aln::load(a, input.c_str())>0)
     {
-      auto en = build_engine_aln(model, param);
+      auto en = build_engine_aln(model, param.empty() ? nullptr : param.c_str(), beam_size);
       if (!en) 
       {
-        usage(progname);
+        std::cout << options.help() << std::endl;
         return 1;
       }
 
@@ -1206,7 +1233,7 @@ main(int argc, char* argv[])
     }
     else
     {
-      throw (std::string(argv[0])+": Format error").c_str();
+      throw (input+": Format error").c_str();
     }
   }
   catch (const char* msg)
