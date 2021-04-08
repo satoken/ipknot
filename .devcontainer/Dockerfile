@@ -19,10 +19,6 @@ ARG USER_GID=$USER_UID
 # Avoid warnings by switching to noninteractive
 ENV DEBIAN_FRONTEND=noninteractive
 
-ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/viennarna_2.4.17-1_amd64.deb .
-ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/viennarna-dev_2.4.17-1_amd64.deb .
-# ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/python3-rna_2.4.17-1_amd64.deb .
-
 # Configure apt and install packages
 RUN apt-get update \
     #
@@ -36,8 +32,6 @@ RUN apt-get update \
         && usermod --uid $USER_UID --gid $USER_GID $USERNAME \
         && chown -R $USER_UID:$USER_GID /home/$USERNAME; \
     fi \
-    #
-    && apt -y install ./vienna*.deb \
     # Clean up
     && rm -f *.deb \
     && apt-get autoremove -y \
@@ -51,7 +45,19 @@ RUN apt-get update \
 #     && make && make install \
 #     && cd .. && rm -rf ViennaRNA-2.4.17 ViennaRNA-2.4.17.tar.gz 
 
-
+# install ViennaRNA package from bioconda
+ENV PATH /opt/conda/bin:$PATH
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh && \
+    mkdir -p /opt && \
+    sh miniconda.sh -b -p /opt/conda && \
+    rm miniconda.sh && \
+    ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \
+    /opt/conda/bin/conda config --add channels conda-forge && \
+    /opt/conda/bin/conda config --add channels bioconda && \
+    /opt/conda/bin/conda update --all && \
+    /opt/conda/bin/conda install viennarna && \
+    /opt/conda/bin/conda clean -afy
+ENV PKG_CONFIG_PATH /opt/conda/lib/pkgconfig:$PKG_CONFIG_PATH
 
 # Switch back to dialog for any ad-hoc use of apt-get
 ENV DEBIAN_FRONTEND=dialog
