@@ -1,10 +1,14 @@
 
 cmake_minimum_required(VERSION 3.8)
 
-#enable_language(CXX)
+option(CXX "enable C++ compilation" ON)
+if (CXX)
+  enable_language(CXX)
+endif()
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
-#set(CMAKE_CXX_STANDARD_REQUIRED ON)
-#set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_COMPILE_FEATURES cxx_std_17)
 
 project(IPknot CXX C)
 
@@ -53,11 +57,11 @@ add_executable(
   src/bpseq.h src/bpseq.cpp
   src/boltzmann_param.c 
   src/nupack/nupack.cpp
-	src/contrafold/LogSpace.hpp 
+  src/contrafold/LogSpace.hpp 
   src/contrafold/Defaults.hpp 
-	src/contrafold/InferenceEngine.cpp
-	src/contrafold/ParameterManager.cpp 
-	src/contrafold/SStruct.cpp 
+  src/contrafold/InferenceEngine.cpp
+  src/contrafold/ParameterManager.cpp 
+  src/contrafold/SStruct.cpp 
   src/contrafold/Utilities.cpp 
   src/linearpartition/LinearPartition.cpp 
   #src/linearpartition/bpp.cpp
@@ -65,7 +69,7 @@ add_executable(
   )
 target_link_libraries(ipknot 
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
-  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CPP_LIBRARY})
+  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY})
 target_compile_features(ipknot PUBLIC cxx_std_17)
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)

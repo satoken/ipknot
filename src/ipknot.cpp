@@ -367,7 +367,7 @@ public:
       std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
       solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
-      std::cerr << " pF=" << mcc << std::endl;
+      std::cerr << " pF=" << fval << std::endl;
       if (fval>max_fval)
       {
         max_fval = fval;
