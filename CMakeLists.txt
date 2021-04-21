@@ -69,7 +69,7 @@ add_executable(
   )
 target_link_libraries(ipknot 
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
-  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY})
+  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY} ${CMAKE_DL_LIBS})
 target_compile_features(ipknot PUBLIC cxx_std_17)
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)
