@@ -1000,7 +1000,7 @@ main(int argc, char* argv[])
       cxxopts::value<std::string>(), "FILE")
     ("x,aux", "Import an auxiliary file for base-pairing probabilities",
       cxxopts::value<bool>()->default_value("false"))
-    ("u,levelwise", "Perform the levelwise prediction",
+    ("u,no-levelwise", "Do not perform the levelwise prediction",
       cxxopts::value<bool>()->default_value("false"))
     ("l,mfa", "Output the prediction with the given mulple alignment",
       cxxopts::value<bool>()->default_value("false"))
@@ -1031,7 +1031,7 @@ main(int argc, char* argv[])
   isolated_bp = res["allow-isolated"].as<bool>();
   if (res.count("param")) param = res["param"].as<std::string>();
   aux = res["aux"].as<bool>();
-  levelwise = res["levelwise"].as<bool>();
+  levelwise = !res["no-levelwise"].as<bool>();
 #ifndef WITH_GLPK
   n_th = res["threads"].as<uint>();
 #endif
