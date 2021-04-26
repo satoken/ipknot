@@ -60,6 +60,8 @@ using VVVI = std::vector<VVI>;
 using SVI = std::vector<std::pair<uint,int>>;
 using VSVI = std::vector<SVI>; 
 using VVSVI = std::vector<VSVI>;
+using SVF = std::vector<std::pair<uint,float>>;
+using VSVF = std::vector<SVF>; 
 
 class IPknot
 {
@@ -78,8 +80,8 @@ public:
   }
 
 public:
-  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+  void solve(uint L, const VF& bp, const VI& offset,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
   {
     IP ip(IP::MAX, n_th_);
     VVSVI v_l(pk_level_, VSVI(L));
@@ -88,15 +90,15 @@ public:
     uint n=0;
 
     // make objective variables with their weights
-    for (uint j=1; j!=L; ++j)
+    for (auto j=1; j!=L; ++j)
     {
-      for (uint i=j-1; i!=-1u; --i)
+      for (auto i=j-1; i!=-1u; --i)
       {
         const float& p=bp[offset[i+1]+(j+1)];
-        for (uint lv=0; lv!=pk_level_; ++lv)
+        for (auto lv=0; lv!=pk_level_; ++lv)
           if (p>th[lv])
           {
-            const auto v_ij = ip.make_variable(p*alpha_[lv]);
+            const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
             v_l[lv][i].emplace_back(j, v_ij);
             v_r[lv][j].emplace_back(i, v_ij);
             c_l[i]++; c_r[j]++;
@@ -117,8 +119,8 @@ public:
     }
   }
 
-  void solve(uint L, const std::vector<std::vector<std::pair<uint, float>>>& bp,
-             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+  void solve(uint L, const VSVF& bp,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
   {
     IP ip(IP::MAX, n_th_);
     VVSVI v_l(pk_level_, VSVI(L));
@@ -127,14 +129,14 @@ public:
     uint n=0;
 
     // make objective variables with their weights
-    for (uint i=1; i<=L; ++i)
+    for (auto i=1; i<=L; ++i)
     {
       for (const auto [j, p]: bp[i])
         if (i<j)
-          for (uint lv=0; lv!=pk_level_; ++lv)
+          for (auto lv=0; lv!=pk_level_; ++lv)
             if (p>th[lv])
             {
-              const auto v_ij = ip.make_variable(p*alpha_[lv]);
+              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
               v_l[lv][i-1].emplace_back(j-1, v_ij);
               v_r[lv][j-1].emplace_back(i-1, v_ij);
               c_l[i-1]++; c_r[j-1]++;
@@ -156,7 +158,7 @@ public:
 
 private:
   void solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
-             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
   {
     if (!constraint)
     {
@@ -165,9 +167,9 @@ private:
     }
     
     // constraint 1: each s_i is paired with at most one base
-    for (uint i=0; i!=L; ++i)
+    for (auto i=0; i!=L; ++i)
     {
-      int row_l = -1, row_r = -1;
+      auto row_l = -1, row_r = -1;
       switch (bpseq[i])
       {
         default:
@@ -202,7 +204,7 @@ private:
         row_l = row_r = ip.make_constraint(IP::UP, 0, 1); // fallback to no constraint
       }
       
-      for (uint lv=0; lv!=pk_level_; ++lv)
+      for (auto lv=0; lv!=pk_level_; ++lv)
       {
         for (const auto [j, v_ij]: v_r[lv][i]) 
           ip.add_constraint(row_r, v_ij, 1);
@@ -215,9 +217,9 @@ private:
         const auto j = bpseq[i];
         int c=0;
         std::vector<int> vals(pk_level_, -1);
-        for (uint lv=0; lv!=pk_level_; ++lv)
+        for (auto lv=0; lv!=pk_level_; ++lv)
         {
-          for (const auto [temp, v_ij]: v_l[lv][i])
+          for (auto [temp, v_ij]: v_l[lv][i])
             if (j==temp) 
             { 
               vals[lv] = v_ij; 
@@ -227,8 +229,8 @@ private:
         }
         if (c>0)
         {
-          int row = ip.make_constraint(IP::FX, 1, 1);
-          for (uint lv=0; lv!=pk_level_; ++lv)
+          auto row = ip.make_constraint(IP::FX, 1, 1);
+          for (auto lv=0; lv!=pk_level_; ++lv)
             if (vals[lv]>=0)
               ip.add_constraint(row, vals[lv], 1);
         }
@@ -240,33 +242,33 @@ private:
     if (levelwise_)
     {
       // constraint 2: disallow pseudoknots in x[lv]
-      for (uint lv=0; lv!=pk_level_; ++lv)
-        for (uint i=0; i<v_l[lv].size(); ++i)
-          for (const auto [j, v_ij]: v_l[lv][i])
-            for (uint k=i+1; k<j; ++k)
-              for (const auto [l, v_kl]: v_l[lv][k])
+      for (auto lv=0; lv!=pk_level_; ++lv)
+        for (auto i=0; i<v_l[lv].size(); ++i)
+          for (auto [j, v_ij]: v_l[lv][i])
+            for (auto k=i+1; k<j; ++k)
+              for (auto [l, v_kl]: v_l[lv][k])
                 if (j<l)
                 {
-                  int row = ip.make_constraint(IP::UP, 0, 1);
+                  auto row = ip.make_constraint(IP::UP, 0, 1);
                   ip.add_constraint(row, v_ij, 1);
                   ip.add_constraint(row, v_kl, 1);
                 }
 
       // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
-      for (uint lv=1; lv!=pk_level_; ++lv)
-        for (uint k=0; k<v_l[lv].size(); ++k)
-          for (const auto [l, v_kl]: v_l[lv][k])
-            for (uint plv=0; plv!=lv; ++plv)
+      for (auto lv=1; lv!=pk_level_; ++lv)
+        for (auto k=0; k<v_l[lv].size(); ++k)
+          for (auto [l, v_kl]: v_l[lv][k])
+            for (auto plv=0; plv!=lv; ++plv)
             {
               int row = ip.make_constraint(IP::LO, 0, 0);
               ip.add_constraint(row, v_kl, -1);
-              for (uint i=0; i<k; ++i)
-                for (const auto [j, v_ij]: v_l[plv][i])
+              for (auto i=0; i<k; ++i)
+                for (auto [j, v_ij]: v_l[plv][i])
                   if (k<j && j<l)
                     ip.add_constraint(row, v_ij, 1);
 
-              for (uint i=k+1; i<l; ++i)
-                for (const auto [j, v_ij]: v_l[plv][i])
+              for (auto i=k+1; i<l; ++i)
+                for (auto [j, v_ij]: v_l[plv][i])
                   if (l<j)
                     ip.add_constraint(row, v_ij, 1);
             }
@@ -274,33 +276,33 @@ private:
 
     if (stacking_constraints_)
     {
-      for (uint lv=0; lv!=pk_level_; ++lv)
+      for (auto lv=0; lv!=pk_level_; ++lv)
       {
         // upstream
-        for (uint i=0; i<L; ++i)
+        for (auto i=0; i<L; ++i)
         {
           int row = ip.make_constraint(IP::LO, 0, 0);
-          for (const auto [j, v_ji]: v_r[lv][i])
+          for (auto [j, v_ji]: v_r[lv][i])
             ip.add_constraint(row, v_ji, -1);
           if (i>0)
-            for (const auto [j, v_ji]: v_r[lv][i-1])
+            for (auto [j, v_ji]: v_r[lv][i-1])
               ip.add_constraint(row, v_ji, 1);
           if (i+1<L)
-            for (const auto [j, v_ji]: v_r[lv][i+1])
+            for (auto [j, v_ji]: v_r[lv][i+1])
               ip.add_constraint(row, v_ji, 1);
         }
 
         // downstream
-        for (uint i=0; i<L; ++i)
+        for (auto i=0; i<L; ++i)
         {
-          int row = ip.make_constraint(IP::LO, 0, 0);
-          for (const auto [j, v_ij]: v_l[lv][i])
+          auto row = ip.make_constraint(IP::LO, 0, 0);
+          for (auto [j, v_ij]: v_l[lv][i])
             ip.add_constraint(row, v_ij, -1);
           if (i>0)
-            for (const auto [j, v_ij]: v_l[lv][i-1])
+            for (auto [j, v_ij]: v_l[lv][i-1])
               ip.add_constraint(row, v_ij, 1);
           if (i+1<L)
-            for (const auto [j, v_ij]: v_l[lv][i+1])
+            for (auto [j, v_ij]: v_l[lv][i+1])
               ip.add_constraint(row, v_ij, 1);
         }
       }
@@ -314,8 +316,8 @@ private:
     std::fill(bpseq.begin(), bpseq.end(), -1);
     plevel.resize(L);
     std::fill(plevel.begin(), plevel.end(), -1);
-    for (uint lv=0; lv!=pk_level_; ++lv)
-      for (uint i=0; i<L; ++i)
+    for (auto lv=0; lv!=pk_level_; ++lv)
+      for (auto i=0; i<L; ++i)
         for (const auto [j, v_ij]: v_l[lv][i])
           if (ip.get_value(v_ij)>0.5)
           {
@@ -328,12 +330,11 @@ private:
   }
 
 public:
-  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             EnumParam<float>& ep, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+  void solve(uint L, const VF& bp, const VI& offset,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const
   {
-    std::vector<float> th(ep.size());
-    std::vector<int> bpseq_temp;
-    std::vector<int> plevel_temp;
+    VF th(ep.size());
+    VI bpseq_temp, plevel_temp;
     float max_fval=-100.0;
     std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
     do {
@@ -353,12 +354,11 @@ public:
     std::cerr << "max pF=" << max_fval << std::endl << std::endl;
   }
 
-  void solve(uint L, const std::vector<std::vector<std::pair<uint, float>>>& bp,
-             EnumParam<float>& ep, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+  void solve(uint L, const VSVF& bp,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const
   {
     std::vector<float> th(ep.size());
-    std::vector<int> bpseq_temp;
-    std::vector<int> plevel_temp;
+    VI bpseq_temp, plevel_temp;
     float max_fval=-100.0;
     std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
     do {
@@ -367,7 +367,8 @@ public:
       std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
       solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
-      std::cerr << " pF=" << fval << std::endl;
+      const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp);
+      std::cerr << " pF=" << fval << ", " << fval_pk << std::endl;
       if (fval>max_fval)
       {
         max_fval = fval;
@@ -421,21 +422,6 @@ public:
     std::vector<int> v_;
   };
 
-private:
-  struct cmp_by_degree : public std::less<int>
-  {
-    cmp_by_degree(const std::vector< std::vector<int> >& g) : g_(g) {}
-    bool operator()(int x, int y) const { return g_[y].size()<g_[x].size(); }
-    const std::vector< std::vector<int> >& g_;
-  };
-
-  struct cmp_by_count : public std::less<int>
-  {
-    cmp_by_count(const std::vector<int>& count) : count_(count) { }
-    bool operator()(int x, int y) const { return count_[y]<count_[x]; }
-    const std::vector<int>& count_;
-  };
-
 public:
   static int
   decompose_plevel(const std::vector<int>& bpseq, std::vector<int>& plevel)
@@ -466,7 +452,7 @@ public:
       if (bpseq[i]>=0 && (int)i<bpseq[i]) 
         v.push_back(i);
     // sort vertices by degree
-    std::sort(v.begin(), v.end(), cmp_by_degree(g));
+    std::sort(v.begin(), v.end(), [&](int x, int y) { return g[y].size() < g[x].size(); });
 
     // determine colors
     std::vector<int> c(L, -1);
@@ -492,7 +478,7 @@ public:
       if (c[i]>=0) count[c[i]]++;
     std::vector<int> idx(count.size());
     for (uint i=0; i!=idx.size(); ++i) idx[i]=i;
-    sort(idx.begin(), idx.end(), cmp_by_count(count));
+    sort(idx.begin(), idx.end(), [&](int x, int y) { return count[y] < count[x]; });
     std::vector<int> rev(idx.size());
     for (uint i=0; i!=rev.size(); ++i) rev[idx[i]]=i;
     plevel.resize(L);
@@ -504,8 +490,7 @@ public:
 
 private:
   static auto
-  compute_expected_accuracy(const std::vector<int>& bpseq,
-                            const std::vector<float>& bp, const std::vector<int>& offset) -> std::tuple<float,float,float,float>
+  compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>
   {
     int L  = bpseq.size();
     int L2 = L*(L-1)/2;
@@ -541,8 +526,7 @@ private:
   }
 
   static auto
-  compute_expected_accuracy(const std::vector<int>& bpseq,
-                            const std::vector<std::vector<std::pair<uint, float>>>& bp) -> std::tuple<float,float,float,float>
+  compute_expected_accuracy(const VI& bpseq, const VSVF& bp) -> std::tuple<float,float,float,float>
   {
     int L  = bpseq.size();
     int L2 = L*(L-1)/2;
@@ -553,21 +537,15 @@ private:
 
     for (uint i=1; i!=bp.size(); ++i) 
       for (const auto [j, p]: bp[i])
-        if (i<j) sump += p;
-
-    for (uint i=0; i!=bpseq.size(); ++i)
-    {
-      if (bpseq[i]!=-1 && bpseq[i]>(int)i)
-      {
-        const auto j=bpseq[i];
-        auto res = std::find_if(std::cbegin(bp[i+1]), std::cend(bp[i+1]),
-                          [&](const auto& x) { return x.first==j+1; });
-        if (res!=std::cend(bp[i+1])) {
-          etp += res->second;
-          N++;
+        if (i<j)
+        {
+            sump += p; 
+            if (bpseq[i-1]==j-1)
+            {
+              etp += p;
+              N++;
+            }
         }
-      }
-    }
 
     float etn = L2 - N - sump + etp;
     float efp = N - etp;
@@ -584,6 +562,76 @@ private:
     return {sen, ppv, mcc, f};
   }
 
+  static auto
+  compute_expected_accuracy_pk(const VI& bpseq, const VSVF& bp) -> std::tuple<float,float,float,float>
+  {
+    int L  = bpseq.size();
+    int L2 = L*(L-1)/2;
+    int N = 0;
+
+    float sump = 0.0;
+    float etp  = 0.0;
+
+    for (uint i=1; i!=bp.size(); ++i) 
+      for (const auto [j, p]: bp[i])
+        if (i<j)
+          for (uint k=i+1; k!=bp.size(); ++k)
+            if (k<j)
+              for (const auto [l, q]: bp[k])
+                if (/*k<l &&*/ j<l)
+                {
+                  sump += p*q;
+                  if (bpseq[i-1]==j-1 && bpseq[k-1]==l-1)
+                  {
+                    etp += p*q;
+                    N++;
+                  }
+                } 
+
+    float etn = L2 - N - sump + etp;
+    float efp = N - etp;
+    float efn = sump - etp;
+
+    float sen, ppv, mcc, f;
+    sen = ppv = mcc = f = 0;
+    if (etp+efn!=0) sen = etp / (etp + efn);
+    if (etp+efp!=0) ppv = etp / (etp + efp);
+    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
+      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
+    if (sen+ppv!=0) f = 2*sen*ppv/(sen+ppv);
+
+    return {sen, ppv, mcc, f};
+  }
+
+  auto check_pseudoknots(const VI& bpseq) -> VI
+  {
+    std::vector<std::pair<int,int>> st;
+    VI bpseq_pk(bpseq.size(), -1);
+    for (auto i=0; i!=bpseq.size(); i++)
+    {
+      auto j = bpseq[i];
+      if (i<j) 
+      {
+        st.emplace_back(i, j);
+      }
+      else if (j>=0)
+      {
+        for (auto it=std::rbegin(st); it!=std::rend(st); ++it) 
+        {
+          const auto [k, l] = *it;
+          if (k==j && l==j)
+          {
+            st.erase((++it).base());
+            break;
+          }
+          bpseq_pk[i]=j; bpseq_pk[j]=i;
+          bpseq_pk[k]=l; bpseq_pk[l]=k;
+        }
+      }
+    }
+    return bpseq_pk;
+  }
+
   static uint length(const std::string& seq) { return seq.size(); }
   static uint length(const std::list<std::string>& aln) { return aln.front().size(); }
 
@@ -597,7 +645,7 @@ private:
 };
 
 std::string
-make_parenthsis(const std::vector<int>& bpseq, const std::vector<int>& plevel)
+make_parenthsis(const VI& bpseq, const VI& plevel)
 {
   const int n_support_parens=4;
   const char* left_paren="([{<";
@@ -637,8 +685,7 @@ timing()
 template < class SEQ, class EN >
 void
 update_bpm(uint pk_level, const SEQ& seq, EN& en,
-           const std::vector<int>& bpseq, const std::vector<int>& plevel,
-           std::vector<float>& bp, std::vector<int>& offset)
+           const VI& bpseq, const VI& plevel, VF& bp, VI& offset)
 {
   // update the base-pairing probability matrix by the previous result
   uint L=bpseq.size();
@@ -702,9 +749,7 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
 
 template < class SEQ, class EN>
 void
-update_bpm(uint pk_level, const SEQ& seq, EN& en,
-           const std::vector<int>& bpseq, const std::vector<int>& plevel,
-           std::vector<std::vector<std::pair<uint, float>>>& sbp)
+update_bpm(uint pk_level, const SEQ& seq, EN& en, const VI& bpseq, const VI& plevel, VSVF& sbp)
 {
   // update the base-pairing probability matrix by the previous result
   uint L=bpseq.size();
@@ -797,8 +842,7 @@ static
 void
 output_fa(std::ostream& os,
           const std::string& desc, const std::string& seq,
-          const std::vector<int>& bpseq, const std::vector<int>& plevel, 
-          bool output_energy)
+          const VI& bpseq, const VI& plevel, bool output_energy)
 {
   if (output_energy)
   {
@@ -819,8 +863,7 @@ output_fa(std::ostream& os,
 
 static
 void
-output_mfa(std::ostream& os, const Aln& aln,
-           const std::vector<int>& bpseq, const std::vector<int>& plevel)
+output_mfa(std::ostream& os, const Aln& aln, const VI& bpseq, const VI& plevel)
 {
   os << ">SS_cons" << std::endl
      << make_parenthsis(bpseq, plevel) << std::endl;
@@ -838,7 +881,7 @@ static
 void
 output_bpseq(std::ostream& os,
              const std::string& desc, const std::string& seq,
-             const std::vector<int>& bpseq, const std::vector<int>& plevel)
+             const VI& bpseq, const VI& plevel)
 {
   os << "# " << desc << std::endl;
   for (uint i=0; i!=bpseq.size(); ++i)
