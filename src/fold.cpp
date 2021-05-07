@@ -94,7 +94,10 @@ calculate_posterior(const std::string& seq, float th) const
     {
       const auto p = bp[offset[i+1]+(j+1)];
       if (p>=th)
+      {
         sbp[i+1].emplace_back(j+1, p);
+        sbp[j+1].emplace_back(i+1, p);
+      }
     }
 
   return sbp;
@@ -135,7 +138,10 @@ calculate_posterior(const std::string& seq, const std::string& paren, float th) 
     {
       const auto p = bp[offset[i+1]+(j+1)];
       if (p>=th)
+      {
         sbp[i+1].emplace_back(j+1, p);
+        sbp[j+1].emplace_back(i+1, p);
+      }
     }
 
   return sbp;
@@ -359,7 +365,10 @@ calculate_posterior(const std::string& seq, float th) const
     {
       const auto p = bp[offset[i+1]+(j+1)];
       if (p>=th)
+      {
         sbp[i+1].emplace_back(j+1, p);
+        sbp[j+1].emplace_back(i+1, p);
+      }
     }
 
   return sbp;

@@ -330,8 +330,8 @@ private:
   }
 
 public:
-  void solve(uint L, const VF& bp, const VI& offset,
-             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const
+  auto solve(uint L, const VF& bp, const VI& offset,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const -> std::pair<float,float>
   {
     VF th(ep.size());
     VI bpseq_temp, plevel_temp;
@@ -339,6 +339,10 @@ public:
     std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
     do {
       ep.get(th);
+      uint i;
+      for (i=1; i!=th.size(); i++)
+        if (th[i-1]<th[i]) break;
+      if (i!=th.size()) continue;
       std::cerr << "th=";
       std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
       solve(L, bp, offset, th, bpseq_temp, plevel_temp, constraint);
@@ -352,31 +356,41 @@ public:
       }
     } while (!ep.succ());
     std::cerr << "max pF=" << max_fval << std::endl << std::endl;
+
+    return {max_fval, 0.};
   }
 
-  void solve(uint L, const VSVF& bp,
-             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const
+  auto solve(uint L, const VSVF& bp,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const -> std::pair<float,float>
   {
     std::vector<float> th(ep.size());
     VI bpseq_temp, plevel_temp;
-    float max_fval=-100.0;
+    float max_fval=-100.0, max_fval_pk=-100.0;
     std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
+    const auto sump = compute_sump_pk(bp);
     do {
       ep.get(th);
+      uint i;
+      for (i=1; i!=th.size(); i++)
+        if (th[i-1]<th[i]) break;
+      if (i!=th.size()) continue;
       std::cerr << "th=";
       std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
       solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
-      const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp);
+      const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
       std::cerr << " pF=" << fval << ", " << fval_pk << std::endl;
-      if (fval>max_fval)
+      if (fval+fval_pk>max_fval+max_fval_pk)
       {
         max_fval = fval;
+        max_fval_pk = fval_pk;
         bpseq = bpseq_temp;
         plevel = plevel_temp;
       }
     } while (!ep.succ());
-    std::cerr << "max pF=" << max_fval << std::endl << std::endl;
+    std::cerr << "max pF=" << max_fval << "," << max_fval_pk << std::endl << std::endl;
+
+    return {max_fval, max_fval_pk};
   }
 
 public:
@@ -490,6 +504,20 @@ public:
 
 private:
   static auto
+  compute_expected_accuracy(float etp, float etn, float efp, float efn) -> std::tuple<float,float,float,float>
+  {
+    float sen, ppv, mcc, f;
+    sen = ppv = mcc = f = 0;
+    if (etp+efn!=0) sen = etp / (etp + efn);
+    if (etp+efp!=0) ppv = etp / (etp + efp);
+    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
+      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
+    if (sen+ppv!=0) f = 2*sen*ppv/(sen+ppv);
+
+    return {sen, ppv, mcc, f};
+  }
+
+  static auto
   compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>
   {
     int L  = bpseq.size();
@@ -514,15 +542,7 @@ private:
     float efp = N - etp;
     float efn = sump - etp;
 
-    float sen, ppv, mcc, f;
-    sen = ppv = mcc = f = 0;
-    if (etp+efn!=0) sen = etp / (etp + efn);
-    if (etp+efp!=0) ppv = etp / (etp + efp);
-    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
-      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
-    if (sen+ppv!=0) f = 2*sen*ppv/(sen+ppv);
-
-    return {sen, ppv, mcc, f};
+    return compute_expected_accuracy(etp, etn, efp, efn);
   }
 
   static auto
@@ -551,15 +571,7 @@ private:
     float efp = N - etp;
     float efn = sump - etp;
 
-    float sen, ppv, mcc, f;
-    sen = ppv = mcc = f = 0;
-    if (etp+efn!=0) sen = etp / (etp + efn);
-    if (etp+efp!=0) ppv = etp / (etp + efp);
-    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
-      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
-    if (sen+ppv!=0) f = 2*sen*ppv/(sen+ppv);
-
-    return {sen, ppv, mcc, f};
+    return compute_expected_accuracy(etp, etn, efp, efn);
   }
 
   static auto
@@ -575,32 +587,75 @@ private:
     for (uint i=1; i!=bp.size(); ++i) 
       for (const auto [j, p]: bp[i])
         if (i<j)
-          for (uint k=i+1; k!=bp.size(); ++k)
-            if (k<j)
-              for (const auto [l, q]: bp[k])
-                if (/*k<l &&*/ j<l)
+          for (uint k=i+1; k!=j; ++k)
+            for (const auto [l, q]: bp[k])
+              if (/*k<l &&*/ j<l)
+              {
+                sump += p*q;
+                if (bpseq[i-1]==j-1 && bpseq[k-1]==l-1)
                 {
-                  sump += p*q;
-                  if (bpseq[i-1]==j-1 && bpseq[k-1]==l-1)
-                  {
-                    etp += p*q;
-                    N++;
-                  }
-                } 
+                  etp += p*q;
+                  N++;
+                }
+              } 
 
     float etn = L2 - N - sump + etp;
     float efp = N - etp;
     float efn = sump - etp;
 
-    float sen, ppv, mcc, f;
-    sen = ppv = mcc = f = 0;
-    if (etp+efn!=0) sen = etp / (etp + efn);
-    if (etp+efp!=0) ppv = etp / (etp + efp);
-    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
-      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
-    if (sen+ppv!=0) f = 2*sen*ppv/(sen+ppv);
+    return compute_expected_accuracy(etp, etn, efp, efn);
+  }
 
-    return {sen, ppv, mcc, f};
+  static auto
+  compute_sump_pk(const VSVF& bp) -> float
+  {
+    float sump = 0.0;
+
+    for (uint i=1; i!=bp.size(); ++i) 
+      for (const auto [j, p]: bp[i])
+        if (i<j /*&& p>=DEFAULT_THRESHOLD*/)
+          for (uint k=i+1; k!=j; ++k)
+            for (const auto [l, q]: bp[k])
+              if (/*k<l &&*/ j<l /*&& q>=DEFAULT_THRESHOLD*/)
+                sump += p*q;
+
+    return sump;
+  }
+
+  static auto
+  compute_expected_accuracy_pk(const VI& bpseq, const VSVF& bp, float sump) -> std::tuple<float,float,float,float>
+  {
+    int L  = bpseq.size();
+    int L2 = L*(L-1)/2;
+    int N = 0;
+
+    float etp  = 0.0;
+    for (auto i=0; i!=bpseq.size(); ++i) 
+    {
+      const auto j=bpseq[i];
+      if (j>=0 && i<j)
+      {
+        const auto r = std::lower_bound(std::begin(bp[i+1]), std::end(bp[i+1]), std::make_pair<uint,float>(j+1, 0.0));
+        const auto p = r!=std::end(bp[i+1]) && r->first==j+1 ? r->second : 0.;
+        for (auto k=i+1; k!=j; ++k)
+        {
+          const auto l=bpseq[k];
+          if (k>=0 && k<l && j<l)
+          {
+            const auto r = std::lower_bound(std::begin(bp[k+1]), std::end(bp[k+1]), std::make_pair<uint,float>(l+1, 0.0));
+            const auto q = r!=std::end(bp[k+1]) && r->first==l+1 ? r->second : 0.;
+            etp += p*q;
+            N++;
+          }
+        }
+      }
+    }
+
+    float etn = L2 - N - sump + etp;
+    float efp = N - etp;
+    float efn = sump - etp;
+
+    return compute_expected_accuracy(etp, etn, efp, efn);
   }
 
   auto check_pseudoknots(const VI& bpseq) -> VI
@@ -803,6 +858,13 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en, const VI& bpseq, const VI& ple
       }
     }
   }
+
+  VSVF sbp_temp(L+1);
+  for (uint i=1; i!=sbp.size(); i++)
+    for (const auto [j, v]: sbp[i]) 
+      if (v>=DEFAULT_THRESHOLD) 
+        sbp_temp[i].emplace_back(j, v);
+  std:swap(sbp, sbp_temp);
 }
 
 static
@@ -881,9 +943,13 @@ static
 void
 output_bpseq(std::ostream& os,
              const std::string& desc, const std::string& seq,
-             const VI& bpseq, const VI& plevel)
+             const VI& bpseq, const VI& plevel, 
+             bool max_pfval, float fval, float fval_pk)
 {
-  os << "# " << desc << std::endl;
+  os << "# " << desc; 
+  if (max_pfval)
+    os << " (max pF=" << fval << "," << fval_pk << ")";
+  os << std::endl;
   for (uint i=0; i!=bpseq.size(); ++i)
     os << i+1 << " " << seq[i] << " " << bpseq[i]+1 << std::endl;
 }
@@ -1177,18 +1243,20 @@ main(int argc, char* argv[])
       std::vector<int> offset;
       AuxModel aux;
       std::string seq;
+      float fval, fval_pk;
       aux.calculate_posterior(input.c_str(), seq, bp, offset);
       if (max_pfval)
-        ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel, false);
+        std::tie(fval, fval_pk) = ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel, false);
       else
         ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel, false);
       if (os_bpseq)
-        output_bpseq(*os_bpseq, input.c_str(), seq, bpseq, plevel);
+        output_bpseq(*os_bpseq, input.c_str(), seq, bpseq, plevel, max_pfval, fval, fval_pk);
       if (os_bpseq!=&std::cout)
         output_fa(std::cout, input.c_str(), seq, bpseq, plevel, output_energy);
     }
     else if (Fasta::load(f, input.c_str())>0)
     {
+      float fval, fval_pk;
       auto en = build_engine_seq(model.empty() ? nullptr : model[0].c_str(), 
                                   param.empty() ? nullptr : param.c_str(), beam_size);
       if (!en) 
@@ -1213,7 +1281,7 @@ main(int argc, char* argv[])
         }
 
         if (max_pfval)
-          ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+          std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty());
         else
           ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
 
@@ -1221,13 +1289,13 @@ main(int argc, char* argv[])
         {
           update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, sbp);
           if (max_pfval)
-            ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+            std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty());
           else
             ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }
 
         if (os_bpseq)
-          output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel);
+          output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel, max_pfval, fval, fval_pk);
         if (os_bpseq!=&std::cout)
           output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel, output_energy);
         f.erase(fa);
@@ -1235,6 +1303,7 @@ main(int argc, char* argv[])
     }
     else if (Aln::load(a, input.c_str())>0)
     {
+      float fval, fval_pk;
       auto en = build_engine_aln(model, param.empty() ? nullptr : param.c_str(), beam_size);
       if (!en) 
       {
@@ -1258,7 +1327,7 @@ main(int argc, char* argv[])
         }
         
         if (max_pfval)
-          ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+          std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty());
         else
           ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
 
@@ -1266,13 +1335,13 @@ main(int argc, char* argv[])
         {
           update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, sbp);
           if (max_pfval)
-            ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+            std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty());
           else
             ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }
 
         if (os_bpseq)
-          output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
+          output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel, max_pfval, fval, fval_pk);
         if (os_mfa)
           output_mfa(*os_mfa, *aln, bpseq, plevel);
         if (os_bpseq!=&std::cout && os_mfa!=&std::cout)
