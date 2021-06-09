@@ -5,9 +5,9 @@ Requirements
 ------------
 
 * [Vienna RNA package](https://www.tbi.univie.ac.at/RNA/) (>= 2.2.0)
-* [GNU Linear Programming Kit](http://www.gnu.org/software/glpk/) (>=4.41)
-  <!-- [Gurobi Optimizer](http://www.gurobi.com/) (>=2.0)
-  or [ILOG CPLEX](http://www.ibm.com/software/products/ibmilogcple/) (>=12.0) -->
+* [GNU Linear Programming Kit](http://www.gnu.org/software/glpk/) (>=4.41),
+  [Gurobi Optimizer](http://www.gurobi.com/) (>=8.0),
+  or [ILOG CPLEX](http://www.ibm.com/software/products/ibmilogcple/) (>=12.0)
 
 Install
 -------
@@ -26,23 +26,21 @@ IPknot can take FASTA formatted RNA sequences as input, then predicts their seco
 
 	% ipknot: [options] fasta
 	 -h:       show this message
-	 -t th:    threshold of base-pairing probabilities for each level
-	 -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)
-               (default: -g 4 -g 8)
-	 -e model: probabilistic model (default: McCaskill)
+	 -t th:    threshold of base-pairing probabilities for each level (default: auto,auto)
+	 -e model: probabilistic model (default: LinearPartition-C)
      -b:       output the prediction via BPSEQ format
 
 	% ipknot drz_Ppac_1_1.fa
 	>drz_Ppac_1_1
 	GACUCGCUUGACUGUUCACCUCCCCGUGGUGCGAGUUGGACACCCACCACUCGCAUUCUUCACCUAUUGUUUAAUUGUGCUUGUGGUGGGUGACUGAGAAACAGUC
-	.((((((..[[..[[..(((.......)))))))))....((((((((((..((((..((............))..))))..)))))))))).((.....]]))]]
+	.[[[[[...(((((((((((.......))))]]]]].((.((((((((((..((((....................))))..)))))))))).))....)))))))
 
 ### Aligned sequences
 
 IPknot can also take CLUSTAL formatted RNA alignments produced by CLUSTALW and MAFFT, then predicts their common secondary structures.
 
 	% clustalw RF00005.fa
-	% ipknot RF00005.aln
+	% ipknot -e Boltzmann RF00005.aln
 	>J01390-1/6861-6
 	--------CAGGUUAGAGCCAGGUGGUU--AGGCGUCUUGUUUGGGUCAAGAAAUU-GUUAUGUUCGAAUCAUAAUAACCUGA-
 	........(((((((..(((...........))).(((((.......)))))......(((((.......))))))))))))..

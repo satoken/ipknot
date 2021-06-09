@@ -978,8 +978,10 @@ auto
 build_engine_seq(const char* model, const char* param, uint beam_size=100)
 {
   std::unique_ptr<BPEngineSeq> en;
-  if (model==nullptr || strcasecmp(model, "McCaskill")==0)
+  if (model==nullptr || strcasecmp(model, "McCaskill")==0 || strcasecmp(model, "Boltzmann")==0)
     en = std::make_unique<RNAfoldModel>(param);
+  else if (strcasecmp(model, "ViennaRNA")==0)
+    en = std::make_unique<RNAfoldModel>("default");
   else if (strcasecmp(model, "CONTRAfold")==0)
     en = std::make_unique<CONTRAfoldModel>();
 #if 0
@@ -996,9 +998,9 @@ build_engine_seq(const char* model, const char* param, uint beam_size=100)
   else if (strcasecmp(model, "nupack")==0)
     en = std::make_unique<NupackModel>(param);
 #endif
-  else if (strcasecmp(model, "LinearPartition")==0 || strcasecmp(model, "lpc")==0)
+  else if (strcasecmp(model, "LinearPartition-C")==0 || strcasecmp(model, "lpc")==0)
     en = std::make_unique<LinearPartitionModel>(false, beam_size);
-  else if (strcasecmp(model, "LinearPartitionV")==0 || strcasecmp(model, "lpv")==0)
+  else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
     en = std::make_unique<LinearPartitionModel>(true, beam_size);
   return en;
 }
@@ -1020,9 +1022,14 @@ build_engine_aln(const std::vector<std::string>& model, const char* param, uint 
     for (const auto mo : model) 
     {
       auto m = mo.c_str();
-      if (strcasecmp(m, "McCaskill")==0)
+      if (strcasecmp(m, "McCaskill")==0 || strcasecmp(m, "Boltzmann")==0)
       {
         auto e = std::make_unique<RNAfoldModel>(param);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "ViennaRNA")==0)
+      {
+        auto e = std::make_unique<RNAfoldModel>("default");
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
       else if (strcasecmp(m, "CONTRAfold")==0)
@@ -1034,12 +1041,12 @@ build_engine_aln(const std::vector<std::string>& model, const char* param, uint 
       {
         en_a.push_back(std::make_unique<AlifoldModel>(param));
       }
-      else if (strcasecmp(m, "LinearPartition")==0 || strcasecmp(m, "lpc")==0)
+      else if (strcasecmp(m, "LinearPartition-C")==0 || strcasecmp(m, "lpc")==0)
       {
         auto e = std::make_unique<LinearPartitionModel>(false, beam_size);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
-      else if (strcasecmp(m, "LinearPartitionV")==0 || strcasecmp(m, "lpv")==0)
+      else if (strcasecmp(m, "LinearPartition-V")==0 || strcasecmp(m, "lpv")==0)
       {
         auto e = std::make_unique<LinearPartitionModel>(true, beam_size);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
@@ -1091,7 +1098,7 @@ main(int argc, char* argv[])
     ("input", "FASTA-formatted file or ALN-formatted file",
       cxxopts::value<std::string>(), "FASTA_OR_ALN")
     ("e,model", "Probabilistic model",
-      cxxopts::value<std::vector<std::string>>()->default_value("McCaskill"), "MODEL")
+      cxxopts::value<std::vector<std::string>>()->default_value("LinearPartition-C"), "MODEL")
     ("r,refinement", "The number of the iterative refinement",
       cxxopts::value<int>()->default_value("1"), "N")
 #if 0
@@ -1300,6 +1307,21 @@ main(int argc, char* argv[])
         return 1;
       }
 
+      if (verbose)
+      {
+        std::cerr << "Model: ";
+        std::copy(std::begin(model), std::end(model), std::ostream_iterator<std::string>(std::cerr, ", "));
+        std::cerr << std::endl;
+        std::cerr << "Thresholds: ";
+        for (auto t: th) 
+        {
+          std::cerr << "(";
+          std::copy(std::begin(t), std::end(t), std::ostream_iterator<float>(std::cerr, ", "));
+          std::cerr << "), ";
+        }
+        std::cerr << std::endl << std::endl;
+      }
+
       while (!f.empty())
       {
         std::list<Fasta>::iterator fa = f.begin();
@@ -1344,6 +1366,21 @@ main(int argc, char* argv[])
       {
         std::cout << options.help() << std::endl;
         return 1;
+      }
+
+      if (verbose)
+      {
+        std::cerr << "Model: ";
+        std::copy(std::begin(model), std::end(model), std::ostream_iterator<std::string>(std::cerr, ", "));
+        std::cerr << std::endl;
+        std::cerr << "Thresholds: ";
+        for (auto t: th) 
+        {
+          std::cerr << "(";
+          std::copy(std::begin(t), std::end(t), std::ostream_iterator<float>(std::cerr, ", "));
+          std::cerr << "), ";
+        }
+        std::cerr << std::endl << std::endl;
       }
 
       while (!a.empty())

@@ -113,7 +113,7 @@ void BeamCKYParser::prepare(unsigned len) {
 }
 
 bool BeamCKYParser::allow_paired(int i, int j, const vector<int>* cons, char nuci, char nucj) {
-    assert(i<=j);
+    //assert(i<=j); TODO: may be a bug
     return ((*cons)[i] == CONSTRAINT::DOT || (*cons)[i] == CONSTRAINT::L || (*cons)[i] == CONSTRAINT::LR || (*cons)[i] == j) 
         && ((*cons)[j] == CONSTRAINT::DOT || (*cons)[j] == CONSTRAINT::R || (*cons)[j] == CONSTRAINT::LR || (*cons)[j] == i)
         && _allowed_pairs[nuci][nucj];

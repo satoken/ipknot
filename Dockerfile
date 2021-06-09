@@ -40,5 +40,5 @@ COPY . .
 RUN rm -rf build && mkdir build \
     && cd build \
     && cmake -DCMAKE_BUILD_TYPE=Release .. \
-    #&& cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BULD=ON .. \
+    #&& cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BUILD=ON .. \
     && make && make install
