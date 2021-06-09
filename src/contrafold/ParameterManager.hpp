@@ -77,7 +77,7 @@ class ParameterManager
 {
     std::vector<std::string> names;
     std::vector<ParameterGroup> groups;
-    std::map<std::pair<RealT, RealT> *, int> physical_to_logical;
+    std::map<const std::pair<RealT, RealT> *, int> physical_to_logical;
     std::vector<std::vector<std::pair<RealT, RealT> *> > logical_to_physical;
     std::map<std::string, int> logical_name_to_index;
     
@@ -114,7 +114,5 @@ public:
     size_t GetNumPhysicalParameters() const { return physical_to_logical.size(); }
     size_t GetNumLogicalParameters() const { return logical_to_physical.size(); }
 };
-
-#include "ParameterManager.ipp"
 
 #endif

@@ -32,6 +32,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <cassert>
+#include <typeinfo>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -40,6 +41,7 @@
 #include <stdexcept>
 #include <iterator>
 #include <algorithm>
+#include <memory>
 
 #include "ip.h"
 #include "fa.h"
@@ -47,13 +49,19 @@
 #include "fold.h"
 #include "nupack/nupack.h"
 #include "bpseq.h"
+#include "cxxopts.hpp"
 
-typedef unsigned int uint;
-typedef std::vector<float> VF;
-typedef std::vector<VF> VVF;
-typedef std::vector<int> VI;
-typedef std::vector<VI> VVI;
-typedef std::vector<VVI> VVVI;
+using uint = unsigned int;
+using VF = std::vector<float>;
+using VVF = std::vector<VF>;
+using VI = std::vector<int>;
+using VVI = std::vector<VI>;
+using VVVI = std::vector<VVI>;
+using SVI = std::vector<std::pair<uint,int>>;
+using VSVI = std::vector<SVI>; 
+using VVSVI = std::vector<VSVI>;
+using SVF = std::vector<std::pair<uint,float>>;
+using VSVF = std::vector<SVF>; 
 
 class IPknot
 {
@@ -71,41 +79,97 @@ public:
   {
   }
 
-  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             const std::vector<float>& th, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+public:
+  void solve(uint L, const VF& bp, const VI& offset,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
   {
     IP ip(IP::MAX, n_th_);
-    VVVI v(pk_level_, VVI(L, VI(L, -1)));
-    VVVI w(pk_level_, VVI(L));
+    VVSVI v_l(pk_level_, VSVI(L));
+    VVSVI v_r(pk_level_, VSVI(L));
     VI c_l(L, 0), c_r(L, 0);
+    uint n=0;
 
+    // make objective variables with their weights
+    for (auto j=1; j!=L; ++j)
+    {
+      for (auto i=j-1; i!=-1u; --i)
+      {
+        const float& p=bp[offset[i+1]+(j+1)];
+        for (auto lv=0; lv!=pk_level_; ++lv)
+          if (p>th[lv])
+          {
+            const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+            v_l[lv][i].emplace_back(j, v_ij);
+            v_r[lv][j].emplace_back(i, v_ij);
+            c_l[i]++; c_r[j]++;
+            n++;
+          }
+      }
+    }
+    ip.update();
+
+    if (n>0)
+      solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+    else
+    {
+      bpseq.resize(L);
+      std::fill(std::begin(bpseq), std::end(bpseq), -1);
+      plevel.resize(L);
+      std::fill(std::begin(plevel), std::end(plevel), -1);
+    }
+  }
+
+  void solve(uint L, const VSVF& bp,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
+  {
+    IP ip(IP::MAX, n_th_);
+    VVSVI v_l(pk_level_, VSVI(L));
+    VVSVI v_r(pk_level_, VSVI(L));
+    VI c_l(L, 0), c_r(L, 0);
+    uint n=0;
+
+    // make objective variables with their weights
+    for (auto i=1; i<=L; ++i)
+    {
+      for (const auto [j, p]: bp[i])
+        if (i<j)
+          for (auto lv=0; lv!=pk_level_; ++lv)
+            if (p>th[lv])
+            {
+              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+              v_l[lv][i-1].emplace_back(j-1, v_ij);
+              v_r[lv][j-1].emplace_back(i-1, v_ij);
+              c_l[i-1]++; c_r[j-1]++;
+              n++;
+            }
+    }
+    ip.update();
+
+    if (n>0)
+      solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+    else
+    {
+      bpseq.resize(L);
+      std::fill(std::begin(bpseq), std::end(bpseq), -1);
+      plevel.resize(L);
+      std::fill(std::begin(plevel), std::end(plevel), -1);
+    }
+  }
+
+private:
+  void solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
+  {
     if (!constraint)
     {
       bpseq.resize(L);
       std::fill(bpseq.begin(), bpseq.end(), -2);
     }
     
-    // make objective variables with their weights
-    for (uint j=1; j!=L; ++j)
-    {
-      for (uint i=j-1; i!=-1u; --i)
-      {
-        const float& p=bp[offset[i+1]+(j+1)];
-        for (uint lv=0; lv!=pk_level_; ++lv)
-          if (p>th[lv])
-          {
-            v[lv][i][j] = ip.make_variable(p*alpha_[lv]);
-            w[lv][i].push_back(j);
-            c_l[i]++; c_r[j]++;
-          }
-      }
-    }
-    ip.update();
-
     // constraint 1: each s_i is paired with at most one base
-    for (uint i=0; i!=L; ++i)
+    for (auto i=0; i!=L; ++i)
     {
-      int row_l = -1, row_r = -1;
+      auto row_l = -1, row_r = -1;
       switch (bpseq[i])
       {
         default:
@@ -140,27 +204,35 @@ public:
         row_l = row_r = ip.make_constraint(IP::UP, 0, 1); // fallback to no constraint
       }
       
-      for (uint lv=0; lv!=pk_level_; ++lv)
+      for (auto lv=0; lv!=pk_level_; ++lv)
       {
-        for (uint j=0; j<i; ++j)
-          if (v[lv][j][i]>=0)
-            ip.add_constraint(row_r, v[lv][j][i], 1);
-        for (uint j=i+1; j<L; ++j)
-          if (v[lv][i][j]>=0)
-            ip.add_constraint(row_l, v[lv][i][j], 1);
+        for (const auto [j, v_ij]: v_r[lv][i]) 
+          ip.add_constraint(row_r, v_ij, 1);
+        for (const auto [j, v_ij]: v_l[lv][i])
+          ip.add_constraint(row_l, v_ij, 1);
       }
 
       if (bpseq[i]>=0 && i<bpseq[i]) // paired with j=bpseq[i]
       {
+        const auto j = bpseq[i];
         int c=0;
-        for (uint lv=0; lv!=pk_level_; ++lv)
-          if (v[lv][i][bpseq[i]]>=0) c++;
+        std::vector<int> vals(pk_level_, -1);
+        for (auto lv=0; lv!=pk_level_; ++lv)
+        {
+          for (auto [temp, v_ij]: v_l[lv][i])
+            if (j==temp) 
+            { 
+              vals[lv] = v_ij; 
+              c++;
+              break; 
+            }
+        }
         if (c>0)
         {
-          int row = ip.make_constraint(IP::FX, 1, 1);
-          for (uint lv=0; lv!=pk_level_; ++lv)
-            if (v[lv][i][bpseq[i]]>=0)  
-              ip.add_constraint(row, v[lv][i][bpseq[i]], 1);
+          auto row = ip.make_constraint(IP::FX, 1, 1);
+          for (auto lv=0; lv!=pk_level_; ++lv)
+            if (vals[lv]>=0)
+              ip.add_constraint(row, vals[lv], 1);
         }
         else
           std::cerr << "invalid constraint for the bases " << i+1 << " and " << bpseq[i]+1 << ", ignored." << std::endl;
@@ -170,88 +242,68 @@ public:
     if (levelwise_)
     {
       // constraint 2: disallow pseudoknots in x[lv]
-      for (uint lv=0; lv!=pk_level_; ++lv)
-        for (uint i=0; i<w[lv].size(); ++i)
-          for (uint p=0; p<w[lv][i].size(); ++p)
-          {
-            uint j=w[lv][i][p];
-            for (uint k=i+1; k<j; ++k)
-              for (uint q=0; q<w[lv][k].size(); ++q)
-              {
-                uint l=w[lv][k][q];
+      for (auto lv=0; lv!=pk_level_; ++lv)
+        for (auto i=0; i<v_l[lv].size(); ++i)
+          for (auto [j, v_ij]: v_l[lv][i])
+            for (auto k=i+1; k<j; ++k)
+              for (auto [l, v_kl]: v_l[lv][k])
                 if (j<l)
                 {
-                  int row = ip.make_constraint(IP::UP, 0, 1);
-                  ip.add_constraint(row, v[lv][i][j], 1);
-                  ip.add_constraint(row, v[lv][k][l], 1);
+                  auto row = ip.make_constraint(IP::UP, 0, 1);
+                  ip.add_constraint(row, v_ij, 1);
+                  ip.add_constraint(row, v_kl, 1);
                 }
-              }
-          }
 
       // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
-      for (uint lv=1; lv!=pk_level_; ++lv)
-        for (uint k=0; k<w[lv].size(); ++k)
-          for (uint q=0; q<w[lv][k].size(); ++q)
-          {
-            uint l=w[lv][k][q];
-            for (uint plv=0; plv!=lv; ++plv)
+      for (auto lv=1; lv!=pk_level_; ++lv)
+        for (auto k=0; k<v_l[lv].size(); ++k)
+          for (auto [l, v_kl]: v_l[lv][k])
+            for (auto plv=0; plv!=lv; ++plv)
             {
               int row = ip.make_constraint(IP::LO, 0, 0);
-              ip.add_constraint(row, v[lv][k][l], -1);
-              for (uint i=0; i<k; ++i)
-                for (uint p=0; p<w[plv][i].size(); ++p)
-                {
-                  uint j=w[plv][i][p];
+              ip.add_constraint(row, v_kl, -1);
+              for (auto i=0; i<k; ++i)
+                for (auto [j, v_ij]: v_l[plv][i])
                   if (k<j && j<l)
-                    ip.add_constraint(row, v[plv][i][j], 1);
-                }
-              for (uint i=k+1; i<l; ++i)
-                for (uint p=0; p<w[plv][i].size(); ++p)
-                {
-                  uint j=w[plv][i][p];
+                    ip.add_constraint(row, v_ij, 1);
+
+              for (auto i=k+1; i<l; ++i)
+                for (auto [j, v_ij]: v_l[plv][i])
                   if (l<j)
-                    ip.add_constraint(row, v[plv][i][j], 1);
-                }
+                    ip.add_constraint(row, v_ij, 1);
             }
-          }
     }
 
     if (stacking_constraints_)
     {
-      for (uint lv=0; lv!=pk_level_; ++lv)
+      for (auto lv=0; lv!=pk_level_; ++lv)
       {
         // upstream
-        for (uint i=0; i<L; ++i)
+        for (auto i=0; i<L; ++i)
         {
           int row = ip.make_constraint(IP::LO, 0, 0);
-          for (uint j=0; j<i; ++j)
-            if (v[lv][j][i]>=0)
-              ip.add_constraint(row, v[lv][j][i], -1);
+          for (auto [j, v_ji]: v_r[lv][i])
+            ip.add_constraint(row, v_ji, -1);
           if (i>0)
-            for (uint j=0; j<i-1; ++j)
-              if (v[lv][j][i-1]>=0)
-                ip.add_constraint(row, v[lv][j][i-1], 1);
+            for (auto [j, v_ji]: v_r[lv][i-1])
+              ip.add_constraint(row, v_ji, 1);
           if (i+1<L)
-            for (uint j=0; j<i+1; ++j)
-              if (v[lv][j][i+1]>=0)
-                ip.add_constraint(row, v[lv][j][i+1], 1);
+            for (auto [j, v_ji]: v_r[lv][i+1])
+              ip.add_constraint(row, v_ji, 1);
         }
 
         // downstream
-        for (uint i=0; i<L; ++i)
+        for (auto i=0; i<L; ++i)
         {
-          int row = ip.make_constraint(IP::LO, 0, 0);
-          for (uint j=i+1; j<L; ++j)
-            if (v[lv][i][j]>=0)
-              ip.add_constraint(row, v[lv][i][j], -1);
+          auto row = ip.make_constraint(IP::LO, 0, 0);
+          for (auto [j, v_ij]: v_l[lv][i])
+            ip.add_constraint(row, v_ij, -1);
           if (i>0)
-            for (uint j=i; j<L; ++j)
-              if (v[lv][i-1][j]>=0)
-                ip.add_constraint(row, v[lv][i-1][j], 1);
+            for (auto [j, v_ij]: v_l[lv][i-1])
+              ip.add_constraint(row, v_ij, 1);
           if (i+1<L)
-            for (uint j=i+2; j<L; ++j)
-              if (v[lv][i+1][j]>=0)
-                ip.add_constraint(row, v[lv][i+1][j], 1);
+            for (auto [j, v_ij]: v_l[lv][i+1])
+              ip.add_constraint(row, v_ij, 1);
         }
       }
     }
@@ -264,45 +316,89 @@ public:
     std::fill(bpseq.begin(), bpseq.end(), -1);
     plevel.resize(L);
     std::fill(plevel.begin(), plevel.end(), -1);
-    for (uint lv=0; lv!=pk_level_; ++lv)
-    {
-      for (uint i=0; i<L; ++i)
-        for (uint j=i+1; j<L; ++j)
-          if (v[lv][i][j]>=0 && ip.get_value(v[lv][i][j])>0.5)
+    for (auto lv=0; lv!=pk_level_; ++lv)
+      for (auto i=0; i<L; ++i)
+        for (const auto [j, v_ij]: v_l[lv][i])
+          if (ip.get_value(v_ij)>0.5)
           {
             bpseq[i]=j; bpseq[j]=i;
             plevel[i]=plevel[j]=lv;
           }
-    }
 
     if (!levelwise_)
       decompose_plevel(bpseq, plevel);
   }
 
-  void solve(uint L, const std::vector<float>& bp, const std::vector<int>& offset,
-             EnumParam<float>& ep, std::vector<int>& bpseq, std::vector<int>& plevel, bool constraint) const
+public:
+#if 0
+  auto solve(uint L, const VF& bp, const VI& offset,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const -> std::pair<float,float>
   {
-    std::vector<float> th(ep.size());
-    std::vector<int> bpseq_temp;
-    std::vector<int> plevel_temp;
-    float max_mcc=-100.0;
-    std::cerr << "Search for the best thresholds by pseudo expected MCC:" << std::endl;
+    VF th(ep.size());
+    VI bpseq_temp, plevel_temp;
+    float max_fval=-100.0;
+    std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
     do {
       ep.get(th);
+      uint i;
+      for (i=1; i!=th.size(); i++)
+        if (th[i-1]<th[i]) break;
+      if (i!=th.size()) continue;
       std::cerr << "th=";
       std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
       solve(L, bp, offset, th, bpseq_temp, plevel_temp, constraint);
-      float sen, ppv, mcc;
-      compute_expected_accuracy(bpseq_temp, bp, offset, sen, ppv, mcc);
-      std::cerr << " pMCC=" << mcc << std::endl;
-      if (mcc>max_mcc)
+      const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp, offset);
+      std::cerr << " pF=" << fval << std::endl;
+      if (fval>max_fval)
       {
-        max_mcc = mcc;
+        max_fval = fval;
         bpseq = bpseq_temp;
         plevel = plevel_temp;
       }
     } while (!ep.succ());
-    std::cerr << "max pMCC=" << max_mcc << std::endl << std::endl;
+    std::cerr << "max pF=" << max_fval << std::endl << std::endl;
+
+    return {max_fval, 0.};
+  }
+#endif
+
+  auto solve(uint L, const VSVF& bp,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose=false) const -> std::pair<float,float>
+  {
+    std::vector<float> th(ep.size());
+    VI bpseq_temp, plevel_temp;
+    float max_fval=-100.0, max_fval_pk=-100.0;
+    if (verbose)
+      std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
+    const auto sump = compute_sump_pk(bp);
+    do {
+      ep.get(th);
+      uint i;
+      for (i=1; i!=th.size(); i++)
+        if (th[i-1]<th[i]) break;
+      if (i!=th.size()) continue;
+      if (verbose)
+      {
+        std::cerr << "th=";
+        std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
+      }
+      solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
+      const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
+      const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
+      if (verbose)
+        std::cerr << " pF=" << fval << ", " << fval_pk << std::endl;
+      if (fval+fval_pk>max_fval+max_fval_pk)
+      {
+        max_fval = fval;
+        max_fval_pk = fval_pk;
+        bpseq = bpseq_temp;
+        plevel = plevel_temp;
+      }
+    } while (!ep.succ());
+    if (verbose)
+      std::cerr << "max pF=" << max_fval << "," << max_fval_pk << std::endl << std::endl;
+
+    return {max_fval, max_fval_pk};
   }
 
 public:
@@ -348,21 +444,6 @@ public:
     std::vector<int> v_;
   };
 
-private:
-  struct cmp_by_degree : public std::less<int>
-  {
-    cmp_by_degree(const std::vector< std::vector<int> >& g) : g_(g) {}
-    bool operator()(int x, int y) const { return g_[y].size()<g_[x].size(); }
-    const std::vector< std::vector<int> >& g_;
-  };
-
-  struct cmp_by_count : public std::less<int>
-  {
-    cmp_by_count(const std::vector<int>& count) : count_(count) { }
-    bool operator()(int x, int y) const { return count_[y]<count_[x]; }
-    const std::vector<int>& count_;
-  };
-
 public:
   static int
   decompose_plevel(const std::vector<int>& bpseq, std::vector<int>& plevel)
@@ -393,7 +474,7 @@ public:
       if (bpseq[i]>=0 && (int)i<bpseq[i]) 
         v.push_back(i);
     // sort vertices by degree
-    std::sort(v.begin(), v.end(), cmp_by_degree(g));
+    std::sort(v.begin(), v.end(), [&](int x, int y) { return g[y].size() < g[x].size(); });
 
     // determine colors
     std::vector<int> c(L, -1);
@@ -419,7 +500,7 @@ public:
       if (c[i]>=0) count[c[i]]++;
     std::vector<int> idx(count.size());
     for (uint i=0; i!=idx.size(); ++i) idx[i]=i;
-    sort(idx.begin(), idx.end(), cmp_by_count(count));
+    sort(idx.begin(), idx.end(), [&](int x, int y) { return count[y] < count[x]; });
     std::vector<int> rev(idx.size());
     for (uint i=0; i!=rev.size(); ++i) rev[idx[i]]=i;
     plevel.resize(L);
@@ -430,10 +511,22 @@ public:
   }
 
 private:
-  static void
-  compute_expected_accuracy(const std::vector<int>& bpseq,
-                            const std::vector<float>& bp, const std::vector<int>& offset,
-                            float& sen, float& ppv, float& mcc)
+  static auto
+  compute_expected_accuracy(float etp, float etn, float efp, float efn) -> std::tuple<float,float,float,float>
+  {
+    float sen, ppv, mcc, f;
+    sen = ppv = mcc = f = 0;
+    if (etp+efn!=0) sen = etp / (etp + efn);
+    if (etp+efp!=0) ppv = etp / (etp + efp);
+    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
+      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
+    if (sen+ppv!=0) f = 2*sen*ppv/(sen+ppv);
+
+    return {sen, ppv, mcc, f};
+  }
+
+  static auto
+  compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>
   {
     int L  = bpseq.size();
     int L2 = L*(L-1)/2;
@@ -457,11 +550,149 @@ private:
     float efp = N - etp;
     float efn = sump - etp;
 
-    sen = ppv = mcc = 0;
-    if (etp+efn!=0) sen = etp / (etp + efn);
-    if (etp+efp!=0) ppv = etp / (etp + efp);
-    if (etp+efp!=0 && etp+efn!=0 && etn+efp!=0 && etn+efn!=0)
-      mcc = (etp*etn-efp*efn) / std::sqrt((etp+efp)*(etp+efn)*(etn+efp)*(etn+efn));
+    return compute_expected_accuracy(etp, etn, efp, efn);
+  }
+
+  static auto
+  compute_expected_accuracy(const VI& bpseq, const VSVF& bp) -> std::tuple<float,float,float,float>
+  {
+    int L  = bpseq.size();
+    int L2 = L*(L-1)/2;
+    int N = 0;
+
+    float sump = 0.0;
+    float etp  = 0.0;
+
+    for (uint i=1; i!=bp.size(); ++i) 
+      for (const auto [j, p]: bp[i])
+        if (i<j)
+        {
+            sump += p; 
+            if (bpseq[i-1]==j-1)
+            {
+              etp += p;
+              N++;
+            }
+        }
+
+    float etn = L2 - N - sump + etp;
+    float efp = N - etp;
+    float efn = sump - etp;
+
+    return compute_expected_accuracy(etp, etn, efp, efn);
+  }
+
+  static auto
+  compute_expected_accuracy_pk(const VI& bpseq, const VSVF& bp) -> std::tuple<float,float,float,float>
+  {
+    int L  = bpseq.size();
+    int L2 = L*(L-1)/2;
+    int N = 0;
+
+    float sump = 0.0;
+    float etp  = 0.0;
+
+    for (uint i=1; i!=bp.size(); ++i) 
+      for (const auto [j, p]: bp[i])
+        if (i<j)
+          for (uint k=i+1; k!=j; ++k)
+            for (const auto [l, q]: bp[k])
+              if (/*k<l &&*/ j<l)
+              {
+                sump += p*q;
+                if (bpseq[i-1]==j-1 && bpseq[k-1]==l-1)
+                {
+                  etp += p*q;
+                  N++;
+                }
+              } 
+
+    float etn = L2 - N - sump + etp;
+    float efp = N - etp;
+    float efn = sump - etp;
+
+    return compute_expected_accuracy(etp, etn, efp, efn);
+  }
+
+  static auto
+  compute_sump_pk(const VSVF& bp) -> float
+  {
+    float sump = 0.0;
+
+    for (uint i=1; i!=bp.size(); ++i) 
+      for (const auto [j, p]: bp[i])
+        if (i<j /*&& p>=DEFAULT_THRESHOLD*/)
+          for (uint k=i+1; k!=j; ++k)
+            for (const auto [l, q]: bp[k])
+              if (/*k<l &&*/ j<l /*&& q>=DEFAULT_THRESHOLD*/)
+                sump += p*q;
+
+    return sump;
+  }
+
+  static auto
+  compute_expected_accuracy_pk(const VI& bpseq, const VSVF& bp, float sump) -> std::tuple<float,float,float,float>
+  {
+    int L  = bpseq.size();
+    int L2 = L*(L-1)/2;
+    int N = 0;
+
+    float etp  = 0.0;
+    for (auto i=0; i!=bpseq.size(); ++i) 
+    {
+      const auto j=bpseq[i];
+      if (j>=0 && i<j)
+      {
+        const auto r = std::lower_bound(std::begin(bp[i+1]), std::end(bp[i+1]), std::make_pair<uint,float>(j+1, 0.0));
+        const auto p = r!=std::end(bp[i+1]) && r->first==j+1 ? r->second : 0.;
+        for (auto k=i+1; k!=j; ++k)
+        {
+          const auto l=bpseq[k];
+          if (k>=0 && k<l && j<l)
+          {
+            const auto r = std::lower_bound(std::begin(bp[k+1]), std::end(bp[k+1]), std::make_pair<uint,float>(l+1, 0.0));
+            const auto q = r!=std::end(bp[k+1]) && r->first==l+1 ? r->second : 0.;
+            etp += p*q;
+            N++;
+          }
+        }
+      }
+    }
+
+    float etn = L2 - N - sump + etp;
+    float efp = N - etp;
+    float efn = sump - etp;
+
+    return compute_expected_accuracy(etp, etn, efp, efn);
+  }
+
+  auto check_pseudoknots(const VI& bpseq) -> VI
+  {
+    std::vector<std::pair<int,int>> st;
+    VI bpseq_pk(bpseq.size(), -1);
+    for (auto i=0; i!=bpseq.size(); i++)
+    {
+      auto j = bpseq[i];
+      if (i<j) 
+      {
+        st.emplace_back(i, j);
+      }
+      else if (j>=0)
+      {
+        for (auto it=std::rbegin(st); it!=std::rend(st); ++it) 
+        {
+          const auto [k, l] = *it;
+          if (k==j && l==j)
+          {
+            st.erase((++it).base());
+            break;
+          }
+          bpseq_pk[i]=j; bpseq_pk[j]=i;
+          bpseq_pk[k]=l; bpseq_pk[l]=k;
+        }
+      }
+    }
+    return bpseq_pk;
   }
 
   static uint length(const std::string& seq) { return seq.size(); }
@@ -477,7 +708,7 @@ private:
 };
 
 std::string
-make_parenthsis(const std::vector<int>& bpseq, const std::vector<int>& plevel)
+make_parenthsis(const VI& bpseq, const VI& plevel)
 {
   const int n_support_parens=4;
   const char* left_paren="([{<";
@@ -517,8 +748,7 @@ timing()
 template < class SEQ, class EN >
 void
 update_bpm(uint pk_level, const SEQ& seq, EN& en,
-           const std::vector<int>& bpseq, const std::vector<int>& plevel,
-           std::vector<float>& bp, std::vector<int>& offset)
+           const VI& bpseq, const VI& plevel, VF& bp, VI& offset)
 {
   // update the base-pairing probability matrix by the previous result
   uint L=bpseq.size();
@@ -564,7 +794,7 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
     en.calculate_posterior(seq, str, bpl, offsetl);
     assert(bp.size()==bpl.size());
     // update the base-pairing probability matrix
-#if 0 // original hehaivior
+#if 0 // original behaivior
     for (uint k=0; k!=bp.size(); ++k) bp[k]+=bpl[k];
 #else
     for (uint j=1; j!=L; ++j)
@@ -578,6 +808,71 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
 #ifndef NDEBUG
   for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
 #endif
+}
+
+template < class SEQ, class EN>
+void
+update_bpm(uint pk_level, const SEQ& seq, EN& en, const VI& bpseq, const VI& plevel, VSVF& sbp)
+{
+  // update the base-pairing probability matrix by the previous result
+  uint L=bpseq.size();
+  sbp.resize(L+1);
+  
+  for (uint l=0; l!=pk_level; ++l)
+  {
+    // make the constraint string
+    std::string str(L, '?');
+    for (uint i=0; i!=bpseq.size(); ++i)
+    {
+      switch (bpseq[i])
+      {
+        case BPSEQ::U: str[i] = '.'; break;
+        case BPSEQ::L: str[i] = '<'; break;
+        case BPSEQ::R: str[i] = '>'; break;
+        case BPSEQ::LR: str[i] = '|'; break;
+        case BPSEQ::DOT: str[i] = '?'; break;
+        default:
+          if (bpseq[i]>=0 && (int)i<bpseq[i])
+          {
+            if ((int)l==plevel[i])
+            {
+              str[i]='('; str[bpseq[i]]=')';
+            }
+            else
+            {
+              str[i]=str[bpseq[i]]='.';
+            }
+          }
+          break;
+      }
+    }
+
+    // re-folding the seq with the constraint
+    auto sbpl = en.calculate_posterior(seq, str);
+    assert(sbp.size()==sbpl.size());
+
+    // update the base-pairing probability matrix
+    for (uint i=1; i!=sbpl.size(); i++) 
+    {
+      for (const auto [jl, vl]: sbpl[i]) 
+      {
+        auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
+        auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
+                            [&](const auto& x) { return x.first == jl; });
+        if (re != std::end(sbp[i]))
+          re->second += v;
+        else
+          sbp[i].emplace_back(jl, v);
+      }
+    }
+  }
+
+  VSVF sbp_temp(L+1);
+  for (uint i=1; i!=sbp.size(); i++)
+    for (const auto [j, v]: sbp[i]) 
+      if (v>=DEFAULT_THRESHOLD) 
+        sbp_temp[i].emplace_back(j, v);
+  std:swap(sbp, sbp_temp);
 }
 
 static
@@ -617,8 +912,7 @@ static
 void
 output_fa(std::ostream& os,
           const std::string& desc, const std::string& seq,
-          const std::vector<int>& bpseq, const std::vector<int>& plevel, 
-          bool output_energy)
+          const VI& bpseq, const VI& plevel, bool output_energy)
 {
   if (output_energy)
   {
@@ -639,8 +933,7 @@ output_fa(std::ostream& os,
 
 static
 void
-output_mfa(std::ostream& os, const Aln& aln,
-           const std::vector<int>& bpseq, const std::vector<int>& plevel)
+output_mfa(std::ostream& os, const Aln& aln, const VI& bpseq, const VI& plevel)
 {
   os << ">SS_cons" << std::endl
      << make_parenthsis(bpseq, plevel) << std::endl;
@@ -658,50 +951,115 @@ static
 void
 output_bpseq(std::ostream& os,
              const std::string& desc, const std::string& seq,
-             const std::vector<int>& bpseq, const std::vector<int>& plevel)
+             const VI& bpseq, const VI& plevel, 
+             bool max_pfval, float fval, float fval_pk)
 {
-  os << "# " << desc << std::endl;
+  os << "# " << desc; 
+  if (max_pfval)
+    os << " (max pF=" << fval << "," << fval_pk << ")";
+  os << std::endl;
   for (uint i=0; i!=bpseq.size(); ++i)
     os << i+1 << " " << seq[i] << " " << bpseq[i]+1 << std::endl;
 }
 
 template <class T>
 std::vector<T>
-parse_csv_line(const char* l)
+parse_csv_line(const char* l, char delim=',')
 {
   std::string s;
   std::vector<T> r;
   std::istringstream ss(l);
-  while (std::getline(ss, s, ','))
+  while (std::getline(ss, s, delim))
     r.push_back(atof(s.c_str()));
   return r;
 }
 
-void
-usage(const char* progname)
+auto
+build_engine_seq(const char* model, const char* param, uint beam_size=100)
 {
-  std::cout << "IPknot version " << PACKAGE_VERSION << std::endl
-            << "  Available probabilistic models: McCaskill, CONTRAfold, Alifold, NUPACK"
-            << std::endl << std::endl;
-
-  std::cout << progname << ": [options] fasta" << std::endl
-            << ""
-            << " -h:       show this message" << std::endl
-    //      << " -a alpha: weight for each level" << std::endl
-            << " -t th:    threshold of base-pairing probabilities for each level" << std::endl
-            << " -g gamma: weight for true base-pairs equivalent to -t 1/(gamma+1)" << std::endl
-            << "           (default: -g 2 -g 4)" << std::endl
-    //      << " -m:       select thresholds that maxmize pseudo MCC" << std::endl
-            << " -e model: probabilistic model (default: McCaskill)" << std::endl
-            << " -c file:  constraint folding" << std::endl
-            << " -r n:     the number of the iterative refinement (default: 0)" << std::endl
-            << " -i:       allow isolated base-pairs" << std::endl
-            << " -b:       output the prediction by BPSEQ format" << std::endl
-            << " -P param: read the energy parameter file for the Vienna RNA package" << std::endl
-#ifndef WITH_GLPK
-            << " -n n_th:  specify the number of threads (default: 1)" << std::endl
+  std::unique_ptr<BPEngineSeq> en;
+  if (model==nullptr || strcasecmp(model, "McCaskill")==0)
+    en = std::make_unique<RNAfoldModel>(param);
+  else if (strcasecmp(model, "CONTRAfold")==0)
+    en = std::make_unique<CONTRAfoldModel>();
+#if 0
+  else if (strcasecmp(model, "nupack")==0)
+    if (param)
+      en = std::make_unique<NupackModel>(param);
+    else
+      en = std::make_unique<NupackModel>(2);
+  else if (strcasecmp(model, "nupack03")==0)
+    en = std::make_unique<NupackModel>(0);
+  else if (strcasecmp(model, "nupack09")==0)
+    en = std::make_unique<NupackModel>(1);
+#else
+  else if (strcasecmp(model, "nupack")==0)
+    en = std::make_unique<NupackModel>(param);
 #endif
-    ;
+  else if (strcasecmp(model, "LinearPartition")==0 || strcasecmp(model, "lpc")==0)
+    en = std::make_unique<LinearPartitionModel>(false, beam_size);
+  else if (strcasecmp(model, "LinearPartitionV")==0 || strcasecmp(model, "lpv")==0)
+    en = std::make_unique<LinearPartitionModel>(true, beam_size);
+  return en;
+}
+
+auto
+build_engine_aln(const std::vector<std::string>& model, const char* param, uint beam_size=100)
+{
+  std::unique_ptr<BPEngineAln> mix_en;
+  std::vector<std::unique_ptr<BPEngineAln>> en_a;
+  if (model.empty())
+  {
+    auto e = std::make_unique<RNAfoldModel>(param);
+    en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+    en_a.push_back(std::make_unique<AlifoldModel>(param));
+    mix_en = std::make_unique<MixtureModel>(std::move(en_a));
+  }
+  else
+  {
+    for (const auto mo : model) 
+    {
+      auto m = mo.c_str();
+      if (strcasecmp(m, "McCaskill")==0)
+      {
+        auto e = std::make_unique<RNAfoldModel>(param);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "CONTRAfold")==0)
+      {
+        auto e = std::make_unique<CONTRAfoldModel>();
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "Alifold")==0)
+      {
+        en_a.push_back(std::make_unique<AlifoldModel>(param));
+      }
+      else if (strcasecmp(m, "LinearPartition")==0 || strcasecmp(m, "lpc")==0)
+      {
+        auto e = std::make_unique<LinearPartitionModel>(false, beam_size);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "LinearPartitionV")==0 || strcasecmp(m, "lpv")==0)
+      {
+        auto e = std::make_unique<LinearPartitionModel>(true, beam_size);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else
+        return std::unique_ptr<BPEngineAln>();
+    }
+    if (en_a.size()>1)
+      mix_en = std::make_unique<MixtureModel>(std::move(en_a));
+  }
+  return std::move(mix_en ? mix_en : en_a[0]);
+}
+
+template <typename ... Args>
+std::string format(const std::string& fmt, Args ... args )
+{
+    size_t len = std::snprintf( nullptr, 0, fmt.c_str(), args ... );
+    std::vector<char> buf(len + 1);
+    std::snprintf(&buf[0], len + 1, fmt.c_str(), args ... );
+    return std::string(&buf[0], &buf[0] + len);
 }
 
 int
@@ -710,105 +1068,169 @@ main(int argc, char* argv[])
   char* progname=argv[0];
   // parse options
   uint pk_level=0;
-  char ch;
   std::vector< std::vector<float> > th;
   std::vector<float> alpha;
   bool isolated_bp=false;
-  std::vector<const char*> model;
+  std::vector<std::string> model;
   int n_th=1;
   int n_refinement=0;
-  const char* param=NULL;
+  std::string param;
   bool aux=false;
   bool levelwise=true;
-  bool max_pmcc=false;
+  bool max_pfval=false;
   bool output_energy=false;
-  std::ostream *os_bpseq=NULL;
-  std::ostream *os_mfa=NULL;
+  std::ostream *os_bpseq=nullptr;
+  std::ostream *os_mfa=nullptr;
   std::string constraint;
-  while ((ch=getopt(argc, argv, "a:t:g:me:f:r:ibB:n:P:xulL:Ec:h"))!=-1)
-  {
-    switch (ch)
-    {
-      case 'e':
-        model.push_back(optarg);
-        break;
-      case 'f': case 'r':
-        n_refinement=atoi(optarg);
-        break;
-      case 'a':
-        alpha.push_back(atof(optarg));
-        break;
-      case 'm':
-        max_pmcc=true;
-        break;
-      case 't':
-        th.push_back(parse_csv_line<float>(optarg));
-        break;
-      case 'g':
-      {
-        std::vector<float> temp = parse_csv_line<float>(optarg);
-        for (uint i=0; i!=temp.size(); ++i)
-          temp[i] = 1/(temp[i]+1);
-        th.push_back(temp);
-        break;
-      }
-      case 'i':
-        isolated_bp=true;
-        break;
-      case 'b':
-        os_bpseq=&std::cout;
-        break;
-      case 'B':
-        os_bpseq=new std::ofstream(optarg);
-        if (!dynamic_cast<std::ofstream*>(os_bpseq)->is_open())
-        {
-          perror(optarg);
-          return 1;
-        }
-        break;
-      case 'n':
-        n_th=atoi(optarg);
-        break;
-      case 'P':
-        param=optarg;
-        break;
-      case 'x':
-        aux=true;
-        break;
-      case 'u':
-        levelwise=false;
-        break;
-      case 'l':
-        os_mfa=&std::cout;
-        break;
-      case 'L':
-        os_mfa=new std::ofstream(optarg);
-        if (!dynamic_cast<std::ofstream*>(os_mfa)->is_open())
-        {
-          perror(optarg);
-          return 1;
-        }
-        break;
-      case 'E':
-        output_energy = true;
-        break;
-      case 'c':
-        constraint = optarg;
-        break;
+  uint beam_size;
+  std::string input;
+  bool verbose = false;
 
-      case 'h': case '?': default:
-        usage(progname);
-        return 1;
-        break;
+  cxxopts::Options options{progname, format("IPknot version %s", PACKAGE_VERSION)};
+  options.add_options()
+    ("input", "FASTA-formatted file or ALN-formatted file",
+      cxxopts::value<std::string>(), "FASTA_OR_ALN")
+    ("e,model", "Probabilistic model",
+      cxxopts::value<std::vector<std::string>>()->default_value("McCaskill"), "MODEL")
+    ("r,refinement", "The number of the iterative refinement",
+      cxxopts::value<int>()->default_value("1"), "N")
+#if 0
+    ("a,alpha", "The weight for each level",
+      cxxopts::value<std::vector<float>>(), "ALPHA")
+#endif
+    ("t,threshold", "The threshold of base-pairing probabilities for each level",
+      cxxopts::value<std::vector<std::string>>()->default_value("auto,auto"), "TH")
+    ("g,gamma", "The weight for true base-pairs equivalent to '-t 1/(gamma+1)'",
+      cxxopts::value<std::vector<std::string>>(), "G")
+    ("i,allow-isolated", "Allow isolated base-pairs",
+      cxxopts::value<bool>()->default_value("false"))
+    ("b,bpseq", "Output the prediction by BPSEQ format",
+      cxxopts::value<bool>()->default_value("false"))
+    ("B,bpseq-file", "Output file for BPSEQ format",
+      cxxopts::value<std::string>(), "FILE")
+#ifndef WITH_GLPK
+    ("n,threads", "The number of threads for the available solvers",
+      cxxopts::value<uint>()->default_value("1"), "N")
+#endif
+    ("P,param", "Read the energy parameter file for Vienna RNA package",
+      cxxopts::value<std::string>(), "FILE")
+    ("x,aux", "Import an auxiliary file for base-pairing probabilities",
+      cxxopts::value<bool>()->default_value("false"))
+    ("u,no-levelwise", "Do not perform the levelwise prediction",
+      cxxopts::value<bool>()->default_value("false"))
+    ("l,mfa", "Output the prediction with the given mulple alignment",
+      cxxopts::value<bool>()->default_value("false"))
+    ("L,mfa-file", "Output file for the multiple alignment",
+      cxxopts::value<std::string>(), "FILE")
+    ("E,energy", "Output with the free energy",
+      cxxopts::value<bool>()->default_value("false"))
+    ("c,constraint", "Specify the structure constraint by a BPSEQ formatted file",
+      cxxopts::value<std::string>(), "FILE")
+    ("V,verbose", "Verbose output")
+    ("beam-size", "Beam size for LinearPartition algorithm",
+      cxxopts::value<uint>()->default_value("100"), "N")
+    ("version", "Print version")
+    ("h,help", "Print usage"); 
+  options.parse_positional({"input"});
+  options
+    .positional_help("FASTA_OR_ALN")
+    .show_positional_help();
+
+  auto res = options.parse(argc, argv);
+  if (res.count("version")) 
+  {
+    std::cout << format("IPknot version %s", PACKAGE_VERSION) << std::endl;
+    exit(0);
+  }
+  if (res.count("help") || res.count("input")==0)
+  {
+    std::cout << options.help() << std::endl;
+    exit(0);
+  }
+
+  model = res["model"].as<std::vector<std::string>>();
+  n_refinement = res["refinement"].as<int>();
+  isolated_bp = res["allow-isolated"].as<bool>();
+  if (res.count("param")) param = res["param"].as<std::string>();
+  aux = res["aux"].as<bool>();
+  levelwise = !res["no-levelwise"].as<bool>();
+#ifndef WITH_GLPK
+  n_th = res["threads"].as<uint>();
+#endif
+  output_energy = res["energy"].as<bool>();
+  if (res.count("constraint")) constraint = res["constraint"].as<std::string>();
+  beam_size = res["beam-size"].as<uint>();
+  verbose = res["verbose"].as<bool>();
+  input = res["input"].as<std::string>();
+
+  if (res.count("bpseq"))
+    os_bpseq = &std::cout;
+  if (res.count("bpseq-file"))
+  {
+    auto f = res["bpseq-file"].as<std::string>().c_str();
+    os_bpseq = new std::ofstream(f);
+    if (!dynamic_cast<std::ofstream*>(os_bpseq)->is_open())
+    {
+      perror(f);
+      return 1;
     }
   }
-  argc -= optind;
-  argv += optind;
 
-  if (argc!=1) { usage(progname); return 1; }
+  if (res.count("mfa"))
+    os_mfa = &std::cout;
+  if (res.count("mfa-file"))
+  {
+    auto f = res["mfa-file"].as<std::string>().c_str();
+    os_mfa = new std::ofstream(f);
+    if (!dynamic_cast<std::ofstream*>(os_mfa)->is_open())
+    {
+      perror(f);
+      return 1;
+    }
+  }
 
-  // set default parameters
-  if (th.empty())
+  if (res.count("gamma"))
+  {
+    const auto& arg_gamma = res["gamma"].as<std::vector<std::string>>();
+    th.resize(arg_gamma.size());
+    for (uint i=0; i!=th.size(); ++i)
+    {
+      if (arg_gamma[i]=="auto")
+      {
+        th[i] = VF{0.5, 0.25, 0.125, 0.0625};
+        max_pfval = true;
+      }
+      else
+      {
+        auto temp = parse_csv_line<float>(arg_gamma[i].c_str(), '_');
+        th[i].resize(temp.size());
+        std::transform(std::cbegin(temp), std::cend(temp), std::begin(th[i]),
+          [&](auto v) { return 1./(v+1.); });
+        if (th[i].size()>1) max_pfval = true;
+      }
+    }
+  }
+  else
+  {
+    const auto& arg_th = res["threshold"].as<std::vector<std::string>>();
+    th.resize(arg_th.size());
+    for (uint i=0; i!=th.size(); ++i)
+    {
+      if (arg_th[i]=="auto") 
+      {
+        th[i] = VF{0.5, 0.25, 0.125, 0.0625};
+        max_pfval = true;
+      }
+      else
+      {
+        th[i] = parse_csv_line<float>(arg_th[i].c_str(), '_');
+        if (th[i].size()>1) max_pfval = true;
+      }
+    }
+  }
+
+#if 0
+  else // default
   {
     th.resize(2);
     if (n_refinement==0)
@@ -822,19 +1244,26 @@ main(int argc, char* argv[])
       th[1].resize(1, 1/(1.0+1)); // -g 1
     }
   }
-  if (alpha.empty())
+#endif
+
+#if 0
+  if (res.count("alpha"))
   {
-    alpha.resize(th.size());
-    for (uint i=0; i!=alpha.size(); ++i)
-      alpha[i]=1.0/alpha.size();
+    alpha = res["alpha"].as<std::vector<float>>();
   }
-  pk_level=alpha.size();
+  else
+  {
+#endif
+    alpha.resize(th.size());
+    std::fill(std::begin(alpha), std::end(alpha), 1./alpha.size());
+#if 0
+  }
+#endif
+  pk_level = alpha.size();
 
   try
   {
     IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th);
-    std::vector<float> bp;
-    std::vector<int> offset;
     std::vector<int> bpseq;
     std::vector<int> plevel;
 
@@ -849,40 +1278,25 @@ main(int argc, char* argv[])
     {
       AuxModel aux;
       std::string seq;
-      aux.calculate_posterior(argv[0], seq, bp, offset);
-      if (max_pmcc)
-        ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel, false);
+      float fval, fval_pk;
+      auto sbp = aux.calculate_posterior(input.c_str(), seq);
+      if (max_pfval)
+        std::tie(fval, fval_pk) = ipknot.solve(seq.size(), sbp, ep, bpseq, plevel, false, verbose);
       else
-        ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel, false);
+        ipknot.solve(seq.size(), sbp, t, bpseq, plevel, false);
       if (os_bpseq)
-        output_bpseq(*os_bpseq, argv[0], seq, bpseq, plevel);
+        output_bpseq(*os_bpseq, input.c_str(), seq, bpseq, plevel, max_pfval, fval, fval_pk);
       if (os_bpseq!=&std::cout)
-        output_fa(std::cout, argv[0], seq, bpseq, plevel, output_energy);
+        output_fa(std::cout, input.c_str(), seq, bpseq, plevel, output_energy);
     }
-    else if (Fasta::load(f, argv[0])>0)
+    else if (Fasta::load(f, input.c_str())>0)
     {
-      BPEngineSeq* en=NULL;
-      if (model.empty() || strcasecmp(model[0], "McCaskill")==0)
-        en = new RNAfoldModel(param);
-      else if (strcasecmp(model[0], "CONTRAfold")==0)
-        en = new CONTRAfoldModel();
-#if 0
-      else if (strcasecmp(model[0], "nupack")==0)
-        if (param)
-          en = new NupackModel(param);
-        else
-          en = new NupackModel(2);
-      else if (strcasecmp(model[0], "nupack03")==0)
-        en = new NupackModel(0);
-      else if (strcasecmp(model[0], "nupack09")==0)
-        en = new NupackModel(1);
-#else
-      else if (strcasecmp(model[0], "nupack")==0)
-        en = new NupackModel(param);
-#endif
-      else
+      float fval, fval_pk;
+      auto en = build_engine_seq(model.empty() ? nullptr : model[0].c_str(), 
+                                  param.empty() ? nullptr : param.c_str(), beam_size);
+      if (!en) 
       {
-        usage(progname);
+        std::cout << options.help() << std::endl;
         return 1;
       }
 
@@ -890,125 +1304,89 @@ main(int argc, char* argv[])
       {
         std::list<Fasta>::iterator fa = f.begin();
 
-        if (constraint.empty()) // default behaivior
-          en->calculate_posterior(fa->seq(), bp, offset);
+        std::vector<std::vector<std::pair<uint, float>>> sbp;
+        if (constraint.empty())
+          sbp = en->calculate_posterior(fa->seq());
         else
         { // constraint folding
           bpseq.resize(fa->size(), BPSEQ::DOT);
           read_constraints(constraint.c_str(), bpseq);
           int pl = IPknot::decompose_plevel(bpseq, plevel);
-          update_bpm(pl, fa->seq(), *en, bpseq, plevel, bp, offset);
+          update_bpm(pl, fa->seq(), *en, bpseq, plevel, sbp);
         }
 
-        if (max_pmcc)
-          ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+        if (max_pfval)
+          std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
         else
-          ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+          ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
 
         for (int i=0; i!=n_refinement; ++i) // iterative refinement
         {
-          update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, bp, offset);
-          if (max_pmcc)
-            ipknot.solve(fa->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+          update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, sbp);
+          if (max_pfval)
+            std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
           else
-            ipknot.solve(fa->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+            ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }
 
         if (os_bpseq)
-          output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel);
+          output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel, max_pfval, fval, fval_pk);
         if (os_bpseq!=&std::cout)
           output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel, output_energy);
         f.erase(fa);
       }
-
-      delete en;
     }
-    else if (Aln::load(a, argv[0])>0)
+    else if (Aln::load(a, input.c_str())>0)
     {
-      BPEngineAln* mix_en=NULL;
-      std::vector<BPEngineSeq*> en_s;
-      std::vector<BPEngineAln*> en_a;
-      if (model.empty())
+      float fval, fval_pk;
+      auto en = build_engine_aln(model, param.empty() ? nullptr : param.c_str(), beam_size);
+      if (!en) 
       {
-        BPEngineSeq* e = new RNAfoldModel(param);
-        en_s.push_back(e);
-        en_a.push_back(new AveragedModel(e));
-        en_a.push_back(new AlifoldModel(param));
-        mix_en = new MixtureModel(en_a);
+        std::cout << options.help() << std::endl;
+        return 1;
       }
-      else
-      {
-        for (uint i=0; i!=model.size(); ++i)
-        {
-          if (strcasecmp(model[i], "McCaskill")==0)
-          {
-            BPEngineSeq* e = new RNAfoldModel(param);
-            en_s.push_back(e);
-            en_a.push_back(new AveragedModel(e));
-          }
-          else if (strcasecmp(model[0], "CONTRAfold")==0)
-          {
-            BPEngineSeq* e = new CONTRAfoldModel();
-            en_s.push_back(e);
-            en_a.push_back(new AveragedModel(e));
-          }
-          else if (strcasecmp(model[0], "Alifold")==0)
-          {
-            en_a.push_back(new AlifoldModel(param));
-          }
-          else
-          {
-            usage(progname);
-            return 1;
-          }
-        }
-        if (en_a.size()>1)
-          mix_en = new MixtureModel(en_a);
-      }
-      BPEngineAln* en= mix_en ? mix_en : en_a[0];
 
       while (!a.empty())
       {
         std::list<Aln>::iterator aln = a.begin();
 
+        std::vector<std::vector<std::pair<uint, float>>> sbp;
         if (constraint.empty()) // default behaiviro
-          en->calculate_posterior(aln->seq(), bp, offset);
+          sbp = en->calculate_posterior(aln->seq());
         else
         { // constraint folding
           bpseq.resize(aln->size(), BPSEQ::DOT);
           read_constraints(constraint.c_str(), bpseq);
           int pl = IPknot::decompose_plevel(bpseq, plevel);
-          update_bpm(pl, aln->seq(), *en, bpseq, plevel, bp, offset);
+          update_bpm(pl, aln->seq(), *en, bpseq, plevel, sbp);
         }
         
-        if (max_pmcc)
-          ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+        if (max_pfval)
+          std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
         else
-          ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+          ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
+
         for (int i=0; i!=n_refinement; ++i)
         {
-          update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, bp, offset);
-          if (max_pmcc)
-            ipknot.solve(aln->size(), bp, offset, ep, bpseq, plevel, !constraint.empty());
+          update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, sbp);
+          if (max_pfval)
+            std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
           else
-            ipknot.solve(aln->size(), bp, offset, t, bpseq, plevel, !constraint.empty());
+            ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }
+
         if (os_bpseq)
-          output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel);
+          output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel, max_pfval, fval, fval_pk);
         if (os_mfa)
           output_mfa(*os_mfa, *aln, bpseq, plevel);
         if (os_bpseq!=&std::cout && os_mfa!=&std::cout)
           output_fa(std::cout, aln->name().front(), aln->consensus(), bpseq, plevel, output_energy);
         a.erase(aln);
       }
-
-      if (mix_en) delete mix_en;
-      for (uint i=0; i!=en_s.size(); ++i) delete en_s[i];
-      for (uint i=0; i!=en_a.size(); ++i) delete en_a[i];
     }
     else
     {
-      throw (std::string(argv[0])+": Format error").c_str();
+      throw (input+": Format error").c_str();
     }
   }
   catch (const char* msg)

@@ -262,7 +262,11 @@ std::vector<std::pair<RealT, RealT> *> ParameterManager<RealT>::GetPhysicalParam
 template<class RealT>
 int ParameterManager<RealT>::GetLogicalIndex(const std::pair<RealT, RealT> *physical_ptr) const
 {
-    typename std::map<std::pair<RealT, RealT> *, int>::const_iterator iter = physical_to_logical.find(physical_ptr);
+    //typename std::map<std::pair<RealT, RealT> *, int>::const_iterator iter = physical_to_logical.find(physical_ptr);
+    auto iter = physical_to_logical.find(physical_ptr);
     if (iter == physical_to_logical.end()) Error("Request for unknown physical parameter.");
     return iter->second;
 }
+
+// instantiation
+template class ParameterManager<float>;

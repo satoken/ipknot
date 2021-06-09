@@ -10,6 +10,7 @@
 #include <utility>
 #include <cassert>
 #include <cstdlib>
+#include "InferenceEngine.hpp"
 
 extern "C" { double genrand_real2(); }
 
@@ -2578,7 +2579,7 @@ void InferenceEngine<RealT>::ComputeViterbi()
                 {
                     RealT *p1 = &(FM1v[offset[i]+i+1]);
                     RealT *p2 = &(FMv[offset[i+1]+j]);
-                    for (register int k = i+1; k < j; k++)
+                    for (int k = i+1; k < j; k++)
                     {
                         UPDATE_MAX(FM2v, FM2t, (*p1) + (*p2), k);
                         ++p1;
@@ -2588,9 +2589,9 @@ void InferenceEngine<RealT>::ComputeViterbi()
             
 #else
             
-                for (register size_t kp = 0; kp < candidates.size(); kp++)
+                for (size_t kp = 0; kp < candidates.size(); kp++)
                 {
-                    register const int k = candidates[kp];
+                    const int k = candidates[kp];
                     UPDATE_MAX(FM2v, FM2t, FM1v[offset[i]+k] + FMv[offset[k]+j], k);
                 }
             
@@ -3393,7 +3394,7 @@ void InferenceEngine<RealT>::ComputeInside()
                 {
                     const RealT *p1 = &(FM1i[offset[i]+i+1]);
                     const RealT *p2 = &(FMi[offset[i+1]+j]);
-                    for (register int k = i+1; k < j; k++)
+                    for (int k = i+1; k < j; k++)
                     {
                         Fast_LogPlusEquals(FM2i, (*p1) + (*p2));
                         ++p1;
@@ -3769,7 +3770,7 @@ void InferenceEngine<RealT>::ComputeInside2(const std::vector<float>& weight)
                     const RealT *p2i = &(FMi[offset[i+1]+j]);
                     const RealT *p1j = &(FM1j[offset[i]+i+1]);
                     const RealT *p2j = &(FMj[offset[i+1]+j]);
-                    for (register int k = i+1; k < j; k++)
+                    for (int k = i+1; k < j; k++)
                     {
                         Fast_LogPlusEquals(FM2j, (*p1i) + (*p2j));
                         Fast_LogPlusEquals(FM2j, (*p1j) + (*p2i));
@@ -4459,7 +4460,7 @@ void InferenceEngine<RealT>::ComputeOutside()
                     RealT *p2i = &(FMi[offset[i+1]+j]);
                     RealT *p1o = &(FM1o[offset[i]+i+1]);
                     RealT *p2o = &(FMo[offset[i+1]+j]);
-                    for (register int k = i+1; k < j; k++)
+                    for (int k = i+1; k < j; k++)
                     {
                         Fast_LogPlusEquals(*p1o, FM2o + *p2i);
                         Fast_LogPlusEquals(*p2o, FM2o + *p1i);
@@ -4852,7 +4853,7 @@ void InferenceEngine<RealT>::ComputeOutside2(const std::vector<float>& weight)
                     RealT *p2j = &(FMj[offset[i+1]+j]);
                     RealT *p1p = &(FM1p[offset[i]+i+1]);
                     RealT *p2p = &(FMp[offset[i+1]+j]);
-                    for (register int k = i+1; k < j; k++)
+                    for (int k = i+1; k < j; k++)
                     {
                         Fast_LogPlusEquals(*p1p, FM2p + *p2i);
                         Fast_LogPlusEquals(*p1p, FM2o + *p2j);
@@ -4942,7 +4943,7 @@ std::vector<RealT> InferenceEngine<RealT>::ComputeFeatureCountExpectations()
                 {
                     const RealT *p1 = &(FM1i[offset[i]+i+1]);
                     const RealT *p2 = &(FMi[offset[i+1]+j]);
-                    for (register int k = i+1; k < j; k++)
+                    for (int k = i+1; k < j; k++)
                     {
                         Fast_LogPlusEquals(FM2i, (*p1) + (*p2));
                         ++p1;
@@ -5338,7 +5339,7 @@ std::vector<RealT> InferenceEngine<RealT>::ComputeFeatureCountExpectations2(cons
                     const RealT *p2i = &(FMi[offset[i+1]+j]);
                     const RealT *p1j = &(FM1j[offset[i]+i+1]);
                     const RealT *p2j = &(FMj[offset[i+1]+j]);
-                    for (register int k = i+1; k < j; k++)
+                    for (int k = i+1; k < j; k++)
                     {
                         Fast_LogPlusEquals(FM2i, (*p1i) + (*p2i));
                         Fast_LogPlusEquals(FM2j, (*p1i) + (*p2j));
@@ -5791,7 +5792,7 @@ void InferenceEngine<RealT>::ComputePosterior()
             {
                 const RealT *p1 = &(FM1i[offset[i]+i+1]);
                 const RealT *p2 = &(FMi[offset[i+1]+j]);
-                for (register int k = i+1; k < j; k++)
+                for (int k = i+1; k < j; k++)
                 {
                     Fast_LogPlusEquals(FM2i, (*p1) + (*p2));
                     ++p1;
@@ -6157,7 +6158,7 @@ std::vector<int> InferenceEngine<RealT>::PredictPairingsPosterior(const RealT ga
                     {
                         RealT *p1 = &(score[offset[i]+i+1]);
                         RealT *p2 = &(score[offset[i+1]+j]);
-                        for (register int k = i+1; k < j; k++)
+                        for (int k = i+1; k < j; k++)
                         {
                             UPDATE_MAX(this_score, this_traceback, (*p1) + (*p2), k+4);
                             ++p1;
@@ -6907,3 +6908,6 @@ RealT *InferenceEngine<RealT>::GetPosterior2(const RealT posterior_cutoff,
         p[i] = (posterior2[i] >= posterior_cutoff ? posterior2[i] : RealT(0));
     return &p[0];
 }
+
+// instantiation
+template class InferenceEngine<float>;
