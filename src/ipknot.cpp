@@ -367,6 +367,7 @@ public:
   {
     std::vector<float> th(ep.size());
     VI bpseq_temp, plevel_temp;
+    VI max_bpseq, max_plevel;
     float max_fval=-100.0, max_fval_pk=-100.0;
     if (verbose)
       std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
@@ -382,6 +383,8 @@ public:
         std::cerr << "th=";
         std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
       }
+      bpseq_temp = bpseq;
+      plevel_temp = plevel;
       solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
       const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
@@ -391,10 +394,12 @@ public:
       {
         max_fval = fval;
         max_fval_pk = fval_pk;
-        bpseq = bpseq_temp;
-        plevel = plevel_temp;
+        max_bpseq = bpseq_temp;
+        max_plevel = plevel_temp;
       }
     } while (!ep.succ());
+    bpseq = max_bpseq;
+    plevel = max_plevel;
     if (verbose)
       std::cerr << "max pF=" << max_fval << "," << max_fval_pk << std::endl << std::endl;
 

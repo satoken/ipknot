@@ -113,7 +113,7 @@ void BeamCKYParser::prepare(unsigned len) {
 }
 
 bool BeamCKYParser::allow_paired(int i, int j, const vector<int>* cons, char nuci, char nucj) {
-    //assert(i<=j); TODO: may be a bug
+    assert(i<=j); // TODO: may be a bug
     return ((*cons)[i] == CONSTRAINT::DOT || (*cons)[i] == CONSTRAINT::L || (*cons)[i] == CONSTRAINT::LR || (*cons)[i] == j) 
         && ((*cons)[j] == CONSTRAINT::DOT || (*cons)[j] == CONSTRAINT::R || (*cons)[j] == CONSTRAINT::LR || (*cons)[j] == i)
         && _allowed_pairs[nuci][nucj];
@@ -515,21 +515,22 @@ void BeamCKYParser::parse(const string& seq, const std::vector<int>* cons /*=NUL
                         int nucp = nucs[p];
                         int q = next_pair[nucp][j];
 
-                        if (use_constraints){
-                            if (p < i - 1 && !allow_unpaired_position[p+1])
-                                break;
-                            if (!allow_unpaired_position[p]){
-                                q = (*cons)[p];
-                                if (q < p) break;
-                            }
-                            if (q > j+1 && q > allow_unpaired_range[j])
-                                continue;
-                            int nucq = nucs[q];
-                            if (!allow_paired(p, q, cons, nucp, nucq))
-                                continue;
-                        }
-
                         if (q != -1 && ((i - p - 1) <= SINGLE_MAX_LEN)) {
+
+                            if (use_constraints){
+                                if (p < i - 1 && !allow_unpaired_position[p+1])
+                                    break;
+                                if (!allow_unpaired_position[p]){
+                                    q = (*cons)[p];
+                                    if (q < p) break;
+                                }
+                                if (q > j+1 && q > allow_unpaired_range[j])
+                                    continue;
+                                int nucq = nucs[q];
+                                if (!allow_paired(p, q, cons, nucp, nucq))
+                                    continue;
+                            }
+
                             if (LPV) {
                                 Fast_LogPlusEquals(bestMulti[q][p].alpha, state.alpha);      
                             } else {

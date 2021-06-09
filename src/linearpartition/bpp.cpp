@@ -189,21 +189,22 @@ void BeamCKYParser::outside(vector<int> next_pair[], const std::vector<int>* con
                         int nucp = nucs[p];
                         int q = next_pair[nucp][j];
 
-                        if (use_constraints){
-                            if (p < i - 1 && !allow_unpaired_position[p+1])
-                                break;
-                            if (!allow_unpaired_position[p]){
-                                q = (*cons)[p];
-                                if (q < p) break;
-                            }
-                            if (q > j+1 && q > allow_unpaired_range[j])
-                                continue;
-                            int nucq = nucs[q];
-                            if (!allow_paired(p, q, cons, nucp, nucq))
-                                continue;
-                        }
-
                         if (q != -1 && ((i - p - 1) <= SINGLE_MAX_LEN)) {
+
+                            if (use_constraints){
+                                if (p < i - 1 && !allow_unpaired_position[p+1])
+                                    break;
+                                if (!allow_unpaired_position[p]){
+                                    q = (*cons)[p];
+                                    if (q < p) break;
+                                }
+                                if (q > j+1 && q > allow_unpaired_range[j])
+                                    continue;
+                                int nucq = nucs[q];
+                                if (!allow_paired(p, q, cons, nucp, nucq))
+                                    continue;
+                            }
+
                             if (LPV) {
                                 Fast_LogPlusEquals(state.beta, bestMulti[q][p].beta);
                             } else {
