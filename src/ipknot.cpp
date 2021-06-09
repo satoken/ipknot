@@ -330,6 +330,7 @@ private:
   }
 
 public:
+#if 0
   auto solve(uint L, const VF& bp, const VI& offset,
              EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const -> std::pair<float,float>
   {
@@ -359,14 +360,16 @@ public:
 
     return {max_fval, 0.};
   }
+#endif
 
   auto solve(uint L, const VSVF& bp,
-             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const -> std::pair<float,float>
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose=false) const -> std::pair<float,float>
   {
     std::vector<float> th(ep.size());
     VI bpseq_temp, plevel_temp;
     float max_fval=-100.0, max_fval_pk=-100.0;
-    std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
+    if (verbose)
+      std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
     const auto sump = compute_sump_pk(bp);
     do {
       ep.get(th);
@@ -374,12 +377,16 @@ public:
       for (i=1; i!=th.size(); i++)
         if (th[i-1]<th[i]) break;
       if (i!=th.size()) continue;
-      std::cerr << "th=";
-      std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
+      if (verbose)
+      {
+        std::cerr << "th=";
+        std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
+      }
       solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
       const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
-      std::cerr << " pF=" << fval << ", " << fval_pk << std::endl;
+      if (verbose)
+        std::cerr << " pF=" << fval << ", " << fval_pk << std::endl;
       if (fval+fval_pk>max_fval+max_fval_pk)
       {
         max_fval = fval;
@@ -388,7 +395,8 @@ public:
         plevel = plevel_temp;
       }
     } while (!ep.succ());
-    std::cerr << "max pF=" << max_fval << "," << max_fval_pk << std::endl << std::endl;
+    if (verbose)
+      std::cerr << "max pF=" << max_fval << "," << max_fval_pk << std::endl << std::endl;
 
     return {max_fval, max_fval_pk};
   }
@@ -1076,6 +1084,7 @@ main(int argc, char* argv[])
   std::string constraint;
   uint beam_size;
   std::string input;
+  bool verbose = false;
 
   cxxopts::Options options{progname, format("IPknot version %s", PACKAGE_VERSION)};
   options.add_options()
@@ -1084,15 +1093,13 @@ main(int argc, char* argv[])
     ("e,model", "Probabilistic model",
       cxxopts::value<std::vector<std::string>>()->default_value("McCaskill"), "MODEL")
     ("r,refinement", "The number of the iterative refinement",
-      cxxopts::value<int>()->default_value("0"), "N")
+      cxxopts::value<int>()->default_value("1"), "N")
+#if 0
     ("a,alpha", "The weight for each level",
       cxxopts::value<std::vector<float>>(), "ALPHA")
-    // ("m,mcc", "Select thresholds that maximize pseudo MCC",
-    //   cxxopts::value<bool>()->default_value("false"))
-    ("pseudo-fval", "Select thresholds that maximize pseudo F-value",
-      cxxopts::value<bool>()->default_value("false"))
+#endif
     ("t,threshold", "The threshold of base-pairing probabilities for each level",
-      cxxopts::value<std::vector<std::string>>(), "TH")
+      cxxopts::value<std::vector<std::string>>()->default_value("auto,auto"), "TH")
     ("g,gamma", "The weight for true base-pairs equivalent to '-t 1/(gamma+1)'",
       cxxopts::value<std::vector<std::string>>(), "G")
     ("i,allow-isolated", "Allow isolated base-pairs",
@@ -1119,8 +1126,10 @@ main(int argc, char* argv[])
       cxxopts::value<bool>()->default_value("false"))
     ("c,constraint", "Specify the structure constraint by a BPSEQ formatted file",
       cxxopts::value<std::string>(), "FILE")
+    ("V,verbose", "Verbose output")
     ("beam-size", "Beam size for LinearPartition algorithm",
       cxxopts::value<uint>()->default_value("100"), "N")
+    ("version", "Print version")
     ("h,help", "Print usage"); 
   options.parse_positional({"input"});
   options
@@ -1128,6 +1137,11 @@ main(int argc, char* argv[])
     .show_positional_help();
 
   auto res = options.parse(argc, argv);
+  if (res.count("version")) 
+  {
+    std::cout << format("IPknot version %s", PACKAGE_VERSION) << std::endl;
+    exit(0);
+  }
   if (res.count("help") || res.count("input")==0)
   {
     std::cout << options.help() << std::endl;
@@ -1136,7 +1150,6 @@ main(int argc, char* argv[])
 
   model = res["model"].as<std::vector<std::string>>();
   n_refinement = res["refinement"].as<int>();
-  max_pfval = res["pseudo-fval"].as<bool>();
   isolated_bp = res["allow-isolated"].as<bool>();
   if (res.count("param")) param = res["param"].as<std::string>();
   aux = res["aux"].as<bool>();
@@ -1147,6 +1160,7 @@ main(int argc, char* argv[])
   output_energy = res["energy"].as<bool>();
   if (res.count("constraint")) constraint = res["constraint"].as<std::string>();
   beam_size = res["beam-size"].as<uint>();
+  verbose = res["verbose"].as<bool>();
   input = res["input"].as<std::string>();
 
   if (res.count("bpseq"))
@@ -1175,29 +1189,47 @@ main(int argc, char* argv[])
     }
   }
 
-  if (res.count("threshold"))
-  {
-    const auto& arg_th = res["threshold"].as<std::vector<std::string>>();
-    th.resize(arg_th.size());
-    for (uint i=0; i!=th.size(); ++i)
-    {
-      th[i] = parse_csv_line<float>(arg_th[i].c_str(), '_');
-    }
-  }
-  else if (res.count("gamma"))
+  if (res.count("gamma"))
   {
     const auto& arg_gamma = res["gamma"].as<std::vector<std::string>>();
     th.resize(arg_gamma.size());
     for (uint i=0; i!=th.size(); ++i)
     {
-      auto temp = parse_csv_line<float>(arg_gamma[i].c_str(), '_');
-      th[i].resize(temp.size());
-      std::transform(std::cbegin(temp), std::cend(temp), std::begin(th[i]),
-        [&](auto v) { return 1./(v+1.); });
-      // for (uint j=0; j!=temp.size(); ++j)
-      //   temp[j] = 1./(temp[i]+1.);
+      if (arg_gamma[i]=="auto")
+      {
+        th[i] = VF{0.5, 0.25, 0.125, 0.0625};
+        max_pfval = true;
+      }
+      else
+      {
+        auto temp = parse_csv_line<float>(arg_gamma[i].c_str(), '_');
+        th[i].resize(temp.size());
+        std::transform(std::cbegin(temp), std::cend(temp), std::begin(th[i]),
+          [&](auto v) { return 1./(v+1.); });
+        if (th[i].size()>1) max_pfval = true;
+      }
     }
   }
+  else
+  {
+    const auto& arg_th = res["threshold"].as<std::vector<std::string>>();
+    th.resize(arg_th.size());
+    for (uint i=0; i!=th.size(); ++i)
+    {
+      if (arg_th[i]=="auto") 
+      {
+        th[i] = VF{0.5, 0.25, 0.125, 0.0625};
+        max_pfval = true;
+      }
+      else
+      {
+        th[i] = parse_csv_line<float>(arg_th[i].c_str(), '_');
+        if (th[i].size()>1) max_pfval = true;
+      }
+    }
+  }
+
+#if 0
   else // default
   {
     th.resize(2);
@@ -1212,16 +1244,21 @@ main(int argc, char* argv[])
       th[1].resize(1, 1/(1.0+1)); // -g 1
     }
   }
+#endif
 
+#if 0
   if (res.count("alpha"))
   {
     alpha = res["alpha"].as<std::vector<float>>();
   }
   else
   {
+#endif
     alpha.resize(th.size());
     std::fill(std::begin(alpha), std::end(alpha), 1./alpha.size());
+#if 0
   }
+#endif
   pk_level = alpha.size();
 
   try
@@ -1239,16 +1276,14 @@ main(int argc, char* argv[])
 
     if (aux)
     {
-      std::vector<float> bp;
-      std::vector<int> offset;
       AuxModel aux;
       std::string seq;
       float fval, fval_pk;
-      aux.calculate_posterior(input.c_str(), seq, bp, offset);
+      auto sbp = aux.calculate_posterior(input.c_str(), seq);
       if (max_pfval)
-        std::tie(fval, fval_pk) = ipknot.solve(seq.size(), bp, offset, ep, bpseq, plevel, false);
+        std::tie(fval, fval_pk) = ipknot.solve(seq.size(), sbp, ep, bpseq, plevel, false, verbose);
       else
-        ipknot.solve(seq.size(), bp, offset, t, bpseq, plevel, false);
+        ipknot.solve(seq.size(), sbp, t, bpseq, plevel, false);
       if (os_bpseq)
         output_bpseq(*os_bpseq, input.c_str(), seq, bpseq, plevel, max_pfval, fval, fval_pk);
       if (os_bpseq!=&std::cout)
@@ -1281,7 +1316,7 @@ main(int argc, char* argv[])
         }
 
         if (max_pfval)
-          std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+          std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
         else
           ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
 
@@ -1289,7 +1324,7 @@ main(int argc, char* argv[])
         {
           update_bpm(pk_level, fa->seq(), *en, bpseq, plevel, sbp);
           if (max_pfval)
-            std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+            std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
           else
             ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }
@@ -1327,7 +1362,7 @@ main(int argc, char* argv[])
         }
         
         if (max_pfval)
-          std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+          std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
         else
           ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
 
@@ -1335,7 +1370,7 @@ main(int argc, char* argv[])
         {
           update_bpm(pk_level, aln->seq(), *en, bpseq, plevel, sbp);
           if (max_pfval)
-            std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty());
+            std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
           else
             ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
         }

@@ -1011,3 +1011,37 @@ calculate_posterior(const char* filename, std::string& seq,
   }
   return true;
 }
+
+auto
+AuxModel::
+calculate_posterior(const char* filename, std::string& seq) const
+  -> std::vector<std::vector<std::pair<uint, float>>>
+{
+  std::string l;
+  uint L=0;
+  std::ifstream in(filename);
+  if (!in)
+    throw std::runtime_error(std::string(strerror(errno)) + ": " + filename);    
+  while (std::getline(in, l)) ++L;
+  std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  seq.resize(L);
+  in.clear();
+  in.seekg(0, std::ios::beg);
+  while (std::getline(in, l))
+  {
+    std::vector<std::string> v;
+    std::istringstream ss(l);
+    std::string s;
+    while (ss >> s) v.push_back(s);
+    uint up = atoi(v[0].c_str());
+    seq[up-1] = v[1][0];
+    for (uint i=2; i!=v.size(); ++i)
+    {
+      uint down;
+      float p;
+      if (sscanf(v[i].c_str(), "%u:%f", &down, &p)==2)
+        bp[up].emplace_back(down, p);
+    }
+  }
+  return bp;
+}

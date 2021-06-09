@@ -1,23 +1,31 @@
 # From ubuntu:18.04
-FROM debian:10
+#FROM debian:10
+FROM continuumio/miniconda3
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /workspaces
 
-# use the official package
-ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/viennarna_2.4.17-1_amd64.deb .
-ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/viennarna-dev_2.4.17-1_amd64.deb .
-# ADD https://www.tbi.univie.ac.at/RNA/download/debian/debian_10/python3-rna_2.4.17-1_amd64.deb .
-
 RUN apt-get update \
-    && apt-get -y install build-essential wget cmake \
+    # Install C++ tools
+    && apt-get -y install build-essential cmake cppcheck valgrind \
             libglpk-dev libgsl-dev libgmp-dev libltdl-dev libmpfr-dev pkg-config \
-    && apt-get -y install ./*.deb \
+    # Clean up
+    && rm -f *.deb \
     && apt-get autoremove -y \
     && apt-get clean -y \
-    && rm -f *.deb \
     && rm -rf /var/lib/apt/lists/*
+
+# Switch back to dialog for any ad-hoc use of apt-get
+ENV DEBIAN_FRONTEND=dialog
+
+# install ViennaRNA package from bioconda
+RUN conda config --add channels conda-forge && \
+    conda config --add channels bioconda && \
+    conda update --all && \
+    conda install viennarna && \
+    conda clean -afy
+ENV PKG_CONFIG_PATH /opt/conda/lib/pkgconfig:$PKG_CONFIG_PATH
 
 # build from the source
 # RUN wget -q https://www.tbi.univie.ac.at/RNA/download/sourcecode/2_4_x/ViennaRNA-2.4.17.tar.gz \
@@ -32,5 +40,5 @@ COPY . .
 RUN rm -rf build && mkdir build \
     && cd build \
     && cmake -DCMAKE_BUILD_TYPE=Release .. \
-    #&& cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS='-static' -DCMAKE_FIND_LIBRARY_SUFFIXES='.a' .. \
+    #&& cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BULD=ON .. \
     && make && make install

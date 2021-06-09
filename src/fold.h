@@ -211,6 +211,8 @@ public:
 
   bool calculate_posterior(const char* filename, std::string& seq,
                            std::vector<float>& bp, std::vector<int>& offset) const;
+  auto calculate_posterior(const char* filename, std::string& seq) const
+    -> std::vector<std::vector<std::pair<uint, float>>>;
 };
 
 #endif  // __INC_FOLD_H__
