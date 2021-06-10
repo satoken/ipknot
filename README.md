@@ -7,7 +7,7 @@ Requirements
 * [Vienna RNA package](https://www.tbi.univie.ac.at/RNA/) (>= 2.2.0)
 * [GNU Linear Programming Kit](http://www.gnu.org/software/glpk/) (>=4.41),
   [Gurobi Optimizer](http://www.gurobi.com/) (>=8.0),
-  or [ILOG CPLEX](http://www.ibm.com/software/products/ibmilogcple/) (>=12.0)
+  or [ILOG CPLEX](https://www.ibm.com/products/ilog-cplex-optimization-studio) (>=12.0)
 
 Install
 -------
@@ -28,12 +28,31 @@ IPknot can take FASTA formatted RNA sequences as input, then predicts their seco
 	 -h:       show this message
 	 -t th:    threshold of base-pairing probabilities for each level (default: auto,auto)
 	 -e model: probabilistic model (default: LinearPartition-C)
-     -b:       output the prediction via BPSEQ format
+	 -b:       output the prediction via BPSEQ format
 
 	% ipknot drz_Ppac_1_1.fa
 	>drz_Ppac_1_1
 	GACUCGCUUGACUGUUCACCUCCCCGUGGUGCGAGUUGGACACCCACCACUCGCAUUCUUCACCUAUUGUUUAAUUGUGCUUGUGGUGGGUGACUGAGAAACAGUC
 	.[[[[[...(((((((((((.......))))]]]]].((.((((((((((..((((....................))))..)))))))))).))....)))))))
+
+#### Model
+
+IPknot can calculate the base pairing probability using the following probability models:
+
+* LinearPartition model with CONTRAfold parameters (`LinearPartition-C` or `lpc`) (default)
+* LinearPartition model with ViennaRNA parameters (`LinearPartition-V` or `lpv`)
+* McCaskill model with Boltzmann likelihood parameters (`Boltzmann`)
+* McCaskill model with ViennaRNA parameters (`ViennaRNA`)
+* CONTRAfold model (`CONTRAfold`)
+* NUPACK model (`NUPACK`)
+
+You can specify the model using `-e` option.
+
+#### Thresholds
+
+IPknot predicts the pseudoknot structure hierarchically. The `-t` option is used to specify the base pairing probability threshold for each level. For example, if you run `ipknot -t 0.25 -t 0.125 seq.fa`, the threshold for the first level is 0.25 and the threshold for the second level is 0.125.
+
+IPknot can search for the best thresholds from multiple combinations of thresholds using *pseudo-expected accuracy*. For example, `ipknot -t 0.5_0.25 -t 0.25_0.125 seq.fa` searches for the combination of 0.5 and 0.125 for the first layer and 0.25 and 0.125 for the second layer, and outputs the secondary structure with the maximum pseudo-expected accuracy as the final prediction. By default, `-t auto -t auto` is specified, where `auto` means `0.5_0.25_0.125_0.0625`.
 
 ### Aligned sequences
 
@@ -56,7 +75,7 @@ IPknot can fold a given sequence or alignment with some constraints. The constra
 	% ipknot -c constraint.txt drz_Ppac_1_1.fa
 	>drz_Ppac_1_1
 	GACUCGCUUGACUGUUCACCUCCCCGUGGUGCGAGUUGGACACCCACCACUCGCAUUCUUCACCUAUUGUUUAAUUGUGCUUGUGGUGGGUGACUGAGAAACAGUC
-	.........(((((((............((((((((.((.......))))))))))....((((....((........))....))))...........)))))))
+	.........(((((((............(((((((.........[[[[[)))))))....((((...................]]]]])))).......)))))))
 
 This example shows folding with constraints that 16th base and 100th base are paired, 41st and 42nd bases are unpaired.
 
