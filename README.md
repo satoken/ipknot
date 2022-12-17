@@ -82,4 +82,5 @@ This example shows folding with constraints that 16th base and 100th base are pa
 References
 ----------
 
+* Sato, K., Kato, Y.: Prediction of RNA secondary structure including pseudoknots for long sequences, *Brief. Bioinform.*, 23(1):bbab395 (Jan. 2022)
 * Sato, K., Kato, Y., Hamada, M., Akutsu, T., Asai, K.: IPknot: fast and accurate prediction of RNA secondary structures with pseudoknots using integer programming, *Bioinformatics*, 27(13):i85-i93 (Jul. 2011)
