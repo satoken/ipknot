@@ -444,8 +444,8 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
             }
             else
             {
-                sprintf(buffer, "base_pair_%c%c", alphabet[i], alphabet[j]);
-                sprintf(buffer2, "base_pair_%c%c", alphabet[j], alphabet[i]);
+                snprintf(buffer, sizeof(buffer), "base_pair_%c%c", alphabet[i], alphabet[j]);
+                snprintf(buffer2, sizeof(buffer2), "base_pair_%c%c", alphabet[j], alphabet[i]);
                 if (strcmp(buffer, buffer2) < 0)
                     parameter_manager.AddParameterMapping(buffer, &score_base_pair[i][j]);
                 else
@@ -461,7 +461,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
 #endif
     for (int i = 0; i < D_MAX_BP_DIST_THRESHOLDS; i++)
     {
-        sprintf(buffer, "base_pair_dist_at_least_%d", BP_DIST_THRESHOLDS[i]);
+        snprintf(buffer, sizeof(buffer), "base_pair_dist_at_least_%d", BP_DIST_THRESHOLDS[i]);
         parameter_manager.AddParameterMapping(buffer, &score_base_pair_dist_at_least[i]);
     }
 #endif
@@ -484,7 +484,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                     }
                     else
                     {
-                        sprintf(buffer, "terminal_mismatch_%c%c%c%c", alphabet[i1], alphabet[j1], alphabet[i2], alphabet[j2]);
+                        snprintf(buffer, sizeof(buffer), "terminal_mismatch_%c%c%c%c", alphabet[i1], alphabet[j1], alphabet[i2], alphabet[j2]);
                         parameter_manager.AddParameterMapping(buffer, &score_terminal_mismatch[i1][j1][i2][j2]);
                     }
                 }
@@ -499,7 +499,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
 #endif
     for (int i = 0; i <= D_MAX_HAIRPIN_LENGTH; i++)
     {
-        sprintf(buffer, "hairpin_length_at_least_%d", i);
+        snprintf(buffer, sizeof(buffer), "hairpin_length_at_least_%d", i);
         parameter_manager.AddParameterMapping(buffer, &score_hairpin_length_at_least[i]);
     }
 #endif
@@ -520,7 +520,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                 }
                 else
                 {
-                    sprintf(buffer, "hairpin_3_nucleotides_%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3]);
+                    snprintf(buffer, sizeof(buffer), "hairpin_3_nucleotides_%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3]);
                     parameter_manager.AddParameterMapping(buffer, &score_hairpin_3_nucleotides[i1][i2][i3]);
                 }
             }
@@ -546,7 +546,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                     }
                     else
                     {
-                        sprintf(buffer, "hairpin_4_nucleotides_%c%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3], alphabet[i4]);
+                        snprintf(buffer, sizeof(buffer), "hairpin_4_nucleotides_%c%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3], alphabet[i4]);
                         parameter_manager.AddParameterMapping(buffer, &score_hairpin_4_nucleotides[i1][i2][i3][i4]);
                     }
                 }
@@ -567,7 +567,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
         }
         else
         {
-            sprintf(buffer, "helix_length_at_least_%d", i);
+            snprintf(buffer, sizeof(buffer), "helix_length_at_least_%d", i);
             parameter_manager.AddParameterMapping(buffer, &score_helix_length_at_least[i]);
         }
     }
@@ -594,7 +594,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
             }
             else
             {
-                sprintf(buffer, "internal_explicit_%d_%d", std::min(i, j), std::max(i, j));
+                snprintf(buffer, sizeof(buffer), "internal_explicit_%d_%d", std::min(i, j), std::max(i, j));
                 parameter_manager.AddParameterMapping(buffer, &score_internal_explicit[i][j]);
             }
         }
@@ -613,7 +613,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
         }
         else
         {
-            sprintf(buffer, "bulge_length_at_least_%d", i);
+            snprintf(buffer, sizeof(buffer), "bulge_length_at_least_%d", i);
             parameter_manager.AddParameterMapping(buffer, &score_bulge_length_at_least[i]);
         }
     }
@@ -631,7 +631,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
         }
         else
         {
-            sprintf(buffer, "internal_length_at_least_%d", i);
+            snprintf(buffer, sizeof(buffer), "internal_length_at_least_%d", i);
             parameter_manager.AddParameterMapping(buffer, &score_internal_length_at_least[i]);
         }
     }
@@ -649,7 +649,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
         }
         else
         {
-            sprintf(buffer, "internal_symmetric_length_at_least_%d", i);
+            snprintf(buffer, sizeof(buffer), "internal_symmetric_length_at_least_%d", i);
             parameter_manager.AddParameterMapping(buffer, &score_internal_symmetric_length_at_least[i]);
         }
     }
@@ -667,7 +667,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
         }
         else
         {
-            sprintf(buffer, "internal_asymmetry_at_least_%d", i);
+            snprintf(buffer, sizeof(buffer), "internal_asymmetry_at_least_%d", i);
             parameter_manager.AddParameterMapping(buffer, &score_internal_asymmetry_at_least[i]);
         }
     }
@@ -686,7 +686,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
         }
         else
         {
-            sprintf(buffer, "bulge_0x1_nucleotides_%c", alphabet[i1]);
+            snprintf(buffer, sizeof(buffer), "bulge_0x1_nucleotides_%c", alphabet[i1]);
             parameter_manager.AddParameterMapping(buffer, &score_bulge_0x1_nucleotides[i1]);
             parameter_manager.AddParameterMapping(buffer, &score_bulge_1x0_nucleotides[i1]);
         }
@@ -708,7 +708,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
             }
             else
             {
-                sprintf(buffer, "bulge_0x2_nucleotides_%c%c", alphabet[i1], alphabet[i2]);
+                snprintf(buffer, sizeof(buffer), "bulge_0x2_nucleotides_%c%c", alphabet[i1], alphabet[i2]);
                 parameter_manager.AddParameterMapping(buffer, &score_bulge_0x2_nucleotides[i1][i2]);
                 parameter_manager.AddParameterMapping(buffer, &score_bulge_2x0_nucleotides[i1][i2]);
             }
@@ -733,7 +733,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                 }
                 else
                 {
-                    sprintf(buffer, "bulge_0x3_nucleotides_%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3]);
+                    snprintf(buffer, sizeof(buffer), "bulge_0x3_nucleotides_%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3]);
                     parameter_manager.AddParameterMapping(buffer, &score_bulge_0x3_nucleotides[i1][i2][i3]);
                     parameter_manager.AddParameterMapping(buffer, &score_bulge_3x0_nucleotides[i1][i2][i3]);
                 }
@@ -756,8 +756,8 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
             }
             else 
             {          
-                sprintf(buffer, "internal_1x1_nucleotides_%c%c", alphabet[i1], alphabet[i2]);
-                sprintf(buffer2, "internal_1x1_nucleotides_%c%c", alphabet[i2], alphabet[i1]);
+                snprintf(buffer, sizeof(buffer), "internal_1x1_nucleotides_%c%c", alphabet[i1], alphabet[i2]);
+                snprintf(buffer2, sizeof(buffer2), "internal_1x1_nucleotides_%c%c", alphabet[i2], alphabet[i1]);
                 if (strcmp(buffer, buffer2) < 0)
                     parameter_manager.AddParameterMapping(buffer, &score_internal_1x1_nucleotides[i1][i2]);
                 else
@@ -783,9 +783,9 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                 }
                 else
                 {
-                    sprintf(buffer, "internal_1x2_nucleotides_%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3]);
+                    snprintf(buffer, sizeof(buffer), "internal_1x2_nucleotides_%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3]);
                     parameter_manager.AddParameterMapping(buffer, &score_internal_1x2_nucleotides[i1][i2][i3]);
-                    sprintf(buffer, "internal_2x1_nucleotides_%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3]);
+                    snprintf(buffer, sizeof(buffer), "internal_2x1_nucleotides_%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3]);
                     parameter_manager.AddParameterMapping(buffer, &score_internal_2x1_nucleotides[i1][i2][i3]);
                 }
             }
@@ -811,8 +811,8 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                     }
                     else
                     {
-                        sprintf(buffer, "internal_2x2_nucleotides_%c%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3], alphabet[i4]);
-                        sprintf(buffer2, "internal_2x2_nucleotides_%c%c%c%c", alphabet[i3], alphabet[i4], alphabet[i1], alphabet[i2]);
+                        snprintf(buffer, sizeof(buffer), "internal_2x2_nucleotides_%c%c%c%c", alphabet[i1], alphabet[i2], alphabet[i3], alphabet[i4]);
+                        snprintf(buffer2, sizeof(buffer), "internal_2x2_nucleotides_%c%c%c%c", alphabet[i3], alphabet[i4], alphabet[i1], alphabet[i2]);
                         if (strcmp(buffer, buffer2) < 0)
                             parameter_manager.AddParameterMapping(buffer, &score_internal_2x2_nucleotides[i1][i2][i3][i4]);
                         else
@@ -842,8 +842,8 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                     }
                     else
                     {
-                        sprintf(buffer, "helix_stacking_%c%c%c%c", alphabet[i1], alphabet[j1], alphabet[i2], alphabet[j2]);
-                        sprintf(buffer2, "helix_stacking_%c%c%c%c", alphabet[j2], alphabet[i2], alphabet[j1], alphabet[i1]);
+                        snprintf(buffer, sizeof(buffer), "helix_stacking_%c%c%c%c", alphabet[i1], alphabet[j1], alphabet[i2], alphabet[j2]);
+                        snprintf(buffer2, sizeof(buffer2), "helix_stacking_%c%c%c%c", alphabet[j2], alphabet[i2], alphabet[j1], alphabet[i1]);
                         if (strcmp(buffer, buffer2) < 0)
                             parameter_manager.AddParameterMapping(buffer, &score_helix_stacking[i1][j1][i2][j2]);
                         else
@@ -869,7 +869,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
             }
             else
             {
-                sprintf(buffer, "helix_closing_%c%c", alphabet[i], alphabet[j]);
+                snprintf(buffer, sizeof(buffer), "helix_closing_%c%c", alphabet[i], alphabet[j]);
                 parameter_manager.AddParameterMapping(buffer, &score_helix_closing[i][j]);
             }
         }
@@ -901,7 +901,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                 }
                 else
                 {
-                    sprintf(buffer, "dangle_left_%c%c%c", alphabet[i1], alphabet[j1], alphabet[i2]);
+                    snprintf(buffer, sizeof(buffer), "dangle_left_%c%c%c", alphabet[i1], alphabet[j1], alphabet[i2]);
                     parameter_manager.AddParameterMapping(buffer, &score_dangle_left[i1][j1][i2]);
                 }
             }
@@ -920,7 +920,7 @@ void InferenceEngine<RealT>::RegisterParameters(ParameterManager<RealT> &paramet
                 }
                 else
                 {
-                    sprintf(buffer, "dangle_right_%c%c%c", alphabet[i1], alphabet[j1], alphabet[j2]);
+                    snprintf(buffer, sizeof(buffer), "dangle_right_%c%c%c", alphabet[i1], alphabet[j1], alphabet[j2]);
                     parameter_manager.AddParameterMapping(buffer, &score_dangle_right[i1][j1][j2]);
                 }
             }

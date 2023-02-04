@@ -15,6 +15,8 @@
 
 // bool _allowed_pairs[NOTON][NOTON];
 
+#include <string>
+#include <vector>
 #include <string.h>
 #include <cmath>
 
@@ -44,36 +46,42 @@ inline int MAX2(int a, int b) {if (a >= b)return a;else return b;}
 inline void v_init_tetra_hex_tri(const std::string& seq, int seq_length, std::vector<int>& if_tetraloops, std::vector<int>& if_hexaloops, std::vector<int>& if_triloops) {
 
     // TetraLoops
-    if_tetraloops.resize(seq_length-5<0?0:seq_length-5, -1);
-    for (int i = 0; i < seq_length-5; ++i) {
-        if (!(seq[i] == 'C' && seq[i+5] == 'G'))
+    if_tetraloops.resize(seq_length - 5 < 0 ? 0 : seq_length - 5, -1);
+    for (int i = 0; i < seq_length - 5; ++i)
+    {
+        if (!(seq[i] == 'C' && seq[i + 5] == 'G'))
             continue;
         char *ts;
-        const char* tl = seq.substr(i,6).c_str();
-                if ((ts=strstr(Tetraloops, tl)))
-                    if_tetraloops[i] = (ts - Tetraloops)/7;
+        auto tlx = seq.substr(i, 6);
+        const char *tl = tlx.c_str();
+        if ((ts = strstr(Tetraloops, tl)))
+            if_tetraloops[i] = (ts - Tetraloops) / 7;
     }
 
     // Triloops
-    if_triloops.resize(seq_length-4<0?0:seq_length-4, -1);
-    for (int i = 0; i < seq_length-4; ++i) {
-        if (!((seq[i] == 'C' && seq[i+4] == 'G') || (seq[i] == 'G' && seq[i+4] == 'C')))
+    if_triloops.resize(seq_length - 4 < 0 ? 0 : seq_length - 4, -1);
+    for (int i = 0; i < seq_length - 4; ++i)
+    {
+        if (!((seq[i] == 'C' && seq[i + 4] == 'G') || (seq[i] == 'G' && seq[i + 4] == 'C')))
             continue;
         char *ts;
-        const char* tl = seq.substr(i,5).c_str();
-        if ((ts=strstr(Triloops, tl)))
-            if_triloops[i] = (ts - Triloops)/6;
+        auto tlx = seq.substr(i, 5);
+        const char *tl = tlx.c_str();
+        if ((ts = strstr(Triloops, tl)))
+            if_triloops[i] = (ts - Triloops) / 6;
     }
 
     // Hexaloops
-    if_hexaloops.resize(seq_length-7<0?0:seq_length-7, -1);
-    for (int i = 0; i < seq_length-7; ++i) {
-        if (!(seq[i] == 'A' && seq[i+7] == 'U'))
+    if_hexaloops.resize(seq_length - 7 < 0 ? 0 : seq_length - 7, -1);
+    for (int i = 0; i < seq_length - 7; ++i)
+    {
+        if (!(seq[i] == 'A' && seq[i + 7] == 'U'))
             continue;
         char *ts;
-        const char* tl = seq.substr(i,8).c_str();
-                if ((ts=strstr(Hexaloops, tl)))
-                    if_hexaloops[i] = (ts - Hexaloops)/9;
+        auto tlx = seq.substr(i, 8);
+        const char *tl = tlx.c_str();
+        if ((ts = strstr(Hexaloops, tl)))
+            if_hexaloops[i] = (ts - Hexaloops) / 9;
     }
     return;
 }

@@ -13,14 +13,16 @@ set(CMAKE_CXX_COMPILE_FEATURES cxx_std_17)
 project(IPknot CXX C)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-add_definitions(-DPACKAGE_VERSION="1.0.0")
+add_definitions(-DPACKAGE_VERSION="1.1.0")
 
 find_package(PkgConfig REQUIRED)
 
-pkg_check_modules(VIENNARNA REQUIRED RNAlib2)
-include_directories(${VIENNARNA_INCLUDE_DIRS})
-add_definitions(-DHAVE_VIENNA18)
-add_definitions(-DHAVE_VIENNA20)
+pkg_check_modules(VIENNARNA RNAlib2)
+if (VIENNARNA_FOUND)
+  include_directories(${VIENNARNA_INCLUDE_DIRS})
+  add_definitions(-DHAVE_VIENNA18)
+  add_definitions(-DHAVE_VIENNA20)
+endif()
 
 if(ENABLE_CPLEX)
   find_package(CPLEX)

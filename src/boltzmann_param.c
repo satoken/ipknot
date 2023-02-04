@@ -8,6 +8,8 @@
 #include "config.h"
 #endif
 
+#if defined(HAVE_VIENNA18) || defined(HAVE_VIENNA20)
+
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -6024,3 +6026,5 @@ void copy_boltzmann_parameters()
   copy_ninio(ninio_a);
   copy_Tetra_loop(tetraloops_a);
 }
+
+#endif

@@ -32,6 +32,7 @@
 #include "contrafold/InferenceEngine.hpp"
 #include "contrafold/Defaults.hpp"
 
+#if defined(HAVE_VIENNA18) || defined(HAVE_VIENNA20)
 namespace Vienna {
 extern "C" {
 #include <ViennaRNA/fold.h>
@@ -47,6 +48,7 @@ extern "C" {
 
 #ifndef FLT_OR_DBL
 typedef Vienna::FLT_OR_DBL FLT_OR_DBL;
+#endif
 #endif
 
 #include "nupack/nupack.h"
@@ -148,7 +150,7 @@ calculate_posterior(const std::string& seq, const std::string& paren, float th) 
 }
 
 // RNAfold model
-
+#if defined(HAVE_VIENNA18) || defined(HAVE_VIENNA20)
 RNAfoldModel::
 RNAfoldModel(const char* param)
 {
@@ -332,6 +334,52 @@ calculate_posterior(const std::string& seq, float th) const
   return sbp;
 }
 
+#else
+
+RNAfoldModel::
+RNAfoldModel(const char* param)
+{
+  throw "ViennaRNA package is not linked.";
+}
+
+void
+RNAfoldModel::
+calculate_posterior(const std::string& seq, const std::string& paren,
+                    std::vector<float>& bp, std::vector<int>& offset) const
+{
+  throw "ViennaRNA package is not linked.";
+}
+
+auto
+RNAfoldModel::
+calculate_posterior(const std::string& seq, const std::string& paren, float th) const
+  -> std::vector<std::vector<std::pair<uint, float>>>
+{
+  throw "ViennaRNA package is not linked.";
+  uint L=seq.size();
+  std::vector<std::vector<std::pair<uint, float>>> sbp(L+1);
+  return sbp;
+}
+    
+void
+RNAfoldModel::
+calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const
+{
+  throw "ViennaRNA package is not linked.";
+}
+
+auto
+RNAfoldModel::
+calculate_posterior(const std::string& seq, float th) const
+  -> std::vector<std::vector<std::pair<uint, float>>>
+{
+  throw "ViennaRNA package is not linked.";
+  uint L=seq.size();
+  std::vector<std::vector<std::pair<uint, float>>> sbp(L+1);
+  return sbp;
+}
+#endif
+
 // Nupack model
 
 void
@@ -457,7 +505,7 @@ calculate_posterior(const std::string& seq, const std::string& paren, float th) 
 
 
 // Alifold model
-
+#if defined(HAVE_VIENNA18) || defined(HAVE_VIENNA20)
 AlifoldModel::
 AlifoldModel(const char* param)
 {
@@ -683,12 +731,61 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
   return bp;
 }
 
+#else
+
+AlifoldModel::
+AlifoldModel(const char* param)
+{
+  throw "ViennaRNA package is not linked.";
+}
+
+void
+AlifoldModel::
+calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
+                    std::vector<float>& bp, std::vector<int>& offset) const
+{
+  throw "ViennaRNA package is not linked.";
+}
+
+auto
+AlifoldModel::
+calculate_posterior(const std::list<std::string>& aln, const std::string& paren, float th) const
+  -> std::vector<std::vector<std::pair<uint, float>>>
+{
+  throw "ViennaRNA package is not linked.";
+  uint L=aln.front().size();
+  std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  return bp;
+}
+
+void
+AlifoldModel::
+calculate_posterior(const std::list<std::string>& aln,
+                    std::vector<float>& bp, std::vector<int>& offset) const
+{
+  throw "ViennaRNA package is not linked.";
+}
+
+auto
+AlifoldModel::
+calculate_posterior(const std::list<std::string>& aln, float th) const
+  -> std::vector<std::vector<std::pair<uint, float>>>
+{
+  throw "ViennaRNA package is not linked.";
+  //uint N=aln.size();
+  uint L=aln.front().size();
+  std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  return bp;
+}
+#endif
+
 // Averaged model
 void
 AveragedModel::
 calculate_posterior(const std::list<std::string>& aln,
                     std::vector<float>& bp, std::vector<int>& offset) const
 {
+  throw "ViennaRNA package is not linked.";
   uint N=aln.size();
   uint L=aln.front().size();
   bp.resize((L+1)*(L+2)/2, 0.0);
@@ -741,9 +838,8 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
     for (auto i=1; i!=lbp.size(); ++i)
       for (const auto [j, p]: lbp[i])
       {
-        const auto jj=j;
         auto res = std::find_if(std::begin(bp[idx[i-1]+1]), std::end(bp[idx[i-1]+1]),
-                        [&](const auto& x) { return x.first==idx[jj-1]+1; });
+                        [&, &j=j](const auto& x) { return x.first==idx[j-1]+1; });
         if (res != std::end(bp[idx[i-1]+1]))
           res->second += p/N;
         else
@@ -863,9 +959,8 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
     for (auto i=1; i!=lbp.size(); ++i)
       for (const auto [j, p]: lbp[i])
       {
-        const auto jj=j;
         auto res = std::find_if(std::begin(bp[idx[i-1]+1]), std::end(bp[idx[i-1]+1]),
-                        [&](const auto& x) { return x.first==idx[jj-1]+1; });
+                        [&, &j=j](const auto& x) { return x.first==idx[j-1]+1; });
         if (res != std::end(bp[idx[i-1]+1]))
           res->second += p/N;
         else
@@ -914,9 +1009,8 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
     {
       for (const auto [j, p]: lbp[i])
       {
-        const auto jj=j;
         auto res = std::find_if(std::begin(bp[i]), std::end(bp[i]),
-                          [&](const auto& x) { return x.first==jj; });
+                          [&, &j=j](const auto& x) { return x.first==j; });
         if (res != std::end(bp[i]))
           res->second += p * w_[k];
         else
@@ -965,9 +1059,8 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
     {
       for (const auto [j, p]: lbp[i])
       {
-        const auto jj=j;
         auto res = std::find_if(std::begin(bp[i]), std::end(bp[i]),
-                          [&](const auto& x) { return x.first==jj; });
+                          [&, &j=j](const auto& x) { return x.first==j; });
         if (res != std::end(bp[i]))
           res->second += p * w_[k];
         else

@@ -861,10 +861,9 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en, const VI& bpseq, const VI& ple
     {
       for (const auto [jl, vl]: sbpl[i]) 
       {
-        const auto jl2 = jl;
         auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
         auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
-                            [&](const auto& x) { return x.first == jl2; });
+                            [&, &jl=jl](const auto& x) { return x.first == jl; });
         if (re != std::end(sbp[i]))
           re->second += v;
         else
