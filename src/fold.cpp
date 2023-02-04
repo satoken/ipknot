@@ -741,8 +741,9 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
     for (auto i=1; i!=lbp.size(); ++i)
       for (const auto [j, p]: lbp[i])
       {
+        const auto jj=j;
         auto res = std::find_if(std::begin(bp[idx[i-1]+1]), std::end(bp[idx[i-1]+1]),
-                        [&](const auto& x) { return x.first==idx[j-1]+1; });
+                        [&](const auto& x) { return x.first==idx[jj-1]+1; });
         if (res != std::end(bp[idx[i-1]+1]))
           res->second += p/N;
         else
@@ -862,8 +863,9 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
     for (auto i=1; i!=lbp.size(); ++i)
       for (const auto [j, p]: lbp[i])
       {
+        const auto jj=j;
         auto res = std::find_if(std::begin(bp[idx[i-1]+1]), std::end(bp[idx[i-1]+1]),
-                        [&](const auto& x) { return x.first==idx[j-1]+1; });
+                        [&](const auto& x) { return x.first==idx[jj-1]+1; });
         if (res != std::end(bp[idx[i-1]+1]))
           res->second += p/N;
         else
@@ -912,8 +914,9 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
     {
       for (const auto [j, p]: lbp[i])
       {
+        const auto jj=j;
         auto res = std::find_if(std::begin(bp[i]), std::end(bp[i]),
-                          [&](const auto& x) { return x.first==j; });
+                          [&](const auto& x) { return x.first==jj; });
         if (res != std::end(bp[i]))
           res->second += p * w_[k];
         else
@@ -962,8 +965,9 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
     {
       for (const auto [j, p]: lbp[i])
       {
+        const auto jj=j;
         auto res = std::find_if(std::begin(bp[i]), std::end(bp[i]),
-                          [&](const auto& x) { return x.first==j; });
+                          [&](const auto& x) { return x.first==jj; });
         if (res != std::end(bp[i]))
           res->second += p * w_[k];
         else

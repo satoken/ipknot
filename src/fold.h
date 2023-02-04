@@ -29,6 +29,7 @@
 #include <stdexcept>
 
 const float DEFAULT_THRESHOLD = 0.001;
+typedef unsigned int uint;
 
 // The base class for calculating base-pairing probabilities of an individual sequence
 class BPEngineSeq
