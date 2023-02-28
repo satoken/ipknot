@@ -36,6 +36,11 @@ extern "C" {
 #ifdef WITH_GUROBI
 #include "gurobi_c++.h"
 #endif
+#ifdef WITH_SCIP
+#include <scip/scip.h>
+#include <scip/scipdefplugins.h>
+#endif
+
 #include <cfloat>
 
 #ifdef WITH_GLPK
@@ -365,7 +370,121 @@ private:
 };
 #endif  // WITH_CPLEX
 
-#if defined(WITH_GLPK) || defined(WITH_CPLEX) || defined(WITH_GUROBI)
+#ifdef WITH_SCIP
+class IPimpl
+{
+public:
+  IPimpl(IP::DirType dir, int n_th)
+    : scip_(nullptr), sol_(nullptr)
+    //: ip_(NULL), ia_(1), ja_(1), ar_(1)
+  {
+    SCIPcreate(&scip_);
+    SCIPincludeDefaultPlugins(scip_);
+    SCIPcreateProbBasic(scip_, "IPknot");
+    switch (dir)
+    {
+      case IP::MIN: SCIPsetObjsense(scip_, SCIP_OBJSENSE_MINIMIZE); break;
+      case IP::MAX: SCIPsetObjsense(scip_, SCIP_OBJSENSE_MAXIMIZE); break;
+    }
+  }
+
+  ~IPimpl()
+  {
+    for (auto& v: vars_)
+      SCIPreleaseVar(scip_, &v);
+    for (auto& c: cons_)
+      SCIPreleaseCons(scip_, &c);
+    if (scip_) SCIPfree(&scip_);
+  }
+
+  int make_variable(double coef, int lo=0, int hi=1)
+  {
+    int col = vars_.size();
+    SCIP_VAR *var = nullptr;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "var[%d]", col);
+    SCIPcreateVarBasic(scip_,                // SCIP environment
+                       &var,                 // reference to the variable
+                       buf,                  // name of the variable
+                       lo,                   // Lower bound of the variable
+                       hi,                   // upper bound of the variable
+                       coef,                 // Obj. coefficient. 
+                       SCIP_VARTYPE_BINARY   // Binary variable
+                      );
+    SCIPaddVar(scip_, var);
+    vars_.push_back(var);
+    return col;
+  }
+
+  int make_constraint(IP::BoundType bnd, double l, double u)
+  {
+    int row = cons_.size();
+    SCIP_CONS *cons = nullptr;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "cons[%d]", row);
+    double lhs = -SCIPinfinity(scip_); 
+    double rhs =  SCIPinfinity(scip_);
+    switch (bnd)
+    {
+      case IP::FR: break;
+      case IP::LO: lhs = l; break; 
+      case IP::UP: rhs = u; break;
+      case IP::DB: lhs = l; rhs = u; break;
+      case IP::FX: lhs = rhs = l; break;
+    }
+    SCIPcreateConsBasicLinear(scip_,        // SCIP pointer
+                              &cons,        // reference to the constraint
+                              buf,          // name of the constraint
+                              0,            // How many variables are you adding  now
+                              nullptr,      // an array of pointers to various variables
+                              nullptr,      // an array of values of the coefficients of the corresponding vars
+                              lhs,          // LHS of the constraint 
+                              rhs           // RHS of the constraint
+                             );
+    SCIPaddCons(scip_, cons);
+    cons_.push_back(cons);
+    return row;
+  }
+
+  void add_constraint(int row, int col, double val)
+  {
+    assert(row>=0);
+    assert(col>=0);
+    SCIPaddCoefLinear(scip_, cons_[row], vars_[col], val);
+  }
+
+  void update()
+  {
+    for (auto c: cons_)
+      SCIPaddCons(scip_, c);
+  }
+
+
+  double solve()
+  {
+    // SCIP_CALL((SCIPwriteOrigProblem(scip, "ipknot.lp", nullptr, FALSE)));
+    SCIPsetIntParam(scip_, "display/verblevel", 0);   // We use SCIPsetIntParams to turn off the logging. 
+    SCIPsolve(scip_);
+    SCIP_STATUS soln_status = SCIPgetStatus(scip_); 
+    sol_ = SCIPgetBestSol(scip_);
+    return SCIPgetSolOrigObj(scip_, sol_);
+  }
+
+  double get_value(int col) const
+  {
+    return SCIPgetSolVal(scip_, sol_, vars_[col]);
+  }
+
+private:
+  SCIP *scip_;
+  std::vector<SCIP_VAR *> vars_;
+  std::vector<SCIP_CONS *> cons_;
+  SCIP_SOL *sol_;
+};
+
+#endif // WITH_SCIP
+
+#if defined(WITH_GLPK) || defined(WITH_CPLEX) || defined(WITH_GUROBI) || defined(WITH_SCIP)
 
 IP::
 IP(DirType dir, int n_th)

@@ -13,7 +13,7 @@ set(CMAKE_CXX_COMPILE_FEATURES cxx_std_17)
 project(IPknot CXX C)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-add_definitions(-DPACKAGE_VERSION="1.1.0")
+add_definitions(-DPACKAGE_VERSION="1.2.0")
 
 find_package(PkgConfig REQUIRED)
 
@@ -36,12 +36,23 @@ elseif(ENABLE_GUROBI)
     add_definitions(-DWITH_GUROBI)
     include_directories(${GUROBI_INCLUDE_DIR})
   endif()
+elseif(ENABLE_SCIP)
+  find_package(SCIP)
+  if (SCIP_FOUND)
+    MESSAGE(STATUS "Found SCIP version ${SCIP_VERSION}")
+    add_definitions(-DWITH_SCIP)
+    include_directories((${SCIP_INCLUDE_DIRS}))
+  endif()
 else()
   find_package(GLPK)
   if (GLPK_FOUND)
     add_definitions(-DWITH_GLPK)
     include_directories(${GLPK_INCLUDE_DIR})
   endif()
+endif()
+
+if(STATIC_BUILD) # static build for linux system
+  set(CMAKE_EXE_LINKER_FLAGS "-static")
 endif()
 
 add_executable(
@@ -66,7 +77,7 @@ add_executable(
   )
 target_link_libraries(ipknot 
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
-  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY} ${CMAKE_DL_LIBS})
+  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY} ${SCIP_LIBRARIES} ${CMAKE_DL_LIBS})
 target_compile_features(ipknot PUBLIC cxx_std_17)
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)
