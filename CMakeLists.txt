@@ -43,6 +43,13 @@ elseif(ENABLE_SCIP)
     add_definitions(-DWITH_SCIP)
     include_directories((${SCIP_INCLUDE_DIRS}))
   endif()
+elseif(ENABLE_HIGHS)
+  find_package(HiGHS)
+  find_package(ZLIB 1.2.3)
+  if (HiGHS_FOUND)
+    add_definitions(-DWITH_HIGHS)
+    include_directories((${HiGHS_INCLUDE_DIR}))
+  endif()
 else()
   find_package(GLPK)
   if (GLPK_FOUND)
@@ -77,7 +84,7 @@ add_executable(
   )
 target_link_libraries(ipknot 
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
-  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY} ${SCIP_LIBRARIES} ${CMAKE_DL_LIBS})
+  ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY} ${SCIP_LIBRARIES} ${HiGHS_LIBRARY} ${ZLIB_LIBRARY} ${CMAKE_DL_LIBS})
 target_compile_features(ipknot PUBLIC cxx_std_17)
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)
