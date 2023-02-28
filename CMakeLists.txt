@@ -13,7 +13,7 @@ set(CMAKE_CXX_COMPILE_FEATURES cxx_std_17)
 project(IPknot CXX C)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-add_definitions(-DPACKAGE_VERSION="1.2.0")
+add_definitions(-DPACKAGE_VERSION="1.1.0")
 
 find_package(PkgConfig REQUIRED)
 
