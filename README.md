@@ -8,6 +8,8 @@ Requirements
 * [GNU Linear Programming Kit](http://www.gnu.org/software/glpk/) (>=4.41),
   [Gurobi Optimizer](http://www.gurobi.com/) (>=8.0),
   or [ILOG CPLEX](https://www.ibm.com/products/ilog-cplex-optimization-studio) (>=12.0)
+  or [SCIP](https://scipopt.org/) (>= 8.0.3)
+  or [HiGHS](https://highs.dev/) (>= 1.5.0)
 
 Install
 -------
@@ -26,6 +28,15 @@ For Gurobi, add ``-DENABLE_GUROBI`` to the configure step:
 For CPLEX, add ``-DENABLE_CPLEX`` to the configure step:
 
 	cmake -DENABLE_CPLEX -DCMAKE_BUILD_TYPE=Release ..  # configure
+
+For SCIP, add ``-DENABLE_SCIP`` to the configure step:
+
+	cmake -DENABLE_SCIP -DCMAKE_BUILD_TYPE=Release ..  # configure
+
+For HiGHS, add ``-DENABLE_HIGHS`` to the configure step:
+
+	cmake -DENABLE_HIGHS -DCMAKE_BUILD_TYPE=Release ..  # configure
+
 
 Usage
 -----
