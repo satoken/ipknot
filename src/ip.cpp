@@ -494,6 +494,7 @@ public:
     : model_()
   {
     highs_.setOptionValue("output_flag", false);
+    highs_.setOptionValue("threads", n_th);
     switch (dir)
     {
       default:

@@ -1,44 +1,31 @@
-# From ubuntu:18.04
-#FROM debian:10
-FROM continuumio/miniconda3
-
-ENV DEBIAN_FRONTEND=noninteractive
+FROM alpine:latest AS builder
 
 WORKDIR /workspaces
+RUN apk add --no-cache musl-dev gcc g++ cmake make ninja git pkgconfig zlib-static
 
-RUN apt-get update \
-    # Install C++ tools
-    && apt-get -y install build-essential cmake cppcheck valgrind \
-            libglpk-dev libgsl-dev libgmp-dev libltdl-dev libmpfr-dev pkg-config \
-    # Clean up
-    && rm -f *.deb \
-    && apt-get autoremove -y \
-    && apt-get clean -y \
-    && rm -rf /var/lib/apt/lists/*
+# HiGHS
+RUN git clone https://github.com/ERGO-Code/HiGHS \
+    && cd HiGHS \
+    && cmake -DFAST_BUILD=ON -DCMAKE_BUILD_TYPE=Release -G Ninja -B build \
+    && cmake --build build \
+    && cmake --install build --strip \
+    && cd ..
 
-# Switch back to dialog for any ad-hoc use of apt-get
-ENV DEBIAN_FRONTEND=dialog
-
-# install ViennaRNA package from bioconda
-RUN conda config --add channels conda-forge && \
-    conda config --add channels bioconda && \
-    conda update --all && \
-    conda install viennarna && \
-    conda clean -afy
-ENV PKG_CONFIG_PATH /opt/conda/lib/pkgconfig:$PKG_CONFIG_PATH
-
+# ViennaRNA
+COPY --from=satoken/viennarna:latest /usr/local/ /usr/local/
 # build from the source
 # RUN wget -q https://www.tbi.univie.ac.at/RNA/download/sourcecode/2_4_x/ViennaRNA-2.4.17.tar.gz \
 #     && tar zxvf ViennaRNA-2.4.17.tar.gz \
 #     && cd ViennaRNA-2.4.17 \
-#     && ./configure --without-perl --without-python --without-python3 --without-forester --without-rnalocmin \
+#     && ./configure --without-perl --without-python --without-python2 --without-forester --without-rnalocmin \
 #     && make && make install \
 #     && cd .. && rm -rf ViennaRNA-2.4.17 ViennaRNA-2.4.17.tar.gz 
 
-COPY . .
+# IPknot
+COPY . . 
+RUN cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_HIGHS=ON -DSTATIC_BUILD=ON -G Ninja -B build \
+    && cmake --build build \
+    && cmake --install build --strip 
 
-RUN rm -rf build && mkdir build \
-    && cd build \
-    && cmake -DCMAKE_BUILD_TYPE=Release .. \
-    #&& cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BUILD=ON .. \
-    && make && make install
+FROM alpine:latest
+COPY --from=builder /usr/local/bin/ipknot /usr/local/bin/ipknot

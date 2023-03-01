@@ -4,12 +4,16 @@ IPknot for predicting RNA pseudoknot structures using integer programming
 Requirements
 ------------
 
+* C++17 compatible compiler (tested on Apple clang version 14.0.0 and GCC version 10.2.1) 
+* cmake (>= 3.8)
+* pkg-config
 * [Vienna RNA package](https://www.tbi.univie.ac.at/RNA/) (>= 2.2.0)
-* [GNU Linear Programming Kit](http://www.gnu.org/software/glpk/) (>=4.41),
-  [Gurobi Optimizer](http://www.gurobi.com/) (>=8.0),
-  or [ILOG CPLEX](https://www.ibm.com/products/ilog-cplex-optimization-studio) (>=12.0)
-  or [SCIP](https://scipopt.org/) (>= 8.0.3)
-  or [HiGHS](https://highs.dev/) (>= 1.5.0)
+* one of these MIP solvers
+	* [GNU Linear Programming Kit](http://www.gnu.org/software/glpk/) (>=4.41)
+	* [Gurobi Optimizer](http://www.gurobi.com/) (>=8.0)
+	* [ILOG CPLEX](https://www.ibm.com/products/ilog-cplex-optimization-studio) (>=12.0)
+	* [SCIP](https://scipopt.org/) (>= 8.0.3)
+	* [HiGHS](https://highs.dev/) (>= 1.5.0)
 
 Install
 -------
@@ -99,6 +103,16 @@ IPknot can fold a given sequence or alignment with some constraints. The constra
 	.........(((((((............(((((((.........[[[[[)))))))....((((...................]]]]])))).......)))))))
 
 This example shows folding with constraints that 16th base and 100th base are paired, 41st and 42nd bases are unpaired.
+
+### Run with Docker
+
+	docker build . -t ipknot
+	docker run -it --rm -v $(pwd):$(pwd) -w $(pwd) ipknot ipknot examples/RF00005.fa
+
+### Run with the web server
+
+The IPknot web server is available at http://ws.sato-lab.org/rtips/ipknot++/.
+
 
 References
 ----------
