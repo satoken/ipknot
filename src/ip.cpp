@@ -281,7 +281,7 @@ public:
       case IP::UP: bnd_[row]='L'; rhs_[row]=u; break;
       case IP::DB: bnd_[row]='R'; rhs_[row]=l; rngval_[row]=u-l; break;
       case IP::FX: bnd_[row]='E'; rhs_[row]=l; break;
-      case IP::FR: bnd_[row]='R'; rhs_[row]=DBL_MIN; rngval_[row]=DBL_MAX; break;
+      case IP::FR: bnd_[row]='R'; rhs_[row]=-DBL_MAX; rngval_[row]=DBL_MAX; break;
     }
     return row;
   }
@@ -523,10 +523,10 @@ public:
     switch (bnd)
     {
       case IP::LO: u=DBL_MAX; break;
-      case IP::UP: l=DBL_MIN; break;
+      case IP::UP: l=-DBL_MAX; break;
       case IP::DB: break;
       case IP::FX: u=l; break;
-      case IP::FR: l=DBL_MIN; u=DBL_MAX; break;
+      case IP::FR: l=-DBL_MAX; u=DBL_MAX; break;
     }
     row_lower_.push_back(l);
     row_upper_.push_back(u);
