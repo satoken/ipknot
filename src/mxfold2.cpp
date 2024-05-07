@@ -85,6 +85,8 @@ MXfold2Model::MXfold2Model() : BPEngineSeq(), guard_(), model_()
   if (!py::cast<bool>(param.attr("exists")()))
       param = pathlib.attr("Path")(__main__.attr("default_conf")).attr("parent").attr("joinpath")(param);
   auto p = torch.attr("load")(param, "map_location"_a="cpu");
+  if (py::isinstance<py::dict>(p) && py::cast<py::dict>(p).contains("model_state_dict"))
+    p = py::cast<py::dict>(p)["model_state_dict"];
   model_.attr("load_state_dict")(p);
 
   torch.attr("set_grad_enabled")(false);

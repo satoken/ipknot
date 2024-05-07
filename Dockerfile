@@ -1,7 +1,13 @@
-FROM alpine:latest AS builder
+FROM python:3.12
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /workspaces
-RUN apk add --no-cache musl-dev gcc g++ cmake make ninja git pkgconfig zlib-static
+RUN apt update \
+    && apt install -y gcc g++ cmake make ninja-build git pkg-config \
+    && apt autoremove \
+    && apt clean 
 
 # HiGHS
 RUN git clone https://github.com/ERGO-Code/HiGHS \
@@ -21,11 +27,19 @@ COPY --from=satoken/viennarna:latest /usr/local/ /usr/local/
 #     && make && make install \
 #     && cd .. && rm -rf ViennaRNA-2.4.17 ViennaRNA-2.4.17.tar.gz 
 
+# MXfold2
+RUN pip install --no-cache-dir "pybind11[global]"
+RUN git clone https://github.com/mxfold/mxfold2.git \
+    && cd mxfold2 \
+    && git fetch origin with_ipknot \
+    && git checkout with_ipknot \
+    && pip install --no-cache-dir . \
+    && cd .. \
+    && rm -rf mxfold2
+
 # IPknot
 COPY . . 
-RUN cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_HIGHS=ON -DSTATIC_BUILD=ON -G Ninja -B build \
+RUN cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_HIGHS=ON -G Ninja -B build \
     && cmake --build build \
-    && cmake --install build --strip 
-
-FROM alpine:latest
-COPY --from=builder /usr/local/bin/ipknot /usr/local/bin/ipknot
+    && cmake --install build --strip \
+    && rm -rf /workspaces/*

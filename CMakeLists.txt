@@ -1,7 +1,7 @@
 
 cmake_minimum_required(VERSION 3.8)
-cmake_policy(SET CMP0074 NEW)
-cmake_policy(SET CMP0148 NEW)
+#cmake_policy(SET CMP0074 NEW)
+#cmake_policy(SET CMP0148 NEW)
 
 option(CXX "enable C++ compilation" ON)
 if (CXX)
@@ -87,8 +87,5 @@ target_link_libraries(ipknot PRIVATE pybind11::embed
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
   ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY} ${SCIP_LIBRARIES} ${HiGHS_LIBRARY} ${ZLIB_LIBRARY} ${CMAKE_DL_LIBS})
 target_compile_features(ipknot PUBLIC cxx_std_17)
-
-add_executable(example example.cpp)
-target_link_libraries(example PRIVATE pybind11::embed)
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)
