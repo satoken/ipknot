@@ -48,6 +48,7 @@
 #include "aln.h"
 #include "fold.h"
 #include "nupack/nupack.h"
+#include "mxfold2.h"
 #include "bpseq.h"
 #include "cxxopts.hpp"
 
@@ -1007,6 +1008,8 @@ build_engine_seq(const char* model, const char* param, uint beam_size=100)
     en = std::make_unique<LinearPartitionModel>(false, beam_size);
   else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
     en = std::make_unique<LinearPartitionModel>(true, beam_size);
+  else if (strcasecmp(model, "MXfold2")==0)
+    en = std::make_unique<MXfold2Model>();
   return en;
 }
 
@@ -1054,6 +1057,11 @@ build_engine_aln(const std::vector<std::string>& model, const char* param, uint 
       else if (strcasecmp(m, "LinearPartition-V")==0 || strcasecmp(m, "lpv")==0)
       {
         auto e = std::make_unique<LinearPartitionModel>(true, beam_size);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "MXfold2")==0)
+      {
+        auto e = std::make_unique<MXfold2Model>();
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
       else

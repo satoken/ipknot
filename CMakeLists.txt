@@ -1,14 +1,12 @@
 
 cmake_minimum_required(VERSION 3.8)
+cmake_policy(SET CMP0074 NEW)
+cmake_policy(SET CMP0148 NEW)
 
 option(CXX "enable C++ compilation" ON)
 if (CXX)
   enable_language(CXX)
 endif()
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_COMPILE_FEATURES cxx_std_17)
 
 project(IPknot CXX C)
 
@@ -62,6 +60,8 @@ if(STATIC_BUILD) # static build for linux system
   set(CMAKE_EXE_LINKER_FLAGS "-static")
 endif()
 
+find_package(pybind11 REQUIRED)
+
 add_executable(
   ipknot
   src/ipknot.cpp
@@ -69,6 +69,7 @@ add_executable(
   src/fa.cpp 
   src/aln.cpp 
   src/fold.cpp 
+  src/mxfold2.cpp
   src/bpseq.h src/bpseq.cpp
   src/boltzmann_param.c 
   src/nupack/nupack.cpp
@@ -82,9 +83,12 @@ add_executable(
   #src/linearpartition/bpp.cpp
   src/cxxopts.hpp
   )
-target_link_libraries(ipknot 
+target_link_libraries(ipknot PRIVATE pybind11::embed
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
   ${CPLEX_LIBRARY} ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY} ${SCIP_LIBRARIES} ${HiGHS_LIBRARY} ${ZLIB_LIBRARY} ${CMAKE_DL_LIBS})
 target_compile_features(ipknot PUBLIC cxx_std_17)
+
+add_executable(example example.cpp)
+target_link_libraries(example PRIVATE pybind11::embed)
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)
