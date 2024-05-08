@@ -62,11 +62,12 @@ make_bp_offset(const std::vector<std::vector<std::pair<uint, float>>>& sbp,
         bp[offset[i]+j] = pr;
 }
 
-MXfold2Model::MXfold2Model() : BPEngineSeq(), guard_(), model_()
+MXfold2Model::MXfold2Model(uint n_th) : BPEngineSeq(), guard_(), model_()
 {
   auto argparse = py::module_::import("argparse");
   auto __main__ = py::module_::import("mxfold2.__main__");
   auto predict = py::module_::import("mxfold2.predict");
+  auto interface = py::module_::import("mxfold2.interface");
   auto torch = py::module_::import("torch");
   auto pathlib = py::module_::import("pathlib");
 
@@ -91,6 +92,9 @@ MXfold2Model::MXfold2Model() : BPEngineSeq(), guard_(), model_()
 
   torch.attr("set_grad_enabled")(false);
   model_.attr("eval")();
+
+  torch.attr("set_num_threads")(n_th);
+  interface.attr("set_num_threads")(n_th);
 }
 
 auto MXfold2Model::calculate_posterior(const std::string& seq, float th) const -> std::vector<std::vector<std::pair<uint, float>>>

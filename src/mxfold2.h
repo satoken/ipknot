@@ -9,7 +9,7 @@ namespace py = pybind11;
 class MXfold2Model : public BPEngineSeq
 {
 public:
-  MXfold2Model();
+  MXfold2Model(uint n_th=1);
 
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
   auto calculate_posterior(const std::string& seq, float th=DEFAULT_THRESHOLD) const -> std::vector<std::vector<std::pair<uint, float>>>;

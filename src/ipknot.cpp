@@ -981,7 +981,7 @@ parse_csv_line(const char* l, char delim=',')
 }
 
 auto
-build_engine_seq(const char* model, const char* param, uint beam_size=100)
+build_engine_seq(const char* model, const char* param, uint beam_size=100, uint n_th=1)
 {
   std::unique_ptr<BPEngineSeq> en;
   if (model==nullptr || strcasecmp(model, "McCaskill")==0 || strcasecmp(model, "Boltzmann")==0)
@@ -1009,12 +1009,12 @@ build_engine_seq(const char* model, const char* param, uint beam_size=100)
   else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
     en = std::make_unique<LinearPartitionModel>(true, beam_size);
   else if (strcasecmp(model, "MXfold2")==0)
-    en = std::make_unique<MXfold2Model>();
+    en = std::make_unique<MXfold2Model>(n_th);
   return en;
 }
 
 auto
-build_engine_aln(const std::vector<std::string>& model, const char* param, uint beam_size=100)
+build_engine_aln(const std::vector<std::string>& model, const char* param, uint beam_size=100, uint n_th=1)
 {
   std::unique_ptr<BPEngineAln> mix_en;
   std::vector<std::unique_ptr<BPEngineAln>> en_a;
@@ -1061,7 +1061,7 @@ build_engine_aln(const std::vector<std::string>& model, const char* param, uint 
       }
       else if (strcasecmp(m, "MXfold2")==0)
       {
-        auto e = std::make_unique<MXfold2Model>();
+        auto e = std::make_unique<MXfold2Model>(n_th);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
       else
@@ -1174,9 +1174,7 @@ main(int argc, char* argv[])
   if (res.count("param")) param = res["param"].as<std::string>();
   aux = res["aux"].as<bool>();
   levelwise = !res["no-levelwise"].as<bool>();
-#ifndef WITH_GLPK
   n_th = res["threads"].as<uint>();
-#endif
   output_energy = res["energy"].as<bool>();
   if (res.count("constraint")) constraint = res["constraint"].as<std::string>();
   beam_size = res["beam-size"].as<uint>();
@@ -1313,7 +1311,7 @@ main(int argc, char* argv[])
     {
       float fval, fval_pk;
       auto en = build_engine_seq(model.empty() ? nullptr : model[0].c_str(), 
-                                  param.empty() ? nullptr : param.c_str(), beam_size);
+                                  param.empty() ? nullptr : param.c_str(), beam_size, n_th);
       if (!en) 
       {
         std::cout << options.help() << std::endl;
@@ -1374,7 +1372,7 @@ main(int argc, char* argv[])
     else if (Aln::load(a, input.c_str())>0)
     {
       float fval, fval_pk;
-      auto en = build_engine_aln(model, param.empty() ? nullptr : param.c_str(), beam_size);
+      auto en = build_engine_aln(model, param.empty() ? nullptr : param.c_str(), beam_size, n_th);
       if (!en) 
       {
         std::cout << options.help() << std::endl;
