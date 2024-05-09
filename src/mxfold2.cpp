@@ -62,7 +62,7 @@ make_bp_offset(const std::vector<std::vector<std::pair<uint, float>>>& sbp,
         bp[offset[i]+j] = pr;
 }
 
-MXfold2Model::MXfold2Model(uint n_th) : BPEngineSeq(), guard_(), model_()
+MXfold2Model::MXfold2Model(uint n_th, const std::string& config, int gpu) : BPEngineSeq(), guard_(), model_()
 {
   auto argparse = py::module_::import("argparse");
   auto __main__ = py::module_::import("mxfold2.__main__");
@@ -76,7 +76,10 @@ MXfold2Model::MXfold2Model(uint n_th) : BPEngineSeq(), guard_(), model_()
   predict.attr("Predict").attr("add_args")(subparser);
   auto l = py::list();
   l.append("predict");
-  l.append(py::str("@")+__main__.attr("default_conf"));
+  if (!config.empty())
+    l.append(py::str("@") + py::str(config));
+  else
+    l.append(py::str("@")+__main__.attr("default_conf"));
   l.append("input");
   auto args = parser.attr("parse_args")("args"_a=l);
   auto model_conf = predict.attr("Predict")().attr("build_model")(args);
@@ -89,6 +92,8 @@ MXfold2Model::MXfold2Model(uint n_th) : BPEngineSeq(), guard_(), model_()
   if (py::isinstance<py::dict>(p) && py::cast<py::dict>(p).contains("model_state_dict"))
     p = py::cast<py::dict>(p)["model_state_dict"];
   model_.attr("load_state_dict")(p);
+  if (gpu >= 0)
+    model_.attr("cuda")(gpu);
 
   torch.attr("set_grad_enabled")(false);
   model_.attr("eval")();

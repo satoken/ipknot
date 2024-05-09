@@ -981,7 +981,7 @@ parse_csv_line(const char* l, char delim=',')
 }
 
 auto
-build_engine_seq(const char* model, const char* param, uint beam_size=100, uint n_th=1)
+build_engine_seq(const char* model, const char* param, uint beam_size=100, uint n_th=1, const std::string& mxfold2_config="", int mxfold2_gpu=-1)
 {
   std::unique_ptr<BPEngineSeq> en;
   if (model==nullptr || strcasecmp(model, "McCaskill")==0 || strcasecmp(model, "Boltzmann")==0)
@@ -1009,12 +1009,12 @@ build_engine_seq(const char* model, const char* param, uint beam_size=100, uint 
   else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
     en = std::make_unique<LinearPartitionModel>(true, beam_size);
   else if (strcasecmp(model, "MXfold2")==0)
-    en = std::make_unique<MXfold2Model>(n_th);
+    en = std::make_unique<MXfold2Model>(n_th, mxfold2_config, mxfold2_gpu);
   return en;
 }
 
 auto
-build_engine_aln(const std::vector<std::string>& model, const char* param, uint beam_size=100, uint n_th=1)
+build_engine_aln(const std::vector<std::string>& model, const char* param, uint beam_size=100, uint n_th=1, const std::string& mxfold2_config="", int mxfold2_gpu=-1)
 {
   std::unique_ptr<BPEngineAln> mix_en;
   std::vector<std::unique_ptr<BPEngineAln>> en_a;
@@ -1061,7 +1061,7 @@ build_engine_aln(const std::vector<std::string>& model, const char* param, uint 
       }
       else if (strcasecmp(m, "MXfold2")==0)
       {
-        auto e = std::make_unique<MXfold2Model>(n_th);
+        auto e = std::make_unique<MXfold2Model>(n_th, mxfold2_config, mxfold2_gpu);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
       else
@@ -1149,6 +1149,10 @@ main(int argc, char* argv[])
     ("V,verbose", "Verbose output")
     ("beam-size", "Beam size for LinearPartition algorithm",
       cxxopts::value<uint>()->default_value("100"), "N")
+    ("mxfold2-config", "config file for MXfold2 model",
+      cxxopts::value<std::string>(), "FILE")
+    ("mxfold2-gpu", "Use GPU for MXfold2 model (default: -1 for CPU)",
+      cxxopts::value<int>()->default_value("-1"), "GPUID")
     ("version", "Print version")
     ("h,help", "Print usage"); 
   options.parse_positional({"input"});
@@ -1180,6 +1184,8 @@ main(int argc, char* argv[])
   beam_size = res["beam-size"].as<uint>();
   verbose = res["verbose"].as<bool>();
   input = res["input"].as<std::string>();
+  auto mxfold2_config = res["mxfold2-config"].as<std::string>();
+  auto mxfold2_gpu = res["mxfold2-gpu"].as<int>();
 
   if (res.count("bpseq"))
     os_bpseq = &std::cout;
@@ -1311,7 +1317,7 @@ main(int argc, char* argv[])
     {
       float fval, fval_pk;
       auto en = build_engine_seq(model.empty() ? nullptr : model[0].c_str(), 
-                                  param.empty() ? nullptr : param.c_str(), beam_size, n_th);
+                                  param.empty() ? nullptr : param.c_str(), beam_size, n_th, mxfold2_config, mxfold2_gpu);
       if (!en) 
       {
         std::cout << options.help() << std::endl;
@@ -1372,7 +1378,7 @@ main(int argc, char* argv[])
     else if (Aln::load(a, input.c_str())>0)
     {
       float fval, fval_pk;
-      auto en = build_engine_aln(model, param.empty() ? nullptr : param.c_str(), beam_size, n_th);
+      auto en = build_engine_aln(model, param.empty() ? nullptr : param.c_str(), beam_size, n_th, mxfold2_config, mxfold2_gpu);
       if (!en) 
       {
         std::cout << options.help() << std::endl;

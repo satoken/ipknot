@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <string>
 #include <pybind11/embed.h>
 #include "fold.h"
 namespace py = pybind11;
@@ -9,7 +10,7 @@ namespace py = pybind11;
 class MXfold2Model : public BPEngineSeq
 {
 public:
-  MXfold2Model(uint n_th=1);
+  MXfold2Model(uint n_th=1, const std::string& config="", int gpu=-1);
 
   void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
   auto calculate_posterior(const std::string& seq, float th=DEFAULT_THRESHOLD) const -> std::vector<std::vector<std::pair<uint, float>>>;
