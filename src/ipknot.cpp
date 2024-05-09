@@ -1150,7 +1150,7 @@ main(int argc, char* argv[])
     ("beam-size", "Beam size for LinearPartition algorithm",
       cxxopts::value<uint>()->default_value("100"), "N")
     ("mxfold2-config", "config file for MXfold2 model",
-      cxxopts::value<std::string>(), "FILE")
+      cxxopts::value<std::string>()->default_value(""), "FILE")
     ("mxfold2-gpu", "Use GPU for MXfold2 model (default: -1 for CPU)",
       cxxopts::value<int>()->default_value("-1"), "GPUID")
     ("version", "Print version")
