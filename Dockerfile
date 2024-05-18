@@ -42,4 +42,7 @@ COPY . .
 RUN cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_HIGHS=ON -G Ninja -B build \
     && cmake --build build \
     && cmake --install build --strip \
+    && pip install --no-cache-dir matplotlib seaborn \
+    && cp utils/rna2dheatmap.py /usr/local/bin/ \
+    && chmod +x /usr/local/bin/rna2dheatmap.py \
     && rm -rf /workspaces/*
