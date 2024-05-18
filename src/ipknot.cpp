@@ -968,6 +968,23 @@ output_bpseq(std::ostream& os,
     os << i+1 << " " << seq[i] << " " << bpseq[i]+1 << std::endl;
 }
 
+static
+void
+output_bpp(std::ostream& os,
+            const std::string& desc, const std::string& seq,
+            const VSVF& sbp)
+{
+  os << "# " << desc << std::endl; 
+  for (uint i=1; i!=sbp.size(); ++i)
+  {
+    os << i << " " << seq[i-1];
+    for (const auto [j, v]: sbp[i])
+      if (i<j)
+        os << " " << j << ":" << v;
+    os << std::endl;
+  }
+}
+
 template <class T>
 std::vector<T>
 parse_csv_line(const char* l, char delim=',')
@@ -1100,6 +1117,7 @@ main(int argc, char* argv[])
   bool max_pfval=false;
   bool output_energy=false;
   std::ostream *os_bpseq=nullptr;
+  std::ostream *os_bpp=nullptr;
   std::ostream *os_mfa=nullptr;
   std::string constraint;
   uint beam_size;
@@ -1127,6 +1145,8 @@ main(int argc, char* argv[])
     ("b,bpseq", "Output the prediction by BPSEQ format",
       cxxopts::value<bool>()->default_value("false"))
     ("B,bpseq-file", "Output file for BPSEQ format",
+      cxxopts::value<std::string>(), "FILE")
+    ("bpp", "Output base-pairing probabilities",
       cxxopts::value<std::string>(), "FILE")
 #ifndef WITH_GLPK
     ("n,threads", "The number of threads for the available solvers",
@@ -1194,6 +1214,16 @@ main(int argc, char* argv[])
     auto f = res["bpseq-file"].as<std::string>().c_str();
     os_bpseq = new std::ofstream(f);
     if (!dynamic_cast<std::ofstream*>(os_bpseq)->is_open())
+    {
+      perror(f);
+      return 1;
+    }
+  }
+  if (res.count("bpp"))
+  {
+    auto f = res["bpp"].as<std::string>().c_str();
+    os_bpp = new std::ofstream(f);
+    if (!dynamic_cast<std::ofstream*>(os_bpp)->is_open())
     {
       perror(f);
       return 1;
@@ -1372,6 +1402,8 @@ main(int argc, char* argv[])
           output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel, max_pfval, fval, fval_pk);
         if (os_bpseq!=&std::cout)
           output_fa(std::cout, fa->name(), fa->seq(), bpseq, plevel, output_energy);
+        if (os_bpp)
+          output_bpp(*os_bpp, fa->name(), fa->seq(), sbp);
         f.erase(fa);
       }
     }
@@ -1435,6 +1467,8 @@ main(int argc, char* argv[])
           output_mfa(*os_mfa, *aln, bpseq, plevel);
         if (os_bpseq!=&std::cout && os_mfa!=&std::cout)
           output_fa(std::cout, aln->name().front(), aln->consensus(), bpseq, plevel, output_energy);
+        if (os_bpp)
+          output_bpp(*os_bpp, aln->name().front(), aln->consensus(), sbp);
         a.erase(aln);
       }
     }
@@ -1453,6 +1487,7 @@ main(int argc, char* argv[])
   }
 
   if (os_bpseq!=&std::cout) delete os_bpseq;
+  if (os_bpp) delete os_bpp;
   if (os_mfa!=&std::cout) delete os_mfa;
 
   return 0;
