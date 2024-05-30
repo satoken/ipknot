@@ -81,6 +81,7 @@ public:
   }
 
 public:
+#if 0
   void solve(uint L, const VF& bp, const VI& offset,
              const VF& th, VI& bpseq, VI& plevel, bool constraint) const
   {
@@ -119,6 +120,7 @@ public:
       std::fill(std::begin(plevel), std::end(plevel), -1);
     }
   }
+#endif
 
   void solve(uint L, const VSVF& bp,
              const VF& th, VI& bpseq, VI& plevel, bool constraint) const
@@ -132,10 +134,12 @@ public:
     // make objective variables with their weights
     for (auto i=1; i<=L; ++i)
     {
+      bool found_constraint_j = false;
       for (const auto [j, p]: bp[i])
         if (i<j)
+        {
           for (auto lv=0; lv!=pk_level_; ++lv)
-            if (p>th[lv])
+            if (p>th[lv] || (constraint && bpseq[i-1]==j-1))
             {
               const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
               v_l[lv][i-1].emplace_back(j-1, v_ij);
@@ -143,6 +147,22 @@ public:
               c_l[i-1]++; c_r[j-1]++;
               n++;
             }
+          if (constraint && bpseq[i-1]==j-1) found_constraint_j = true;
+        }
+        
+      if (constraint && !found_constraint_j && bpseq[i-1]>=0)
+      {
+        const auto j = bpseq[i-1]+1;
+        const auto p = 0.0;
+        for (auto lv=0; lv!=pk_level_; ++lv)
+        {
+          const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+          v_l[lv][i-1].emplace_back(j-1, v_ij);
+          v_r[lv][j-1].emplace_back(i-1, v_ij);
+          c_l[i-1]++; c_r[j-1]++;
+          n++;
+        }
+      }
     }
     ip.update();
 
@@ -531,6 +551,7 @@ private:
     return {sen, ppv, mcc, f};
   }
 
+#if 0
   static auto
   compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>
   {
@@ -558,6 +579,7 @@ private:
 
     return compute_expected_accuracy(etp, etn, efp, efn);
   }
+#endif
 
   static auto
   compute_expected_accuracy(const VI& bpseq, const VSVF& bp) -> std::tuple<float,float,float,float>
@@ -751,6 +773,7 @@ timing()
 }
 #endif
 
+#if 0
 template < class SEQ, class EN >
 void
 update_bpm(uint pk_level, const SEQ& seq, EN& en,
@@ -815,6 +838,7 @@ update_bpm(uint pk_level, const SEQ& seq, EN& en,
   for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
 #endif
 }
+#endif
 
 template < class SEQ, class EN>
 void
@@ -910,7 +934,6 @@ read_constraints(const char* filename, VI& bpseq)
       case '<': bpseq[i-1] = BPSEQ::L; break;
       case '>': bpseq[i-1] = BPSEQ::R; break;
     }
-    
   }
 }
 
@@ -1148,10 +1171,8 @@ main(int argc, char* argv[])
       cxxopts::value<std::string>(), "FILE")
     ("bpp", "Output base-pairing probabilities",
       cxxopts::value<std::string>(), "FILE")
-#ifndef WITH_GLPK
     ("n,threads", "The number of threads for the available solvers",
       cxxopts::value<uint>()->default_value("1"), "N")
-#endif
     ("P,param", "Read the energy parameter file for Vienna RNA package",
       cxxopts::value<std::string>(), "FILE")
     ("x,aux", "Import an auxiliary file for base-pairing probabilities",
@@ -1382,6 +1403,7 @@ main(int argc, char* argv[])
           read_constraints(constraint.c_str(), bpseq);
           int pl = IPknot::decompose_plevel(bpseq, plevel);
           update_bpm(pl, fa->seq(), *en, bpseq, plevel, sbp);
+          //sbp = en->calculate_posterior(fa->seq());
         }
 
         if (max_pfval)

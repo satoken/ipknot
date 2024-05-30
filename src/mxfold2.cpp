@@ -134,8 +134,8 @@ auto MXfold2Model::calculate_posterior(const std::string& seq, const std::string
     {
       case '(':
       case ')': paren_.append(p[i+1]); break;
-      case 'x': paren_.append(0); break;
-      case '.': paren_.append(-1); break;
+      case '.': paren_.append(0); break;
+      case '?': paren_.append(-1); break;
       case '<': paren_.append(-2); break;
       case '>': paren_.append(-3); break;
       case '|': paren_.append(-4); break;
