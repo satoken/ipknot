@@ -1401,9 +1401,9 @@ main(int argc, char* argv[])
         { // constraint folding
           bpseq.resize(fa->size(), BPSEQ::DOT);
           read_constraints(constraint.c_str(), bpseq);
-          int pl = IPknot::decompose_plevel(bpseq, plevel);
-          update_bpm(pl, fa->seq(), *en, bpseq, plevel, sbp);
-          //sbp = en->calculate_posterior(fa->seq());
+          //int pl = IPknot::decompose_plevel(bpseq, plevel);
+          //update_bpm(pl, fa->seq(), *en, bpseq, plevel, sbp);
+          sbp = en->calculate_posterior(fa->seq());
         }
 
         if (max_pfval)
@@ -1465,8 +1465,9 @@ main(int argc, char* argv[])
         { // constraint folding
           bpseq.resize(aln->size(), BPSEQ::DOT);
           read_constraints(constraint.c_str(), bpseq);
-          int pl = IPknot::decompose_plevel(bpseq, plevel);
-          update_bpm(pl, aln->seq(), *en, bpseq, plevel, sbp);
+          //int pl = IPknot::decompose_plevel(bpseq, plevel);
+          //update_bpm(pl, aln->seq(), *en, bpseq, plevel, sbp);
+          sbp = en->calculate_posterior(aln->seq());
         }
         
         if (max_pfval)
