@@ -35,6 +35,7 @@
 #include <iterator>
 #include <algorithm>
 #include <memory>
+#include <cctype>
 
 #include "ipknot.h"
 #include "ip.h"
@@ -44,6 +45,116 @@
 #include "nupack/nupack.h"
 #include "bpseq.h"
 #include "cxxopts.hpp"
+
+// Function to normalize base pair type to canonical form
+std::string normalize_base_pair_type(const std::string& bp_type) {
+  std::string normalized = bp_type;
+  
+  // Convert to uppercase
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
+  
+  // Normalize to canonical order
+  if (normalized == "GC" || normalized == "CG") {
+    return "GC";
+  } else if (normalized == "AU" || normalized == "AT" || normalized == "UA" || normalized == "TA") {
+    return "AU";
+  } else if (normalized == "GU" || normalized == "GT" || normalized == "UG" || normalized == "TG") {
+    return "GU";
+  } else if (normalized == "UU" || normalized == "TT") {
+    return "UU";
+  } else {
+    throw std::invalid_argument("Unknown base pair type: " + bp_type);
+  }
+}
+
+// Function to parse base pair constraints from string
+BPConstraints parse_base_pair_constraints(const std::string& str) {
+  BPConstraints constraints;
+  
+  std::istringstream ss(str);
+  std::string pair;
+  
+  while (std::getline(ss, pair, ',')) {
+    // Remove whitespace
+    pair.erase(std::remove_if(pair.begin(), pair.end(), ::isspace), pair.end());
+    
+    size_t eq_pos = pair.find('=');
+    if (eq_pos == std::string::npos) {
+      throw std::invalid_argument("Invalid base pair constraint format: " + pair);
+    }
+    
+    std::string bp_type = pair.substr(0, eq_pos);
+    int count = std::stoi(pair.substr(eq_pos + 1));
+    
+    // Normalize base pair type
+    std::string normalized_bp_type = normalize_base_pair_type(bp_type);
+    
+    if (normalized_bp_type == "GC") {
+      constraints.GC = count;
+    } else if (normalized_bp_type == "AU") {
+      constraints.AU = count;
+    } else if (normalized_bp_type == "GU") {
+      constraints.GU = count;
+    } else if (normalized_bp_type == "UU") {
+      constraints.UU = count;
+    }
+  }
+  
+  return constraints;
+}
+
+// Function to determine base pair type
+std::string get_base_pair_type(char a, char b) {
+  // Normalize to uppercase and canonical order
+  if (a > b) std::swap(a, b);
+  a = std::toupper(a);
+  b = std::toupper(b);
+  
+  if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) {
+    return "GC";
+  } else if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) {
+    return "AU";
+  } else if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) {
+    return "GU";
+  } else if (a == 'U' && b == 'U') {
+    return "UU";
+  }
+  return "UNKNOWN";
+}
+
+// Function to count base pairs in a structure
+BPConstraints count_base_pairs(const std::string& seq, const VI& bpseq) {
+  BPConstraints counts;
+  counts.GC = counts.AU = counts.GU = counts.UU = 0;
+  
+  for (uint i = 0; i < bpseq.size(); ++i) {
+    if (bpseq[i] >= 0 && (int)i < bpseq[i]) {  // Only count each pair once
+      int j = bpseq[i];
+      std::string bp_type = get_base_pair_type(seq[i], seq[j]);
+      
+      if (bp_type == "GC") {
+        counts.GC++;
+      } else if (bp_type == "AU") {
+        counts.AU++;
+      } else if (bp_type == "GU") {
+        counts.GU++;
+      } else if (bp_type == "UU") {
+        counts.UU++;
+      }
+    }
+  }
+  
+  return counts;
+}
+
+// Function to check if base pair counts satisfy constraints
+bool satisfies_constraints(const BPConstraints& counts, const BPConstraints& constraints) {
+  if (constraints.GC >= 0 && counts.GC != constraints.GC) return false;
+  if (constraints.AU >= 0 && counts.AU != constraints.AU) return false;
+  if (constraints.GU >= 0 && counts.GU != constraints.GU) return false;
+  if (constraints.UU >= 0 && counts.UU != constraints.UU) return false;
+  return true;
+}
 
 std::string
 make_parenthsis(const VI& bpseq, const VI& plevel)
@@ -207,6 +318,7 @@ main(int argc, char* argv[])
   uint beam_size;
   std::string input;
   bool verbose = false;
+  BPConstraints bp_constraints;
 
   cxxopts::Options options{progname, format("IPknot version %s", PACKAGE_VERSION)};
   options.add_options()
@@ -251,6 +363,8 @@ main(int argc, char* argv[])
     ("V,verbose", "Verbose output")
     ("beam-size", "Beam size for LinearPartition algorithm",
       cxxopts::value<uint>()->default_value("100"), "N")
+    ("base-pairs", "Specify base pair count constraints (e.g., GC=1,AU=3,GU=1,UU=1)",
+      cxxopts::value<std::string>(), "CONSTRAINTS")
     ("version", "Print version")
     ("h,help", "Print usage"); 
   options.parse_positional({"input"});
@@ -284,6 +398,24 @@ main(int argc, char* argv[])
   beam_size = res["beam-size"].as<uint>();
   verbose = res["verbose"].as<bool>();
   input = res["input"].as<std::string>();
+  
+  // Parse base pair constraints
+  if (res.count("base-pairs")) {
+    try {
+      bp_constraints = parse_base_pair_constraints(res["base-pairs"].as<std::string>());
+      if (verbose) {
+        std::cerr << "Base pair constraints: ";
+        if (bp_constraints.GC >= 0) std::cerr << "GC=" << bp_constraints.GC << " ";
+        if (bp_constraints.AU >= 0) std::cerr << "AU=" << bp_constraints.AU << " ";
+        if (bp_constraints.GU >= 0) std::cerr << "GU=" << bp_constraints.GU << " ";
+        if (bp_constraints.UU >= 0) std::cerr << "UU=" << bp_constraints.UU << " ";
+        std::cerr << std::endl;
+      }
+    } catch (const std::exception& e) {
+      std::cerr << "Error parsing base pair constraints: " << e.what() << std::endl;
+      return 1;
+    }
+  }
 
   if (res.count("bpseq"))
     os_bpseq = &std::cout;
@@ -403,9 +535,9 @@ main(int argc, char* argv[])
       float fval, fval_pk;
       auto sbp = aux.calculate_posterior(input.c_str(), seq);
       if (max_pfval)
-        std::tie(fval, fval_pk) = ipknot.solve(seq.size(), sbp, ep, bpseq, plevel, false, verbose);
+        std::tie(fval, fval_pk) = ipknot.solve(seq, sbp, ep, bpseq, plevel, false, verbose, bp_constraints);
       else
-        ipknot.solve(seq.size(), sbp, t, bpseq, plevel, false);
+        ipknot.solve(seq, sbp, t, bpseq, plevel, false, bp_constraints);
       if (os_bpseq)
         output_bpseq(*os_bpseq, input.c_str(), seq, bpseq, plevel, max_pfval, fval, fval_pk);
       if (os_bpseq!=&std::cout)
@@ -453,19 +585,39 @@ main(int argc, char* argv[])
         }
 
         if (max_pfval)
-          std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
+          std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose, bp_constraints);
         else
-          ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
+          ipknot.solve(fa->seq(), sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints);
 
         for (int i=0; i!=n_refinement; ++i) // iterative refinement
         {
           en->update_bpm(pk_level, fa->seq(), bpseq, plevel, sbp);
           if (max_pfval)
-            std::tie(fval, fval_pk) = ipknot.solve(fa->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
+            std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose, bp_constraints);
           else
-            ipknot.solve(fa->size(), sbp, t, bpseq, plevel, !constraint.empty());
+            ipknot.solve(fa->seq(), sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints);
         }
 
+        // Count and display base pairs if constraints are specified or verbose mode
+        if (bp_constraints.has_constraints() || verbose) {
+          BPConstraints actual_counts = count_base_pairs(fa->seq(), bpseq);
+          if (verbose || bp_constraints.has_constraints()) {
+            std::cerr << "Base pair counts in predicted structure: ";
+            std::cerr << "GC=" << actual_counts.GC << " ";
+            std::cerr << "AU=" << actual_counts.AU << " ";
+            std::cerr << "GU=" << actual_counts.GU << " ";
+            std::cerr << "UU=" << actual_counts.UU << std::endl;
+          }
+          
+          if (bp_constraints.has_constraints()) {
+            if (satisfies_constraints(actual_counts, bp_constraints)) {
+              std::cerr << "✓ Base pair constraints are satisfied." << std::endl;
+            } else {
+              std::cerr << "✗ Base pair constraints are NOT satisfied." << std::endl;
+            }
+          }
+        }
+        
         if (os_bpseq)
           output_bpseq(*os_bpseq, fa->name(), fa->seq(), bpseq, plevel, max_pfval, fval, fval_pk);
         if (os_bpseq!=&std::cout)
@@ -513,20 +665,45 @@ main(int argc, char* argv[])
           en->update_bpm(pl, aln->seq(), bpseq, plevel, sbp);
         }
         
+        // For alignments, ignore bp_constraints (use empty constraints)
+        BPConstraints empty_constraints;
+        if (bp_constraints.has_constraints() && verbose) {
+          std::cerr << "Warning: Base pair constraints are ignored for alignment input." << std::endl;
+        }
         if (max_pfval)
-          std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
+          std::tie(fval, fval_pk) = ipknot.solve(aln->consensus(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose, empty_constraints);
         else
-          ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
+          ipknot.solve(aln->consensus(), sbp, t, bpseq, plevel, !constraint.empty(), empty_constraints);
 
         for (int i=0; i!=n_refinement; ++i)
         {
           en->update_bpm(pk_level, aln->seq(), bpseq, plevel, sbp);
           if (max_pfval)
-            std::tie(fval, fval_pk) = ipknot.solve(aln->size(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose);
+            std::tie(fval, fval_pk) = ipknot.solve(aln->consensus(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose, empty_constraints);
           else
-            ipknot.solve(aln->size(), sbp, t, bpseq, plevel, !constraint.empty());
+            ipknot.solve(aln->consensus(), sbp, t, bpseq, plevel, !constraint.empty(), empty_constraints);
         }
 
+        // Count and display base pairs if constraints are specified or verbose mode
+        if (bp_constraints.has_constraints() || verbose) {
+          BPConstraints actual_counts = count_base_pairs(aln->consensus(), bpseq);
+          if (verbose || bp_constraints.has_constraints()) {
+            std::cerr << "Base pair counts in predicted structure: ";
+            std::cerr << "GC=" << actual_counts.GC << " ";
+            std::cerr << "AU=" << actual_counts.AU << " ";
+            std::cerr << "GU=" << actual_counts.GU << " ";
+            std::cerr << "UU=" << actual_counts.UU << std::endl;
+          }
+          
+          if (bp_constraints.has_constraints()) {
+            if (satisfies_constraints(actual_counts, bp_constraints)) {
+              std::cerr << "✓ Base pair constraints are satisfied." << std::endl;
+            } else {
+              std::cerr << "✗ Base pair constraints are NOT satisfied." << std::endl;
+            }
+          }
+        }
+        
         if (os_bpseq)
           output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel, max_pfval, fval, fval_pk);
         if (os_mfa)

@@ -44,9 +44,12 @@ IPknot::IPknot(uint pk_level, const float* alpha,
       n_th_(n_th)
 {
 }
-void IPknot::solve(uint L, const VF& bp, const VI& offset,
-             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
+
+void IPknot::solve(const std::string& seq, const VF& bp, const VI& offset,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint,
+             const BPConstraints& bp_constraints) const
 {
+    uint L = seq.size();
     IP ip(IP::MAX, n_th_);
     VVSVI v_l(pk_level_, VSVI(L));
     VVSVI v_r(pk_level_, VSVI(L));
@@ -73,7 +76,7 @@ void IPknot::solve(uint L, const VF& bp, const VI& offset,
     ip.update();
 
     if (n>0)
-      solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+      solve(seq, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint, bp_constraints);
     else
     {
       bpseq.resize(L);
@@ -83,9 +86,11 @@ void IPknot::solve(uint L, const VF& bp, const VI& offset,
     }
   }
 
-void IPknot::solve(uint L, const VSVF& bp,
-             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
+void IPknot::solve(const std::string& seq, const VSVF& bp,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint,
+             const BPConstraints& bp_constraints) const
 {
+    uint L = seq.size();
     IP ip(IP::MAX, n_th_);
     VVSVI v_l(pk_level_, VSVI(L));
     VVSVI v_r(pk_level_, VSVI(L));
@@ -110,7 +115,7 @@ void IPknot::solve(uint L, const VSVF& bp,
     ip.update();
 
     if (n>0)
-      solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+      solve(seq, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint, bp_constraints);
     else
     {
       bpseq.resize(L);
@@ -120,9 +125,11 @@ void IPknot::solve(uint L, const VSVF& bp,
     }
   }
 
-void IPknot::solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
-             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
+void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint,
+             const BPConstraints& bp_constraints) const
 {
+    uint L = seq.size();
     if (!constraint)
     {
       bpseq.resize(L);
@@ -271,6 +278,68 @@ void IPknot::solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI&
       }
     }
 
+    // Add base pair type constraints if specified
+    if (bp_constraints.has_constraints() && !seq.empty())
+    {
+      // Create constraint variables for each base pair type
+      std::vector<int> gc_vars, au_vars, gu_vars, uu_vars;
+      
+      // Helper function to get base pair type
+      auto get_bp_type = [](char a, char b) -> std::string {
+        a = std::toupper(a);
+        b = std::toupper(b);
+        if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) return "GC";
+        if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) return "AU";
+        if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) return "GU";
+        if (a == 'U' && b == 'U') return "UU";
+        return "OTHER";
+      };
+      
+      // Collect variables for each base pair type
+      for (auto lv = 0; lv != pk_level_; ++lv) {
+        for (auto i = 0; i < L; ++i) {
+          for (const auto [j, v_ij] : v_l[lv][i]) {
+            if (i < j && i < seq.size() && j < seq.size()) {
+              std::string bp_type = get_bp_type(seq[i], seq[j]);
+              if (bp_type == "GC") gc_vars.push_back(v_ij);
+              else if (bp_type == "AU") au_vars.push_back(v_ij);
+              else if (bp_type == "GU") gu_vars.push_back(v_ij);
+              else if (bp_type == "UU") uu_vars.push_back(v_ij);
+            }
+          }
+        }
+      }
+      
+      // Add constraints for each base pair type
+      if (bp_constraints.GC >= 0 && !gc_vars.empty()) {
+        int row = ip.make_constraint(IP::FX, bp_constraints.GC, bp_constraints.GC);
+        for (int var : gc_vars) {
+          ip.add_constraint(row, var, 1);
+        }
+      }
+      
+      if (bp_constraints.AU >= 0 && !au_vars.empty()) {
+        int row = ip.make_constraint(IP::FX, bp_constraints.AU, bp_constraints.AU);
+        for (int var : au_vars) {
+          ip.add_constraint(row, var, 1);
+        }
+      }
+      
+      if (bp_constraints.GU >= 0 && !gu_vars.empty()) {
+        int row = ip.make_constraint(IP::FX, bp_constraints.GU, bp_constraints.GU);
+        for (int var : gu_vars) {
+          ip.add_constraint(row, var, 1);
+        }
+      }
+      
+      if (bp_constraints.UU >= 0 && !uu_vars.empty()) {
+        int row = ip.make_constraint(IP::FX, bp_constraints.UU, bp_constraints.UU);
+        for (int var : uu_vars) {
+          ip.add_constraint(row, var, 1);
+        }
+      }
+    }
+
     // execute optimization
     ip.solve();
 
@@ -292,9 +361,11 @@ void IPknot::solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI&
       decompose_plevel(bpseq, plevel);
   }
 
-auto IPknot::solve(uint L, const VSVF& bp,
-             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose) const -> std::pair<float,float>
+auto IPknot::solve(const std::string& seq, const VSVF& bp,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose,
+             const BPConstraints& bp_constraints) const -> std::pair<float,float>
 {
+    uint L = seq.size();
     std::vector<float> th(ep.size());
     VI bpseq_temp, plevel_temp;
     VI max_bpseq, max_plevel;
@@ -315,7 +386,7 @@ auto IPknot::solve(uint L, const VSVF& bp,
       }
       bpseq_temp = bpseq;
       plevel_temp = plevel;
-      solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
+      solve(seq, bp, th, bpseq_temp, plevel_temp, constraint, bp_constraints);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
       const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
       if (verbose)

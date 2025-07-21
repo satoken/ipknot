@@ -41,6 +41,18 @@ using VVSVI = std::vector<VSVI>;
 using SVF = std::vector<std::pair<uint,float>>;
 using VSVF = std::vector<SVF>; 
 
+// Structure for base pair constraints
+struct BPConstraints {
+  int GC = -1;  // -1 means no constraint
+  int AU = -1;
+  int GU = -1;
+  int UU = -1;
+  
+  bool has_constraints() const {
+    return GC >= 0 || AU >= 0 || GU >= 0 || UU >= 0;
+  }
+};
+
 class IPknot
 {
 public:
@@ -51,14 +63,17 @@ public:
          bool levelwise, bool stacking_constraints, int n_th);
 
 public:
-  void solve(uint L, const VF& bp, const VI& offset,
-             const VF& th, VI& bpseq, VI& plevel, bool constraint) const;
+  void solve(const std::string& seq, const VF& bp, const VI& offset,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint,
+             const BPConstraints& bp_constraints = BPConstraints()) const;
 
-  void solve(uint L, const VSVF& bp,
-             const VF& th, VI& bpseq, VI& plevel, bool constraint) const;
+  void solve(const std::string& seq, const VSVF& bp,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint,
+             const BPConstraints& bp_constraints = BPConstraints()) const;
 
-  auto solve(uint L, const VSVF& bp,
-             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose=false) const -> std::pair<float,float>;
+  auto solve(const std::string& seq, const VSVF& bp,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose=false,
+             const BPConstraints& bp_constraints = BPConstraints()) const -> std::pair<float,float>;
 
   static int decompose_plevel(const std::vector<int>& bpseq, std::vector<int>& plevel);
 
@@ -68,8 +83,9 @@ public:
   static uint length(const std::list<std::string>& aln);
 
 private:
-  void solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
-             const VF& th, VI& bpseq, VI& plevel, bool constraint) const;
+  void solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint,
+             const BPConstraints& bp_constraints) const;
 
   static auto compute_expected_accuracy(float etp, float etn, float efp, float efn) -> std::tuple<float,float,float,float>;
   static auto compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>;
