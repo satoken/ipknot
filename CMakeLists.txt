@@ -64,7 +64,8 @@ endif()
 
 add_executable(
   ipknot
-  src/ipknot.cpp
+  src/main.cpp
+  src/ipknot.h src/ipknot.cpp
   src/ip.h src/ip.cpp
   src/fa.cpp 
   src/aln.cpp 
