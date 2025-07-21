@@ -44,7 +44,11 @@
 #include "fold.h"
 #include "nupack/nupack.h"
 #include "bpseq.h"
+
 #include "cxxopts.hpp"
+#include "spdlog/spdlog.h"
+#include "spdlog/sinks/basic_file_sink.h"
+#include "spdlog/stopwatch.h"
 
 // Function to normalize base pair type to canonical form
 std::string normalize_base_pair_type(const std::string& bp_type) {
@@ -196,7 +200,7 @@ read_constraints(const char* filename, VI& bpseq)
   while (is >> i >> s)
   {
     if (i<=0 && i>bpseq.size())
-      std::cerr << "invalid format base number i=" << i << ", ignored." << std::endl;
+      spdlog::warn("invalid format base number i={}, ignored.", i);
     else switch (s[0]) {
       default: 
         if (std::isdigit(s[0]))
@@ -206,7 +210,7 @@ read_constraints(const char* filename, VI& bpseq)
             bpseq[i-1] = j-1; bpseq[j-1] = i-1;
           } 
           else
-            std::cerr << "invalid format base number j=" << j << ", ignored." << std::endl;
+            spdlog::warn("invalid format base number j={}, ignored.", j);
         }
         break;
       case '.': bpseq[i-1] = BPSEQ::DOT; break;
@@ -361,6 +365,8 @@ main(int argc, char* argv[])
     ("c,constraint", "Specify the structure constraint by a BPSEQ formatted file",
       cxxopts::value<std::string>(), "FILE")
     ("V,verbose", "Verbose output")
+    ("loglevel", "Set the logging level (trace, debug, info, warn, error, critical)",
+      cxxopts::value<std::string>()->default_value("warn"), "LEVEL")
     ("beam-size", "Beam size for LinearPartition algorithm",
       cxxopts::value<uint>()->default_value("100"), "N")
     ("base-pairs", "Specify base pair count constraints (e.g., GC=1,AU=3,GU=1,UU=1)",
@@ -397,22 +403,35 @@ main(int argc, char* argv[])
   if (res.count("constraint")) constraint = res["constraint"].as<std::string>();
   beam_size = res["beam-size"].as<uint>();
   verbose = res["verbose"].as<bool>();
+  spdlog::set_level(spdlog::level::warn); // Default log level
+  if (verbose) 
+    spdlog::set_level(spdlog::level::info);
+  if (res.count("loglevel")) {
+    const auto& loglevel = res["loglevel"].as<std::string>();
+    if (loglevel == "trace") {
+      spdlog::set_level(spdlog::level::trace);
+    } else if (loglevel == "debug") {
+      spdlog::set_level(spdlog::level::debug);
+    } else if (loglevel == "info") {
+      spdlog::set_level(spdlog::level::info);
+    } else if (loglevel == "warn") {
+      spdlog::set_level(spdlog::level::warn);
+    } else if (loglevel == "error") {
+      spdlog::set_level(spdlog::level::err);
+    } else if (loglevel == "critical") {
+      spdlog::set_level(spdlog::level::critical);
+    }
+  }
   input = res["input"].as<std::string>();
   
   // Parse base pair constraints
   if (res.count("base-pairs")) {
     try {
       bp_constraints = parse_base_pair_constraints(res["base-pairs"].as<std::string>());
-      if (verbose) {
-        std::cerr << "Base pair constraints: ";
-        if (bp_constraints.GC >= 0) std::cerr << "GC=" << bp_constraints.GC << " ";
-        if (bp_constraints.AU >= 0) std::cerr << "AU=" << bp_constraints.AU << " ";
-        if (bp_constraints.GU >= 0) std::cerr << "GU=" << bp_constraints.GU << " ";
-        if (bp_constraints.UU >= 0) std::cerr << "UU=" << bp_constraints.UU << " ";
-        std::cerr << std::endl;
-      }
+      spdlog::info("Base pair constraints: GC={}, AU={}, GU={}, UU={}",
+        bp_constraints.GC, bp_constraints.AU, bp_constraints.GU, bp_constraints.UU);
     } catch (const std::exception& e) {
-      std::cerr << "Error parsing base pair constraints: " << e.what() << std::endl;
+      spdlog::error("Error parsing base pair constraints: {}", e.what());
       return 1;
     }
   }
@@ -535,7 +554,7 @@ main(int argc, char* argv[])
       float fval, fval_pk;
       auto sbp = aux.calculate_posterior(input.c_str(), seq);
       if (max_pfval)
-        std::tie(fval, fval_pk) = ipknot.solve(seq, sbp, ep, bpseq, plevel, false, verbose, bp_constraints);
+        std::tie(fval, fval_pk) = ipknot.solve(seq, sbp, ep, bpseq, plevel, false, bp_constraints);
       else
         ipknot.solve(seq, sbp, t, bpseq, plevel, false, bp_constraints);
       if (os_bpseq)
@@ -554,19 +573,20 @@ main(int argc, char* argv[])
         return 1;
       }
 
-      if (verbose)
+      if (spdlog::get_level() <= spdlog::level::info)
       {
-        std::cerr << "Model: ";
-        std::copy(std::begin(model), std::end(model), std::ostream_iterator<std::string>(std::cerr, ", "));
-        std::cerr << std::endl;
-        std::cerr << "Thresholds: ";
+        std::ostringstream model_ss;
+        std::copy(std::begin(model), std::end(model), std::ostream_iterator<std::string>(model_ss, ", "));
+        spdlog::info("Model: {}", model_ss.str());
+        
+        std::ostringstream th_ss;
         for (auto t: th) 
         {
-          std::cerr << "(";
-          std::copy(std::begin(t), std::end(t), std::ostream_iterator<float>(std::cerr, ", "));
-          std::cerr << "), ";
+          th_ss << "(";
+          std::copy(std::begin(t), std::end(t), std::ostream_iterator<float>(th_ss, ", "));
+          th_ss << "), ";
         }
-        std::cerr << std::endl << std::endl;
+        spdlog::info("Thresholds: {}", th_ss.str());
       }
 
       while (!f.empty())
@@ -585,7 +605,7 @@ main(int argc, char* argv[])
         }
 
         if (max_pfval)
-          std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose, bp_constraints);
+          std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints);
         else
           ipknot.solve(fa->seq(), sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints);
 
@@ -593,28 +613,20 @@ main(int argc, char* argv[])
         {
           en->update_bpm(pk_level, fa->seq(), bpseq, plevel, sbp);
           if (max_pfval)
-            std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose, bp_constraints);
+            std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints);
           else
             ipknot.solve(fa->seq(), sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints);
         }
 
         // Count and display base pairs if constraints are specified or verbose mode
-        if (bp_constraints.has_constraints() || verbose) {
+        if (bp_constraints.has_constraints() && spdlog::get_level() <= spdlog::level::info) {
           BPConstraints actual_counts = count_base_pairs(fa->seq(), bpseq);
-          if (verbose || bp_constraints.has_constraints()) {
-            std::cerr << "Base pair counts in predicted structure: ";
-            std::cerr << "GC=" << actual_counts.GC << " ";
-            std::cerr << "AU=" << actual_counts.AU << " ";
-            std::cerr << "GU=" << actual_counts.GU << " ";
-            std::cerr << "UU=" << actual_counts.UU << std::endl;
-          }
-          
-          if (bp_constraints.has_constraints()) {
-            if (satisfies_constraints(actual_counts, bp_constraints)) {
-              std::cerr << "✓ Base pair constraints are satisfied." << std::endl;
-            } else {
-              std::cerr << "✗ Base pair constraints are NOT satisfied." << std::endl;
-            }
+          spdlog::info("Base pair counts in predicted structure: GC={} AU={} GU={} UU={}",
+                        actual_counts.GC, actual_counts.AU, actual_counts.GU, actual_counts.UU);
+          if (satisfies_constraints(actual_counts, bp_constraints)) {
+            spdlog::info("Base pair constraints are satisfied.");
+          } else {
+            spdlog::warn("Base pair constraints are NOT satisfied.");
           }
         }
         
@@ -635,19 +647,20 @@ main(int argc, char* argv[])
         return 1;
       }
 
-      if (verbose)
+      if (spdlog::get_level() <= spdlog::level::info)
       {
-        std::cerr << "Model: ";
-        std::copy(std::begin(model), std::end(model), std::ostream_iterator<std::string>(std::cerr, ", "));
-        std::cerr << std::endl;
-        std::cerr << "Thresholds: ";
+        std::ostringstream model_ss;
+        std::copy(std::begin(model), std::end(model), std::ostream_iterator<std::string>(model_ss, ", "));
+        spdlog::info("Model: {}", model_ss.str());
+        
+        std::ostringstream th_ss;
         for (auto t: th) 
         {
-          std::cerr << "(";
-          std::copy(std::begin(t), std::end(t), std::ostream_iterator<float>(std::cerr, ", "));
-          std::cerr << "), ";
+          th_ss << "(";
+          std::copy(std::begin(t), std::end(t), std::ostream_iterator<float>(th_ss, ", "));
+          th_ss << "), ";
         }
-        std::cerr << std::endl << std::endl;
+        spdlog::info("Thresholds: {}", th_ss.str());
       }
 
       while (!a.empty())
@@ -667,11 +680,11 @@ main(int argc, char* argv[])
         
         // For alignments, ignore bp_constraints (use empty constraints)
         BPConstraints empty_constraints;
-        if (bp_constraints.has_constraints() && verbose) {
-          std::cerr << "Warning: Base pair constraints are ignored for alignment input." << std::endl;
+        if (bp_constraints.has_constraints()) {
+          spdlog::warn("Base pair constraints are ignored for alignment input.");
         }
         if (max_pfval)
-          std::tie(fval, fval_pk) = ipknot.solve(aln->consensus(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose, empty_constraints);
+          std::tie(fval, fval_pk) = ipknot.solve(aln->consensus(), sbp, ep, bpseq, plevel, !constraint.empty(), empty_constraints);
         else
           ipknot.solve(aln->consensus(), sbp, t, bpseq, plevel, !constraint.empty(), empty_constraints);
 
@@ -679,12 +692,13 @@ main(int argc, char* argv[])
         {
           en->update_bpm(pk_level, aln->seq(), bpseq, plevel, sbp);
           if (max_pfval)
-            std::tie(fval, fval_pk) = ipknot.solve(aln->consensus(), sbp, ep, bpseq, plevel, !constraint.empty(), verbose, empty_constraints);
+            std::tie(fval, fval_pk) = ipknot.solve(aln->consensus(), sbp, ep, bpseq, plevel, !constraint.empty(), empty_constraints);
           else
             ipknot.solve(aln->consensus(), sbp, t, bpseq, plevel, !constraint.empty(), empty_constraints);
         }
 
         // Count and display base pairs if constraints are specified or verbose mode
+#if 0
         if (bp_constraints.has_constraints() || verbose) {
           BPConstraints actual_counts = count_base_pairs(aln->consensus(), bpseq);
           if (verbose || bp_constraints.has_constraints()) {
@@ -703,6 +717,7 @@ main(int argc, char* argv[])
             }
           }
         }
+#endif
         
         if (os_bpseq)
           output_bpseq(*os_bpseq, aln->name().front(), aln->consensus(), bpseq, plevel, max_pfval, fval, fval_pk);

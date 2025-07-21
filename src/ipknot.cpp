@@ -30,10 +30,15 @@
 #include <iostream>
 #include <iterator>
 #include <list>
+#include <sstream>
 
 #include "ipknot.h"
 #include "ip.h"
 #include "bpseq.h" 
+
+#include "spdlog/spdlog.h"
+//#include "spdlog/sinks/basic_file_sink.h"
+//#include "spdlog/stopwatch.h"
 
 IPknot::IPknot(uint pk_level, const float* alpha,
          bool levelwise, bool stacking_constraints, int n_th)
@@ -170,7 +175,7 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
       }
       if (row_l<0 || row_r<0)
       {
-        std::cerr << "invalid constraint for the base " << i+1 << ", ignored." << std::endl;
+        spdlog::warn("invalid constraint for the base {}, ignored.", i+1);
         row_l = row_r = ip.make_constraint(IP::UP, 0, 1); // fallback to no constraint
       }
       
@@ -205,7 +210,7 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
               ip.add_constraint(row, vals[lv], 1);
         }
         else
-          std::cerr << "invalid constraint for the bases " << i+1 << " and " << bpseq[i]+1 << ", ignored." << std::endl;
+          spdlog::warn("invalid constraint for the bases {} and {}, ignored.", i+1, bpseq[i]+1);
       }
     }
 
@@ -362,7 +367,7 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
   }
 
 auto IPknot::solve(const std::string& seq, const VSVF& bp,
-             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint,
              const BPConstraints& bp_constraints) const -> std::pair<float,float>
 {
     uint L = seq.size();
@@ -370,8 +375,7 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
     VI bpseq_temp, plevel_temp;
     VI max_bpseq, max_plevel;
     float max_fval=-100.0, max_fval_pk=-100.0;
-    if (verbose)
-      std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
+    spdlog::info("Search for the best thresholds by pseudo expected F-value:");
     const auto sump = compute_sump_pk(bp);
     do {
       ep.get(th);
@@ -379,18 +383,19 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
       for (i=1; i!=th.size(); i++)
         if (th[i-1]<th[i]) break;
       if (i!=th.size()) continue;
-      if (verbose)
+      if (spdlog::get_level() <= spdlog::level::info)
       {
-        std::cerr << "th=";
-        std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
+        std::ostringstream th_ss;
+        th_ss << "th=";
+        std::copy(th.begin(), th.end(), std::ostream_iterator<float>(th_ss, ","));
+        spdlog::info("{}", th_ss.str());
       }
       bpseq_temp = bpseq;
       plevel_temp = plevel;
       solve(seq, bp, th, bpseq_temp, plevel_temp, constraint, bp_constraints);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
       const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
-      if (verbose)
-        std::cerr << " pF=" << fval << ", " << fval_pk << std::endl;
+      spdlog::info(" pF={}, {}", fval, fval_pk);
       if (fval+fval_pk>max_fval+max_fval_pk)
       {
         max_fval = fval;
@@ -401,8 +406,7 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
     } while (!ep.succ());
     bpseq = max_bpseq;
     plevel = max_plevel;
-    if (verbose)
-      std::cerr << "max pF=" << max_fval << "," << max_fval_pk << std::endl << std::endl;
+    spdlog::info("max pF={}, pF_pk={}", max_fval, max_fval_pk);
 
     return {max_fval, max_fval_pk};
   }

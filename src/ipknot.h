@@ -72,7 +72,7 @@ public:
              const BPConstraints& bp_constraints = BPConstraints()) const;
 
   auto solve(const std::string& seq, const VSVF& bp,
-             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose=false,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint,
              const BPConstraints& bp_constraints = BPConstraints()) const -> std::pair<float,float>;
 
   static int decompose_plevel(const std::vector<int>& bpseq, std::vector<int>& plevel);
