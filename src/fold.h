@@ -30,6 +30,8 @@
 
 const float DEFAULT_THRESHOLD = 0.001;
 typedef unsigned int uint;
+using VI = std::vector<int>;
+using VSVF = std::vector<std::vector<std::pair<uint, float>>>;
 
 // The base class for calculating base-pairing probabilities of an individual sequence
 class BPEngineSeq
@@ -53,6 +55,13 @@ public:
   {
     throw std::runtime_error("not supported yet");
   }
+  
+  // Update base-pairing probability matrix method
+  void update_bpm(uint pk_level, const std::string& seq, const VI& bpseq, const VI& plevel, VSVF& sbp) const;
+  void update_bpm(uint pk_level, const std::string& seq, const VI& bpseq, const VI& plevel, std::vector<float>& bp, VI& offset) const;
+  
+  // Factory method
+  static std::unique_ptr<BPEngineSeq> build(const char* model, const char* param, uint beam_size=100);
 };
 
 // The base class for calculating base-pairing probabilities of aligned sequences
@@ -77,6 +86,13 @@ public:
   {
     throw std::runtime_error("not supported yet");
   }
+  
+  // Update base-pairing probability matrix method
+  void update_bpm(uint pk_level, const std::list<std::string>& aln, const VI& bpseq, const VI& plevel, VSVF& sbp) const;
+  void update_bpm(uint pk_level, const std::list<std::string>& aln, const VI& bpseq, const VI& plevel, std::vector<float>& bp, VI& offset) const;
+  
+  // Factory method
+  static std::unique_ptr<BPEngineAln> build(const std::vector<std::string>& model, const char* param, uint beam_size=100);
 };
 
 class CONTRAfoldModel : public BPEngineSeq
@@ -84,14 +100,14 @@ class CONTRAfoldModel : public BPEngineSeq
 public:
   CONTRAfoldModel() : BPEngineSeq() { }
 
-  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
+  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::string& seq, float th=DEFAULT_THRESHOLD) const 
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 
   void calculate_posterior(const std::string& seq, const std::string& paren,
-                           std::vector<float>& bp, std::vector<int>& offset) const;
+                           std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::string& seq, const std::string& paren, float th=DEFAULT_THRESHOLD) const
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 };
 
 class RNAfoldModel : public BPEngineSeq
@@ -99,14 +115,14 @@ class RNAfoldModel : public BPEngineSeq
 public:
   RNAfoldModel(const char* param);
   
-  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
+  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::string& seq, float th=DEFAULT_THRESHOLD) const 
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
     
   void calculate_posterior(const std::string& seq, const std::string& paren,
-                           std::vector<float>& bp, std::vector<int>& offset) const;
+                           std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::string& seq, const std::string& paren, float th=DEFAULT_THRESHOLD) const
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 };
 
 class NupackModel : public BPEngineSeq
@@ -115,12 +131,12 @@ public:
   //NupackModel(int model) : BPEngineSeq(), model_(model), param_(NULL) { }
   NupackModel(const char* param) : BPEngineSeq(), param_(param) { }
   
-  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
+  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::string& seq, float th=DEFAULT_THRESHOLD) const 
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 
   void calculate_posterior(const std::string& seq, const std::string& paren,
-                           std::vector<float>& bp, std::vector<int>& offset) const
+                           std::vector<float>& bp, std::vector<int>& offset) const override
   {
     throw std::runtime_error("not supported yet");
   }
@@ -137,10 +153,10 @@ class LinearPartitionModel : public BPEngineSeq
 public:
   LinearPartitionModel(bool use_vienna=false, uint beam_size=100) : BPEngineSeq(), use_vienna_(use_vienna), beam_size_(beam_size) { }
   
-  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const;
-  auto calculate_posterior(const std::string& seq, float th=DEFAULT_THRESHOLD) const -> std::vector<std::vector<std::pair<uint, float>>>;
-  void calculate_posterior(const std::string& seq, const std::string& paren, std::vector<float>& bp, std::vector<int>& offset) const;
-  auto calculate_posterior(const std::string& seq, const std::string& paren, float th=DEFAULT_THRESHOLD) const -> std::vector<std::vector<std::pair<uint, float>>>;
+  void calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<int>& offset) const override;
+  auto calculate_posterior(const std::string& seq, float th=DEFAULT_THRESHOLD) const -> std::vector<std::vector<std::pair<uint, float>>> override;
+  void calculate_posterior(const std::string& seq, const std::string& paren, std::vector<float>& bp, std::vector<int>& offset) const override;
+  auto calculate_posterior(const std::string& seq, const std::string& paren, float th=DEFAULT_THRESHOLD) const -> std::vector<std::vector<std::pair<uint, float>>> override;
 
 private:
   bool use_vienna_;
@@ -153,14 +169,14 @@ public:
   AlifoldModel(const char* param);
 
   void calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
-                           std::vector<float>& bp, std::vector<int>& offset) const;
+                           std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::list<std::string>& aln, const std::string& paren, float th=DEFAULT_THRESHOLD) const
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 
   void calculate_posterior(const std::list<std::string>& aln,
-                           std::vector<float>& bp, std::vector<int>& offset) const;
+                           std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::list<std::string>& aln, float th=DEFAULT_THRESHOLD) const 
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 };
 
 class AveragedModel : public BPEngineAln
@@ -169,14 +185,14 @@ public:
   AveragedModel(std::unique_ptr<BPEngineSeq>&& en) : en_(std::move(en)) { }
 
   void calculate_posterior(const std::list<std::string>& aln,
-                           std::vector<float>& bp, std::vector<int>& offset) const;
+                           std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::list<std::string>& aln, float th=DEFAULT_THRESHOLD) const 
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 
   void calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
-                           std::vector<float>& bp, std::vector<int>& offset) const;
+                           std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::list<std::string>& aln, const std::string& paren, float th=DEFAULT_THRESHOLD) const
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 
 private:
   std::unique_ptr<BPEngineSeq> en_;
@@ -191,14 +207,14 @@ public:
   { }
 
   void calculate_posterior(const std::list<std::string>& aln,
-                           std::vector<float>& bp, std::vector<int>& offset) const;
+                           std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::list<std::string>& aln, float th=DEFAULT_THRESHOLD) const 
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 
   void calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
-                           std::vector<float>& bp, std::vector<int>& offset) const;
+                           std::vector<float>& bp, std::vector<int>& offset) const override;
   auto calculate_posterior(const std::list<std::string>& aln, const std::string& paren, float th=DEFAULT_THRESHOLD) const
-    -> std::vector<std::vector<std::pair<uint, float>>>;
+    -> std::vector<std::vector<std::pair<uint, float>>> override;
 
 private:
   std::vector<std::unique_ptr<BPEngineAln>> en_;
