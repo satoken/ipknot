@@ -52,12 +52,15 @@ typedef Vienna::FLT_OR_DBL FLT_OR_DBL;
 #endif
 
 #include "nupack/nupack.h"
+#include "mxfold2.h"
 
 extern "C" {
 #include "boltzmann_param.h"
 };
 
 #include "linearpartition/LinearPartition.h"
+#include "bpseq.h"
+#include <strings.h>
 
 typedef unsigned int uint;
 
@@ -1142,3 +1145,330 @@ calculate_posterior(const char* filename, std::string& seq) const
   }
   return bp;
 }
+
+// Method implementations for BPEngineSeq
+void BPEngineSeq::update_bpm(uint pk_level, const std::string& seq, const VI& bpseq, const VI& plevel, VSVF& sbp) const
+{
+  // update the base-pairing probability matrix by the previous result
+  uint L = bpseq.size();
+  sbp.resize(L+1);
+  
+  for (uint l=0; l!=pk_level; ++l)
+  {
+    // make the constraint string
+    std::string str(L, '?');
+    for (uint i=0; i!=bpseq.size(); ++i)
+    {
+      switch (bpseq[i])
+      {
+        case BPSEQ::U: str[i] = '.'; break;
+        case BPSEQ::L: str[i] = '<'; break;
+        case BPSEQ::R: str[i] = '>'; break;
+        case BPSEQ::LR: str[i] = '|'; break;
+        case BPSEQ::DOT: str[i] = '?'; break;
+        default:
+          if (bpseq[i]>=0 && (int)i<bpseq[i])
+          {
+            if ((int)l==plevel[i])
+            {
+              str[i]='('; str[bpseq[i]]=')';
+            }
+            else
+            {
+              str[i]=str[bpseq[i]]='.';
+            }
+          }
+          break;
+      }
+    }
+
+    // re-folding the seq with the constraint
+    auto sbpl = this->calculate_posterior(seq, str);
+    assert(sbp.size()==sbpl.size());
+
+    // update the base-pairing probability matrix
+    for (uint i=1; i!=sbpl.size(); i++) 
+    {
+      for (const auto [jl, vl]: sbpl[i]) 
+      {
+        auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
+        auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
+                            [&, &jl=jl](const auto& x) { return x.first == jl; });
+        if (re != std::end(sbp[i]))
+          re->second += v;
+        else
+          sbp[i].emplace_back(jl, v);
+      }
+    }
+  }
+
+  VSVF sbp_temp(L+1);
+  for (uint i=1; i!=sbp.size(); i++)
+    for (const auto [j, v]: sbp[i]) 
+      if (v>=DEFAULT_THRESHOLD) 
+        sbp_temp[i].emplace_back(j, v);
+  std::swap(sbp, sbp_temp);
+}
+
+void BPEngineSeq::update_bpm(uint pk_level, const std::string& seq, const VI& bpseq, const VI& plevel, std::vector<float>& bp, VI& offset) const
+{
+  // update the base-pairing probability matrix by the previous result
+  uint L=bpseq.size();
+  bp.resize((L+1)*(L+2)/2, 0.0);
+  std::fill(bp.begin(), bp.end(), 0.0);
+  offset.resize(L+1);
+  for (uint i=0; i<=L; ++i)
+    offset[i] = i*((L+1)+(L+1)-i-1)/2;
+  
+  std::vector<float> bpl;
+  std::vector<int> offsetl;
+  for (uint l=0; l!=pk_level; ++l)
+  {
+    // make the constraint string
+    std::string str(L, '?');
+    for (uint i=0; i!=bpseq.size(); ++i)
+    {
+      switch (bpseq[i])
+      {
+        case BPSEQ::U: str[i] = '.'; break;
+        case BPSEQ::L: str[i] = '<'; break;
+        case BPSEQ::R: str[i] = '>'; break;
+        case BPSEQ::LR: str[i] = '|'; break;
+        case BPSEQ::DOT: str[i] = '?'; break;
+        default:
+          if (bpseq[i]>=0 && (int)i<bpseq[i])
+          {
+            if ((int)l==plevel[i])
+            {
+              str[i]='('; str[bpseq[i]]=')';
+            }
+            else
+            {
+              str[i]=str[bpseq[i]]='.';
+            }
+          }
+          break;
+      }
+    }
+
+    // re-folding the seq with the constraint
+    std::fill(bpl.begin(), bpl.end(), 0.0);
+    this->calculate_posterior(seq, str, bpl, offsetl);
+    assert(bp.size()==bpl.size());
+    // update the base-pairing probability matrix
+    for (uint j=1; j!=L; ++j)
+      for (uint i=j-1; i!=-1u; --i)
+        if (bpseq[i]>=0)
+          bp[offset[i+1]+(j+1)] += bpl[offset[i+1]+(j+1)];
+        else
+          bp[offset[i+1]+(j+1)] += bpl[offset[i+1]+(j+1)] / pk_level;
+  }
+#ifndef NDEBUG
+  for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
+#endif
+}
+
+// Method implementations for BPEngineAln
+void BPEngineAln::update_bpm(uint pk_level, const std::list<std::string>& seq, const VI& bpseq, const VI& plevel, VSVF& sbp) const
+{
+  // update the base-pairing probability matrix by the previous result
+  uint L = bpseq.size();
+  sbp.resize(L+1);
+  
+  for (uint l=0; l!=pk_level; ++l)
+  {
+    // make the constraint string
+    std::string str(L, '?');
+    for (uint i=0; i!=bpseq.size(); ++i)
+    {
+      switch (bpseq[i])
+      {
+        case BPSEQ::U: str[i] = '.'; break;
+        case BPSEQ::L: str[i] = '<'; break;
+        case BPSEQ::R: str[i] = '>'; break;
+        case BPSEQ::LR: str[i] = '|'; break;
+        case BPSEQ::DOT: str[i] = '?'; break;
+        default:
+          if (bpseq[i]>=0 && (int)i<bpseq[i])
+          {
+            if ((int)l==plevel[i])
+            {
+              str[i]='('; str[bpseq[i]]=')';
+            }
+            else
+            {
+              str[i]=str[bpseq[i]]='.';
+            }
+          }
+          break;
+      }
+    }
+
+    // re-folding the seq with the constraint
+    auto sbpl = this->calculate_posterior(seq, str);
+    assert(sbp.size()==sbpl.size());
+
+    // update the base-pairing probability matrix
+    for (uint i=1; i!=sbpl.size(); i++) 
+    {
+      for (const auto [jl, vl]: sbpl[i]) 
+      {
+        auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
+        auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
+                            [&, &jl=jl](const auto& x) { return x.first == jl; });
+        if (re != std::end(sbp[i]))
+          re->second += v;
+        else
+          sbp[i].emplace_back(jl, v);
+      }
+    }
+  }
+
+  VSVF sbp_temp(L+1);
+  for (uint i=1; i!=sbp.size(); i++)
+    for (const auto [j, v]: sbp[i]) 
+      if (v>=DEFAULT_THRESHOLD) 
+        sbp_temp[i].emplace_back(j, v);
+  std::swap(sbp, sbp_temp);
+}
+
+void BPEngineAln::update_bpm(uint pk_level, const std::list<std::string>& seq, const VI& bpseq, const VI& plevel, std::vector<float>& bp, VI& offset) const
+{
+  // update the base-pairing probability matrix by the previous result
+  uint L=bpseq.size();
+  bp.resize((L+1)*(L+2)/2, 0.0);
+  std::fill(bp.begin(), bp.end(), 0.0);
+  offset.resize(L+1);
+  for (uint i=0; i<=L; ++i)
+    offset[i] = i*((L+1)+(L+1)-i-1)/2;
+  
+  std::vector<float> bpl;
+  std::vector<int> offsetl;
+  for (uint l=0; l!=pk_level; ++l)
+  {
+    // make the constraint string
+    std::string str(L, '?');
+    for (uint i=0; i!=bpseq.size(); ++i)
+    {
+      switch (bpseq[i])
+      {
+        case BPSEQ::U: str[i] = '.'; break;
+        case BPSEQ::L: str[i] = '<'; break;
+        case BPSEQ::R: str[i] = '>'; break;
+        case BPSEQ::LR: str[i] = '|'; break;
+        case BPSEQ::DOT: str[i] = '?'; break;
+        default:
+          if (bpseq[i]>=0 && (int)i<bpseq[i])
+          {
+            if ((int)l==plevel[i])
+            {
+              str[i]='('; str[bpseq[i]]=')';
+            }
+            else
+            {
+              str[i]=str[bpseq[i]]='.';
+            }
+          }
+          break;
+      }
+    }
+
+    // re-folding the seq with the constraint
+    std::fill(bpl.begin(), bpl.end(), 0.0);
+    this->calculate_posterior(seq, str, bpl, offsetl);
+    assert(bp.size()==bpl.size());
+    // update the base-pairing probability matrix
+    for (uint j=1; j!=L; ++j)
+      for (uint i=j-1; i!=-1u; --i)
+        if (bpseq[i]>=0)
+          bp[offset[i+1]+(j+1)] += bpl[offset[i+1]+(j+1)];
+        else
+          bp[offset[i+1]+(j+1)] += bpl[offset[i+1]+(j+1)] / pk_level;
+  }
+#ifndef NDEBUG
+  for (uint k=0; k!=bp.size(); ++k) assert(bp[k]<=1.0);
+#endif
+}
+
+// Factory methods
+std::unique_ptr<BPEngineSeq>
+BPEngineSeq::build(const char* model, const char* param, uint beam_size, uint n_th, const std::string& mxfold2_config, int mxfold2_gpu)
+{
+  std::unique_ptr<BPEngineSeq> en;
+  if (model==nullptr || strcasecmp(model, "McCaskill")==0 || strcasecmp(model, "Boltzmann")==0)
+    en = std::make_unique<RNAfoldModel>(param);
+  else if (strcasecmp(model, "ViennaRNA")==0)
+    en = std::make_unique<RNAfoldModel>("default");
+  else if (strcasecmp(model, "CONTRAfold")==0)
+    en = std::make_unique<CONTRAfoldModel>();
+  else if (strcasecmp(model, "nupack")==0)
+    en = std::make_unique<NupackModel>(param);
+  else if (strcasecmp(model, "LinearPartition-C")==0 || strcasecmp(model, "lpc")==0)
+    en = std::make_unique<LinearPartitionModel>(false, beam_size);
+  else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
+    en = std::make_unique<LinearPartitionModel>(true, beam_size);
+  else if (strcasecmp(model, "MXfold2")==0)
+    en = std::make_unique<MXfold2Model>(n_th, mxfold2_config, mxfold2_gpu);
+  return en;
+}
+
+std::unique_ptr<BPEngineAln>
+BPEngineAln::build(const std::vector<std::string>& model, const char* param, uint beam_size, uint n_th, const std::string& mxfold2_config, int mxfold2_gpu)
+{
+  std::unique_ptr<BPEngineAln> mix_en;
+  std::vector<std::unique_ptr<BPEngineAln>> en_a;
+  if (model.empty())
+  {
+    auto e = std::make_unique<RNAfoldModel>(param);
+    en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+    en_a.push_back(std::make_unique<AlifoldModel>(param));
+    mix_en = std::make_unique<MixtureModel>(std::move(en_a));
+  }
+  else
+  {
+    for (const auto mo : model) 
+    {
+      auto m = mo.c_str();
+      if (strcasecmp(m, "McCaskill")==0 || strcasecmp(m, "Boltzmann")==0)
+      {
+        auto e = std::make_unique<RNAfoldModel>(param);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "ViennaRNA")==0)
+      {
+        auto e = std::make_unique<RNAfoldModel>("default");
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "CONTRAfold")==0)
+      {
+        auto e = std::make_unique<CONTRAfoldModel>();
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "Alifold")==0)
+      {
+        en_a.push_back(std::make_unique<AlifoldModel>(param));
+      }
+      else if (strcasecmp(m, "LinearPartition-C")==0 || strcasecmp(m, "lpc")==0)
+      {
+        auto e = std::make_unique<LinearPartitionModel>(false, beam_size);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "LinearPartition-V")==0 || strcasecmp(m, "lpv")==0)
+      {
+        auto e = std::make_unique<LinearPartitionModel>(true, beam_size);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "MXfold2")==0)
+      {
+        auto e = std::make_unique<MXfold2Model>(n_th, mxfold2_config, mxfold2_gpu);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else
+        return std::unique_ptr<BPEngineAln>();
+    }
+    if (en_a.size()>1)
+      mix_en = std::make_unique<MixtureModel>(std::move(en_a));
+  }
+  return std::move(mix_en ? mix_en : en_a[0]);
+}
+

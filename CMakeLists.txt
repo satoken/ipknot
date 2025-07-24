@@ -13,6 +13,9 @@ project(IPknot CXX C)
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 add_definitions(-DPACKAGE_VERSION="1.1.0")
 
+include_directories("spdlog/include")
+include_directories("cxxopts/include")
+
 find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(VIENNARNA RNAlib2)
@@ -64,7 +67,8 @@ find_package(pybind11 REQUIRED)
 
 add_executable(
   ipknot
-  src/ipknot.cpp
+  src/main.cpp
+  src/ipknot.h src/ipknot.cpp
   src/ip.h src/ip.cpp
   src/fa.cpp 
   src/aln.cpp 
@@ -81,7 +85,6 @@ add_executable(
   src/contrafold/Utilities.cpp 
   src/linearpartition/LinearPartition.cpp 
   #src/linearpartition/bpp.cpp
-  src/cxxopts.hpp
   )
 target_link_libraries(ipknot PRIVATE pybind11::embed
   ${VIENNARNA_LDFLAGS} ${GLPK_LIBRARY} ${ZLIB_LIBRARY} ${GMP_LIBRARY} ${DL_LIBRARY} ${LTDL_LIBRARY} ${MPFR_LIBRARY}
