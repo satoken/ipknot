@@ -383,19 +383,17 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
       for (i=1; i!=th.size(); i++)
         if (th[i-1]<th[i]) break;
       if (i!=th.size()) continue;
-      if (spdlog::get_level() <= spdlog::level::info)
-      {
-        std::ostringstream th_ss;
-        th_ss << "th=";
-        std::copy(th.begin(), th.end(), std::ostream_iterator<float>(th_ss, ","));
-        spdlog::info("{}", th_ss.str());
-      }
       bpseq_temp = bpseq;
       plevel_temp = plevel;
       solve(seq, bp, th, bpseq_temp, plevel_temp, constraint, bp_constraints);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
       const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
-      spdlog::info(" pF={}, {}", fval, fval_pk);
+      if (spdlog::get_level() <= spdlog::level::info)
+      {
+        std::ostringstream th_ss;
+        std::copy(th.begin(), th.end(), std::ostream_iterator<float>(th_ss, ","));
+        spdlog::info("th={} pF={}, pF_pk={}", th_ss.str(), fval, fval_pk);
+      }
       if (fval+fval_pk>max_fval+max_fval_pk)
       {
         max_fval = fval;
