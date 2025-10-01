@@ -5,9 +5,15 @@
 #include <pybind11/embed.h>
 #include "fold.h"
 namespace py = pybind11;
-#pragma GCC visibility push(hidden)
+//#pragma GCC visibility push(hidden)
 
-class MXfold2Model : public BPEngineSeq
+#if defined(__GNUC__) || defined(__clang__)
+  #define HIDDEN_VIS __attribute__((visibility("hidden")))
+#else
+  #define HIDDEN_VIS
+#endif
+
+class HIDDEN_VIS MXfold2Model : public BPEngineSeq
 {
 public:
   MXfold2Model(uint n_th=1, const std::string& config="", int gpu=-1);
@@ -21,3 +27,5 @@ private:
   py::scoped_interpreter guard_;
   py::object model_;
 };
+
+//#pragma GCC visibility pop
