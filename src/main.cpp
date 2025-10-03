@@ -266,58 +266,6 @@ read_constraints(const char* filename, VI& bpseq)
   }
 }
 
-// Read stack constraints from file
-// Format: STACK: BP1 BP2 BP3 ...
-// Example: STACK: GC AU GU
-static
-void
-read_stack_constraints(const char* filename, StackConstraints& stack_constraints)
-{
-  std::ifstream is(filename);
-  if (!is.is_open()) {
-    spdlog::error("Cannot open stack constraint file: {}", filename);
-    return;
-  }
-
-  std::string line;
-  int line_num = 0;
-  while (std::getline(is, line)) {
-    line_num++;
-
-    // Skip empty lines and comments
-    if (line.empty() || line[0] == '#') continue;
-
-    // Check for STACK: prefix
-    if (line.substr(0, 6) == "STACK:") {
-      std::istringstream ss(line.substr(6));
-      StackConstraint constraint;
-      std::string bp_type;
-
-      while (ss >> bp_type) {
-        try {
-          std::string normalized = normalize_base_pair_type(bp_type);
-          constraint.add_bp_type(normalized);
-        } catch (const std::exception& e) {
-          spdlog::warn("Line {}: Invalid base pair type '{}', ignored.", line_num, bp_type);
-        }
-      }
-
-      if (constraint.is_valid()) {
-        stack_constraints.add_constraint(constraint);
-        std::ostringstream bp_ss;
-        for (const auto& bp : constraint.bp_types) {
-          bp_ss << bp << " ";
-        }
-        spdlog::info("Added stack constraint: {}", bp_ss.str());
-      } else {
-        spdlog::warn("Line {}: Stack constraint must have at least 2 base pairs, ignored.", line_num);
-      }
-    } else {
-      spdlog::warn("Line {}: Unknown format, ignored. Expected 'STACK: ...'", line_num);
-    }
-  }
-}
-
 // Find all instances of stack patterns in the sequence
 // A stack pattern can be matched in two directions (forward or reverse)
 static
@@ -519,7 +467,7 @@ main(int argc, char* argv[])
   std::ostream *os_bpp=nullptr;
   std::ostream *os_mfa=nullptr;
   std::string constraint;
-  std::string stack_constraint;
+  std::vector<std::string> stack_constraint_args;
   uint beam_size;
   std::string input;
   bool verbose = false;
@@ -568,8 +516,8 @@ main(int argc, char* argv[])
       cxxopts::value<bool>()->default_value("false"))
     ("c,constraint", "Specify the structure constraint by a BPSEQ formatted file",
       cxxopts::value<std::string>(), "FILE")
-    ("stack-constraint", "Specify stack constraints file (format: STACK: BP1 BP2 ...)",
-      cxxopts::value<std::string>(), "FILE")
+    ("stack-constraint", "Specify stack constraint as space-separated base pairs (e.g., 'GC AU GU'). Can be specified multiple times for multiple constraints.",
+      cxxopts::value<std::vector<std::string>>(), "\"BP1 BP2 ...\"")
     ("V,verbose", "Verbose output")
     ("loglevel", "Set the logging level (trace, debug, info, warn, error, critical)",
       cxxopts::value<std::string>()->default_value("warn"), "LEVEL")
@@ -611,7 +559,7 @@ main(int argc, char* argv[])
 #endif
   output_energy = res["energy"].as<bool>();
   if (res.count("constraint")) constraint = res["constraint"].as<std::string>();
-  if (res.count("stack-constraint")) stack_constraint = res["stack-constraint"].as<std::string>();
+  if (res.count("stack-constraint")) stack_constraint_args = res["stack-constraint"].as<std::vector<std::string>>();
   beam_size = res["beam-size"].as<uint>();
   verbose = res["verbose"].as<bool>();
   spdlog::set_level(spdlog::level::warn); // Default log level
@@ -649,10 +597,45 @@ main(int argc, char* argv[])
     }
   }
 
-  // Parse stack constraints
+  // Parse stack constraints from command-line arguments
   if (res.count("stack-constraint")) {
     try {
-      read_stack_constraints(stack_constraint.c_str(), stack_constraints);
+      for (const auto& constraint_str : stack_constraint_args) {
+        spdlog::debug("Parsing stack constraint string: '{}'", constraint_str);
+        StackConstraint constraint;
+        std::istringstream ss(constraint_str);
+        std::string bp_type;
+
+        // Parse space-separated base pair types
+        while (ss >> bp_type) {
+          spdlog::debug("Parsed bp_type: '{}'", bp_type);
+
+          if (!bp_type.empty()) {
+            try {
+              std::string normalized = normalize_base_pair_type(bp_type);
+              constraint.add_bp_type(normalized);
+              spdlog::debug("Added normalized bp_type: '{}'", normalized);
+            } catch (const std::exception& e) {
+              spdlog::error("Invalid base pair type '{}': {}", bp_type, e.what());
+              return 1;
+            }
+          }
+        }
+
+        spdlog::debug("Constraint size: {}", constraint.size());
+        if (constraint.is_valid()) {
+          stack_constraints.add_constraint(constraint);
+          std::ostringstream bp_ss;
+          for (const auto& bp : constraint.bp_types) {
+            bp_ss << bp << " ";
+          }
+          spdlog::info("Added stack constraint: {}", bp_ss.str());
+        } else {
+          spdlog::error("Stack constraint '{}' must have at least 2 base pairs", constraint_str);
+          return 1;
+        }
+      }
+
       if (stack_constraints.has_constraints()) {
         spdlog::info("Loaded {} stack constraints", stack_constraints.constraints.size());
       }
