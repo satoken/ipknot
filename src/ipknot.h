@@ -47,9 +47,72 @@ struct BPConstraints {
   int AU = -1;
   int GU = -1;
   int UU = -1;
-  
+
   bool has_constraints() const {
     return GC >= 0 || AU >= 0 || GU >= 0 || UU >= 0;
+  }
+};
+
+// Structure for stacking constraints
+// Represents a pattern of consecutive stacked base pairs specified by base types
+struct StackConstraint {
+  std::vector<std::string> bp_types;  // e.g., ["GC", "AU", "GU"] for a 3-bp stack
+
+  StackConstraint() = default;
+
+  // Add a base pair type to the stack
+  void add_bp_type(const std::string& bp_type) {
+    bp_types.push_back(bp_type);
+  }
+
+  // Check if valid (at least 2 base pairs)
+  bool is_valid() const {
+    return bp_types.size() >= 2;
+  }
+
+  size_t size() const {
+    return bp_types.size();
+  }
+};
+
+// Represents a concrete instance of a stack constraint in the sequence
+struct StackInstance {
+  std::vector<std::pair<int, int>> pairs;  // Actual (i, j) positions (0-indexed)
+  int constraint_id;  // Which constraint this instance belongs to
+
+  StackInstance(int id) : constraint_id(id) {}
+
+  void add_pair(int i, int j) {
+    if (i > j) std::swap(i, j);
+    pairs.emplace_back(i, j);
+  }
+
+  size_t size() const {
+    return pairs.size();
+  }
+};
+
+// Container for multiple stack constraints
+struct StackConstraints {
+  std::vector<StackConstraint> constraints;
+  std::vector<StackInstance> instances;  // All found instances in the sequence
+
+  bool has_constraints() const {
+    return !constraints.empty();
+  }
+
+  void add_constraint(const StackConstraint& constraint) {
+    if (constraint.is_valid()) {
+      constraints.push_back(constraint);
+    }
+  }
+
+  void add_instance(const StackInstance& instance) {
+    instances.push_back(instance);
+  }
+
+  void clear_instances() {
+    instances.clear();
   }
 };
 
@@ -65,15 +128,18 @@ public:
 public:
   void solve(const std::string& seq, const VF& bp, const VI& offset,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
-             const BPConstraints& bp_constraints = BPConstraints()) const;
+             const BPConstraints& bp_constraints = BPConstraints(),
+             const StackConstraints& stack_constraints = StackConstraints()) const;
 
   void solve(const std::string& seq, const VSVF& bp,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
-             const BPConstraints& bp_constraints = BPConstraints()) const;
+             const BPConstraints& bp_constraints = BPConstraints(),
+             const StackConstraints& stack_constraints = StackConstraints()) const;
 
   auto solve(const std::string& seq, const VSVF& bp,
              EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint,
-             const BPConstraints& bp_constraints = BPConstraints()) const -> std::pair<float,float>;
+             const BPConstraints& bp_constraints = BPConstraints(),
+             const StackConstraints& stack_constraints = StackConstraints()) const -> std::pair<float,float>;
 
   static int decompose_plevel(const std::vector<int>& bpseq, std::vector<int>& plevel);
 
@@ -85,7 +151,8 @@ public:
 private:
   void solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
-             const BPConstraints& bp_constraints) const;
+             const BPConstraints& bp_constraints,
+             const StackConstraints& stack_constraints) const;
 
   static auto compute_expected_accuracy(float etp, float etn, float efp, float efn) -> std::tuple<float,float,float,float>;
   static auto compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>;

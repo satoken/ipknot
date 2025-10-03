@@ -161,6 +161,48 @@ bool satisfies_constraints(const BPConstraints& counts, const BPConstraints& con
   return true;
 }
 
+// Function to check if predicted structure satisfies stack constraints
+bool satisfies_stack_constraints(const std::string& seq, const VI& bpseq,
+                                  const StackConstraints& stack_constraints) {
+  if (!stack_constraints.has_constraints()) return true;
+
+  // For each constraint, check if at least one instance is fully satisfied
+  for (size_t constraint_id = 0; constraint_id < stack_constraints.constraints.size(); ++constraint_id) {
+    bool constraint_satisfied = false;
+
+    // Check each instance of this constraint
+    for (const auto& instance : stack_constraints.instances) {
+      if (instance.constraint_id != (int)constraint_id) continue;
+
+      // Check if all base pairs in this instance are present in bpseq
+      bool instance_satisfied = true;
+      for (const auto& [i, j] : instance.pairs) {
+        if (bpseq[i] != j || bpseq[j] != i) {
+          instance_satisfied = false;
+          break;
+        }
+      }
+
+      if (instance_satisfied) {
+        constraint_satisfied = true;
+        std::ostringstream pos_ss;
+        for (const auto& [l, r] : instance.pairs) {
+          pos_ss << "(" << l+1 << "," << r+1 << ") ";
+        }
+        spdlog::info("Stack constraint {} satisfied by instance: {}", constraint_id + 1, pos_ss.str());
+        break;  // At least one instance is satisfied, move to next constraint
+      }
+    }
+
+    if (!constraint_satisfied) {
+      spdlog::warn("Stack constraint {} is NOT satisfied", constraint_id + 1);
+      return false;
+    }
+  }
+
+  return true;
+}
+
 std::string
 make_parenthsis(const VI& bpseq, const VI& plevel)
 {
@@ -203,13 +245,13 @@ read_constraints(const char* filename, VI& bpseq)
     if (i<=0 && i>bpseq.size())
       spdlog::warn("invalid format base number i={}, ignored.", i);
     else switch (s[0]) {
-      default: 
+      default:
         if (std::isdigit(s[0]))
         {
           int j = std::atoi(s.c_str());
           if (j>0 && j<=bpseq.size()) {
             bpseq[i-1] = j-1; bpseq[j-1] = i-1;
-          } 
+          }
           else
             spdlog::warn("invalid format base number j={}, ignored.", j);
         }
@@ -220,8 +262,147 @@ read_constraints(const char* filename, VI& bpseq)
       case '<': bpseq[i-1] = BPSEQ::L; break;
       case '>': bpseq[i-1] = BPSEQ::R; break;
     }
-    
+
   }
+}
+
+// Read stack constraints from file
+// Format: STACK: BP1 BP2 BP3 ...
+// Example: STACK: GC AU GU
+static
+void
+read_stack_constraints(const char* filename, StackConstraints& stack_constraints)
+{
+  std::ifstream is(filename);
+  if (!is.is_open()) {
+    spdlog::error("Cannot open stack constraint file: {}", filename);
+    return;
+  }
+
+  std::string line;
+  int line_num = 0;
+  while (std::getline(is, line)) {
+    line_num++;
+
+    // Skip empty lines and comments
+    if (line.empty() || line[0] == '#') continue;
+
+    // Check for STACK: prefix
+    if (line.substr(0, 6) == "STACK:") {
+      std::istringstream ss(line.substr(6));
+      StackConstraint constraint;
+      std::string bp_type;
+
+      while (ss >> bp_type) {
+        try {
+          std::string normalized = normalize_base_pair_type(bp_type);
+          constraint.add_bp_type(normalized);
+        } catch (const std::exception& e) {
+          spdlog::warn("Line {}: Invalid base pair type '{}', ignored.", line_num, bp_type);
+        }
+      }
+
+      if (constraint.is_valid()) {
+        stack_constraints.add_constraint(constraint);
+        std::ostringstream bp_ss;
+        for (const auto& bp : constraint.bp_types) {
+          bp_ss << bp << " ";
+        }
+        spdlog::info("Added stack constraint: {}", bp_ss.str());
+      } else {
+        spdlog::warn("Line {}: Stack constraint must have at least 2 base pairs, ignored.", line_num);
+      }
+    } else {
+      spdlog::warn("Line {}: Unknown format, ignored. Expected 'STACK: ...'", line_num);
+    }
+  }
+}
+
+// Find all instances of stack patterns in the sequence
+// A stack pattern can be matched in two directions (forward or reverse)
+static
+void
+find_stack_instances(const std::string& seq, StackConstraints& stack_constraints)
+{
+  stack_constraints.clear_instances();
+
+  for (size_t constraint_id = 0; constraint_id < stack_constraints.constraints.size(); ++constraint_id) {
+    const auto& constraint = stack_constraints.constraints[constraint_id];
+    const size_t n = constraint.size();
+    const size_t L = seq.size();
+
+    // Try all possible positions in the sequence
+    // For each position i, try to match the stack pattern starting from (i, j) pairs
+    for (size_t i = 0; i + n - 1 < L; ++i) {
+      for (size_t j = i + n; j < L; ++j) {
+        // Try forward direction: (i, j), (i+1, j-1), (i+2, j-2), ...
+        bool forward_match = true;
+        StackInstance forward_instance(constraint_id);
+
+        for (size_t k = 0; k < n; ++k) {
+          size_t left = i + k;
+          size_t right = j - k;
+
+          if (left >= right) {
+            forward_match = false;
+            break;
+          }
+
+          std::string actual_bp = get_base_pair_type(seq[left], seq[right]);
+          if (actual_bp != constraint.bp_types[k]) {
+            forward_match = false;
+            break;
+          }
+
+          forward_instance.add_pair(left, right);
+        }
+
+        if (forward_match) {
+          stack_constraints.add_instance(forward_instance);
+          std::ostringstream pos_ss;
+          for (const auto& [l, r] : forward_instance.pairs) {
+            pos_ss << "(" << l+1 << "," << r+1 << ") ";
+          }
+          spdlog::debug("Found stack instance (forward): {}", pos_ss.str());
+        }
+
+        // Try reverse direction: match the pattern in reverse order
+        bool reverse_match = true;
+        StackInstance reverse_instance(constraint_id);
+
+        for (size_t k = 0; k < n; ++k) {
+          size_t left = i + k;
+          size_t right = j - k;
+
+          if (left >= right) {
+            reverse_match = false;
+            break;
+          }
+
+          std::string actual_bp = get_base_pair_type(seq[left], seq[right]);
+          // Match in reverse order
+          if (actual_bp != constraint.bp_types[n - 1 - k]) {
+            reverse_match = false;
+            break;
+          }
+
+          reverse_instance.add_pair(left, right);
+        }
+
+        // Only add reverse instance if it's different from forward
+        if (reverse_match && !forward_match) {
+          stack_constraints.add_instance(reverse_instance);
+          std::ostringstream pos_ss;
+          for (const auto& [l, r] : reverse_instance.pairs) {
+            pos_ss << "(" << l+1 << "," << r+1 << ") ";
+          }
+          spdlog::debug("Found stack instance (reverse): {}", pos_ss.str());
+        }
+      }
+    }
+  }
+
+  spdlog::info("Found {} stack instances in sequence", stack_constraints.instances.size());
 }
 
 static
@@ -338,10 +519,12 @@ main(int argc, char* argv[])
   std::ostream *os_bpp=nullptr;
   std::ostream *os_mfa=nullptr;
   std::string constraint;
+  std::string stack_constraint;
   uint beam_size;
   std::string input;
   bool verbose = false;
   BPConstraints bp_constraints;
+  StackConstraints stack_constraints;
 
   cxxopts::Options options{progname, format("IPknot version %s", PACKAGE_VERSION)};
   options.add_options()
@@ -385,6 +568,8 @@ main(int argc, char* argv[])
       cxxopts::value<bool>()->default_value("false"))
     ("c,constraint", "Specify the structure constraint by a BPSEQ formatted file",
       cxxopts::value<std::string>(), "FILE")
+    ("stack-constraint", "Specify stack constraints file (format: STACK: BP1 BP2 ...)",
+      cxxopts::value<std::string>(), "FILE")
     ("V,verbose", "Verbose output")
     ("loglevel", "Set the logging level (trace, debug, info, warn, error, critical)",
       cxxopts::value<std::string>()->default_value("warn"), "LEVEL")
@@ -426,6 +611,7 @@ main(int argc, char* argv[])
 #endif
   output_energy = res["energy"].as<bool>();
   if (res.count("constraint")) constraint = res["constraint"].as<std::string>();
+  if (res.count("stack-constraint")) stack_constraint = res["stack-constraint"].as<std::string>();
   beam_size = res["beam-size"].as<uint>();
   verbose = res["verbose"].as<bool>();
   spdlog::set_level(spdlog::level::warn); // Default log level
@@ -459,6 +645,19 @@ main(int argc, char* argv[])
         bp_constraints.GC, bp_constraints.AU, bp_constraints.GU, bp_constraints.UU);
     } catch (const std::exception& e) {
       spdlog::error("Error parsing base pair constraints: {}", e.what());
+      return 1;
+    }
+  }
+
+  // Parse stack constraints
+  if (res.count("stack-constraint")) {
+    try {
+      read_stack_constraints(stack_constraint.c_str(), stack_constraints);
+      if (stack_constraints.has_constraints()) {
+        spdlog::info("Loaded {} stack constraints", stack_constraints.constraints.size());
+      }
+    } catch (const std::exception& e) {
+      spdlog::error("Error parsing stack constraints: {}", e.what());
       return 1;
     }
   }
@@ -630,6 +829,11 @@ main(int argc, char* argv[])
       {
         std::list<Fasta>::iterator fa = f.begin();
 
+        // Find stack constraint instances in the sequence
+        if (stack_constraints.has_constraints()) {
+          find_stack_instances(fa->seq(), stack_constraints);
+        }
+
         std::vector<std::vector<std::pair<uint, float>>> sbp;
         if (constraint.empty())
           sbp = en->calculate_posterior(fa->seq());
@@ -643,17 +847,17 @@ main(int argc, char* argv[])
         }
 
         if (max_pfval)
-          std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints);
+          std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints, stack_constraints);
         else
-          ipknot.solve(fa->seq(), sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints);
+          ipknot.solve(fa->seq(), sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints, stack_constraints);
 
         for (int i=0; i!=n_refinement; ++i) // iterative refinement
         {
           en->update_bpm(pk_level, fa->seq(), bpseq, plevel, sbp);
           if (max_pfval)
-            std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints);
+            std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints, stack_constraints);
           else
-            ipknot.solve(fa->seq(), sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints);
+            ipknot.solve(fa->seq(), sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints, stack_constraints);
         }
 
         // Count and display base pairs if constraints are specified or verbose mode
@@ -665,6 +869,15 @@ main(int argc, char* argv[])
             spdlog::info("Base pair constraints are satisfied.");
           } else {
             spdlog::warn("Base pair constraints are NOT satisfied.");
+          }
+        }
+
+        // Check stack constraints
+        if (stack_constraints.has_constraints() && spdlog::get_level() <= spdlog::level::info) {
+          if (satisfies_stack_constraints(fa->seq(), bpseq, stack_constraints)) {
+            spdlog::info("All stack constraints are satisfied.");
+          } else {
+            spdlog::warn("Some stack constraints are NOT satisfied.");
           }
         }
         
@@ -781,6 +994,10 @@ main(int argc, char* argv[])
     std::cout << msg << std::endl;
   }
   catch (std::logic_error err)
+  {
+    std::cout << err.what() << std::endl;
+  }
+  catch (std::runtime_error err)
   {
     std::cout << err.what() << std::endl;
   }

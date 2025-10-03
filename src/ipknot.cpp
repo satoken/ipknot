@@ -95,7 +95,8 @@ void IPknot::solve(const std::string& seq, const VF& bp, const VI& offset,
 
 void IPknot::solve(const std::string& seq, const VSVF& bp,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
-             const BPConstraints& bp_constraints) const
+             const BPConstraints& bp_constraints,
+             const StackConstraints& stack_constraints) const
 {
     uint L = seq.size();
     IP ip(IP::MAX, n_th_);
@@ -122,7 +123,7 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
             }
           if (constraint && bpseq[i-1]==j-1) found_constraint_j = true;
         }
-        
+
       if (constraint && !found_constraint_j && bpseq[i-1]>=0)
       {
         const auto j = bpseq[i-1]+1;
@@ -140,7 +141,7 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
     ip.update();
 
     if (n>0)
-      solve(seq, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint, bp_constraints);
+      solve(seq, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint, bp_constraints, stack_constraints);
     else
     {
       bpseq.resize(L);
@@ -152,7 +153,8 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
 
 void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
-             const BPConstraints& bp_constraints) const
+             const BPConstraints& bp_constraints,
+             const StackConstraints& stack_constraints) const
 {
     uint L = seq.size();
     if (!constraint)
@@ -365,6 +367,110 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
       }
     }
 
+    // Add stack constraints if specified
+    if (stack_constraints.has_constraints())
+    {
+      // For each stack constraint, at least one instance must be selected
+      for (size_t constraint_id = 0; constraint_id < stack_constraints.constraints.size(); ++constraint_id)
+      {
+        std::vector<int> instance_vars;  // Variables representing each instance
+
+        // For each instance of this constraint
+        for (size_t inst_idx = 0; inst_idx < stack_constraints.instances.size(); ++inst_idx)
+        {
+          const auto& instance = stack_constraints.instances[inst_idx];
+          if (instance.constraint_id != (int)constraint_id) continue;
+
+          // Find the IP variables corresponding to the base pairs in this instance
+          std::vector<int> bp_vars;
+          bool all_pairs_found = true;
+          for (const auto& [i, j] : instance.pairs)
+          {
+            // Find the variable v_ij in v_l
+            int found_var = -1;
+            for (auto lv = 0; lv != pk_level_; ++lv)
+            {
+              for (const auto& [jj, v_ij] : v_l[lv][i])
+              {
+                if (jj == j)
+                {
+                  found_var = v_ij;
+                  break;
+                }
+              }
+              if (found_var >= 0) break;
+            }
+
+            if (found_var >= 0)
+            {
+              bp_vars.push_back(found_var);
+            }
+            else
+            {
+              //spdlog::warn("Stack constraint: base pair ({},{}) not found in variables, skipping this instance", i+1, j+1);
+              all_pairs_found = false;
+              break;
+            }
+          }
+
+          // Skip this instance if any base pair variable was not found
+          if (!all_pairs_found)
+          {
+            continue;
+          }
+
+          // Create a binary variable for this instance
+          // This variable is 1 if all base pairs in the stack are selected
+          int instance_var = ip.make_variable(0.0);  // No weight, just a helper variable
+          instance_vars.push_back(instance_var);
+
+          // Add constraints: instance_var = 1 if and only if all bp_vars = 1
+          // This is implemented as:
+          // 1. instance_var <= bp_var_k for all k (if any bp is 0, instance must be 0)
+          // 2. instance_var >= sum(bp_vars) - n + 1 (if all bp are 1, instance must be 1)
+          const int n_pairs = bp_vars.size();
+          if (n_pairs > 0)
+          {
+            // Constraint 1: instance_var <= each bp_var
+            for (int bp_var : bp_vars)
+            {
+              int row = ip.make_constraint(IP::LO, 0, 0);  // instance_var - bp_var <= 0
+              ip.add_constraint(row, instance_var, 1);
+              ip.add_constraint(row, bp_var, -1);
+            }
+
+            // Constraint 2: instance_var >= sum(bp_vars) - n + 1
+            // Equivalent to: sum(bp_vars) - instance_var <= n - 1
+            int row = ip.make_constraint(IP::UP, 0, n_pairs - 1);
+            for (int bp_var : bp_vars)
+            {
+              ip.add_constraint(row, bp_var, 1);
+            }
+            ip.add_constraint(row, instance_var, -1);
+          }
+        }
+
+        // At least one instance of this constraint must be selected
+        if (!instance_vars.empty())
+        {
+          int row = ip.make_constraint(IP::LO, 1, 0);  // sum(instance_vars) >= 1
+          for (int inst_var : instance_vars)
+          {
+            ip.add_constraint(row, inst_var, 1);
+          }
+          spdlog::info("Added stack constraint {} with {} possible instances",
+                       constraint_id + 1, instance_vars.size());
+        }
+        else
+        {
+          // No valid instances found for this constraint - cannot satisfy
+          spdlog::error("Stack constraint {} has no valid instances - cannot satisfy constraint",
+                      constraint_id + 1);
+          throw std::runtime_error("Stack constraint cannot be satisfied: no valid instances found");
+        }
+      }
+    }
+
     // execute optimization
     ip.solve();
 
@@ -388,7 +494,8 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
 
 auto IPknot::solve(const std::string& seq, const VSVF& bp,
              EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint,
-             const BPConstraints& bp_constraints) const -> std::pair<float,float>
+             const BPConstraints& bp_constraints,
+             const StackConstraints& stack_constraints) const -> std::pair<float,float>
 {
     uint L = seq.size();
     std::vector<float> th(ep.size());
@@ -405,7 +512,7 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
       if (i!=th.size()) continue;
       bpseq_temp = bpseq;
       plevel_temp = plevel;
-      solve(seq, bp, th, bpseq_temp, plevel_temp, constraint, bp_constraints);
+      solve(seq, bp, th, bpseq_temp, plevel_temp, constraint, bp_constraints, stack_constraints);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
       const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
       if (spdlog::get_level() <= spdlog::level::info)
