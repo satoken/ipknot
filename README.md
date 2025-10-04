@@ -41,6 +41,8 @@ For HiGHS, add ``-DENABLE_HIGHS`` to the configure step:
 
 	cmake -DENABLE_HIGHS -DCMAKE_BUILD_TYPE=Release ..  # configure
 
+To use the optional MXfold2 integration (disabled by default), configure with ``-DMXFOLD2=ON`` and ensure that Python (interpreter and development headers), [pybind11](https://github.com/pybind/pybind11), and the MXfold2 Python package are available in your environment.
+
 
 Usage
 -----

@@ -105,6 +105,44 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
     VI c_l(L, 0), c_r(L, 0);
     uint n=0;
 
+    // Helper to get base pair type
+    auto get_bp_type = [](char a, char b) -> std::string {
+      a = std::toupper(a);
+      b = std::toupper(b);
+      if (a > b) std::swap(a, b);
+      if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) return "GC";
+      if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) return "AU";
+      if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) return "GU";
+      if (a == 'U' && b == 'U') return "UU";
+      if ((a == 'C' && b == 'U') || (a == 'U' && b == 'C')) return "CU";
+      std::string result;
+      result += a;
+      result += b;
+      return result;
+    };
+
+    // Helper to check if a base pair type is canonical
+    auto is_canonical = [](const std::string& bp_type) -> bool {
+      return bp_type == "GC" || bp_type == "AU" || bp_type == "GU";
+    };
+
+    // Check if non-canonical base pairs are needed
+    bool has_noncanonical_bp_constraint = bp_constraints.has_noncanonical_constraints();
+    bool has_noncanonical_stack_constraint = false;
+    if (stack_constraints.has_constraints()) {
+      for (const auto& sc : stack_constraints.constraints) {
+        for (const auto& bp_type : sc.bp_types) {
+          if (!is_canonical(bp_type)) {
+            has_noncanonical_stack_constraint = true;
+            break;
+          }
+        }
+        if (has_noncanonical_stack_constraint) break;
+      }
+    }
+
+    bool add_noncanonical_pairs = has_noncanonical_bp_constraint || has_noncanonical_stack_constraint;
+
     // make objective variables with their weights
     for (auto i=1; i<=L; ++i)
     {
@@ -135,6 +173,36 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
           v_r[lv][j-1].emplace_back(i-1, v_ij);
           c_l[i-1]++; c_r[j-1]++;
           n++;
+        }
+      }
+
+      // Add non-canonical base pairs if needed
+      if (add_noncanonical_pairs) {
+        for (auto j=i+1; j<=L; ++j) {
+          std::string bp_type = get_bp_type(seq[i-1], seq[j-1]);
+          if (!is_canonical(bp_type)) {
+            // Check if this non-canonical pair is already added
+            bool already_added = false;
+            for (const auto [jj, v_ij]: v_l[0][i-1]) {
+              if (jj == j-1) {
+                already_added = true;
+                break;
+              }
+            }
+
+            if (!already_added) {
+              // Add with zero weight (will only be selected if constraint requires it)
+              const auto p = 0.0;
+              for (auto lv=0; lv!=pk_level_; ++lv) {
+                const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+                v_l[lv][i-1].emplace_back(j-1, v_ij);
+                v_r[lv][j-1].emplace_back(i-1, v_ij);
+                c_l[i-1]++; c_r[j-1]++;
+                n++;
+              }
+              spdlog::debug("Added non-canonical base pair ({},{}) type {} for constraint", i, j, bp_type);
+            }
+          }
         }
       }
     }
@@ -305,67 +373,105 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
       }
     }
 
+    // Helper function to get base pair type (used by both bp and stacking constraints)
+    auto get_bp_type = [](char a, char b) -> std::string {
+      a = std::toupper(a);
+      b = std::toupper(b);
+      if (a > b) std::swap(a, b);
+      if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) return "GC";
+      if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) return "AU";
+      if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) return "GU";
+      if (a == 'U' && b == 'U') return "UU";
+      if ((a == 'C' && b == 'U') || (a == 'U' && b == 'C')) return "CU";
+      std::string result;
+      result += a;
+      result += b;
+      return result;
+    };
+
+    // Helper to check if a base pair type is canonical
+    auto is_canonical = [](const std::string& bp_type) -> bool {
+      return bp_type == "GC" || bp_type == "AU" || bp_type == "GU";
+    };
+
     // Add base pair type constraints if specified
     if (bp_constraints.has_constraints() && !seq.empty())
     {
-      // Create constraint variables for each base pair type
-      std::vector<int> gc_vars, au_vars, gu_vars, uu_vars;
-      
-      // Helper function to get base pair type
-      auto get_bp_type = [](char a, char b) -> std::string {
-        a = std::toupper(a);
-        b = std::toupper(b);
-        if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) return "GC";
-        if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) return "AU";
-        if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) return "GU";
-        if (a == 'U' && b == 'U') return "UU";
-        return "OTHER";
-      };
-      
+
+      // Map to collect variables for each base pair type
+      std::map<std::string, std::vector<int>> bp_type_vars;
+
       // Collect variables for each base pair type
       for (auto lv = 0; lv != pk_level_; ++lv) {
         for (auto i = 0; i < L; ++i) {
           for (const auto [j, v_ij] : v_l[lv][i]) {
             if (i < j && i < seq.size() && j < seq.size()) {
               std::string bp_type = get_bp_type(seq[i], seq[j]);
-              if (bp_type == "GC") gc_vars.push_back(v_ij);
-              else if (bp_type == "AU") au_vars.push_back(v_ij);
-              else if (bp_type == "GU") gu_vars.push_back(v_ij);
-              else if (bp_type == "UU") uu_vars.push_back(v_ij);
+              bp_type_vars[bp_type].push_back(v_ij);
             }
           }
         }
       }
-      
-      // Add constraints for each base pair type
-      if (bp_constraints.GC >= 0 && !gc_vars.empty()) {
-        int row = ip.make_constraint(IP::FX, bp_constraints.GC, bp_constraints.GC);
-        for (int var : gc_vars) {
-          ip.add_constraint(row, var, 1);
+
+      // Add constraints for GC, AU, GU, UU
+      if (bp_constraints.GC >= 0) {
+        auto it = bp_type_vars.find("GC");
+        if (it != bp_type_vars.end() && !it->second.empty()) {
+          int row = ip.make_constraint(IP::FX, bp_constraints.GC, bp_constraints.GC);
+          for (int var : it->second) {
+            ip.add_constraint(row, var, 1);
+          }
         }
       }
-      
-      if (bp_constraints.AU >= 0 && !au_vars.empty()) {
-        int row = ip.make_constraint(IP::FX, bp_constraints.AU, bp_constraints.AU);
-        for (int var : au_vars) {
-          ip.add_constraint(row, var, 1);
+
+      if (bp_constraints.AU >= 0) {
+        auto it = bp_type_vars.find("AU");
+        if (it != bp_type_vars.end() && !it->second.empty()) {
+          int row = ip.make_constraint(IP::FX, bp_constraints.AU, bp_constraints.AU);
+          for (int var : it->second) {
+            ip.add_constraint(row, var, 1);
+          }
         }
       }
-      
-      if (bp_constraints.GU >= 0 && !gu_vars.empty()) {
-        int row = ip.make_constraint(IP::FX, bp_constraints.GU, bp_constraints.GU);
-        for (int var : gu_vars) {
-          ip.add_constraint(row, var, 1);
+
+      if (bp_constraints.GU >= 0) {
+        auto it = bp_type_vars.find("GU");
+        if (it != bp_type_vars.end() && !it->second.empty()) {
+          int row = ip.make_constraint(IP::FX, bp_constraints.GU, bp_constraints.GU);
+          for (int var : it->second) {
+            ip.add_constraint(row, var, 1);
+          }
         }
       }
-      
-      if (bp_constraints.UU >= 0 && !uu_vars.empty()) {
-        int row = ip.make_constraint(IP::FX, bp_constraints.UU, bp_constraints.UU);
-        for (int var : uu_vars) {
-          ip.add_constraint(row, var, 1);
+
+      if (bp_constraints.UU >= 0) {
+        auto it = bp_type_vars.find("UU");
+        if (it != bp_type_vars.end() && !it->second.empty()) {
+          int row = ip.make_constraint(IP::FX, bp_constraints.UU, bp_constraints.UU);
+          for (int var : it->second) {
+            ip.add_constraint(row, var, 1);
+          }
         }
       }
+
+      // Add constraints for other non-canonical base pair types
+      for (const auto& [bp_type, count] : bp_constraints.other_bp_types) {
+        if (count >= 0) {
+          auto it = bp_type_vars.find(bp_type);
+          if (it != bp_type_vars.end() && !it->second.empty()) {
+            int row = ip.make_constraint(IP::FX, count, count);
+            for (int var : it->second) {
+              ip.add_constraint(row, var, 1);
+            }
+            spdlog::info("Added constraint for base pair type {}: {} pairs", bp_type, count);
+          }
+        }
+      }
+
     }
+
+    // Non-canonical base pairs do not require any special stacking constraints
+    // They can be used freely just like canonical base pairs
 
     // Add stack constraints if specified
     if (stack_constraints.has_constraints())

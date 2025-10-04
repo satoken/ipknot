@@ -26,6 +26,7 @@
 #include <utility>
 #include <string>
 #include <list>
+#include <map>
 
 class IP;
 
@@ -48,8 +49,34 @@ struct BPConstraints {
   int GU = -1;
   int UU = -1;
 
+  // Support for additional non-canonical base pairs
+  std::map<std::string, int> other_bp_types;
+
   bool has_constraints() const {
-    return GC >= 0 || AU >= 0 || GU >= 0 || UU >= 0;
+    return GC >= 0 || AU >= 0 || GU >= 0 || UU >= 0 || !other_bp_types.empty();
+  }
+
+  bool has_noncanonical_constraints() const {
+    return UU >= 0 || !other_bp_types.empty();
+  }
+
+  void set_constraint(const std::string& bp_type, int count) {
+    if (bp_type == "GC") GC = count;
+    else if (bp_type == "AU") AU = count;
+    else if (bp_type == "GU") GU = count;
+    else if (bp_type == "UU") UU = count;
+    else other_bp_types[bp_type] = count;
+  }
+
+  int get_constraint(const std::string& bp_type) const {
+    if (bp_type == "GC") return GC;
+    else if (bp_type == "AU") return AU;
+    else if (bp_type == "GU") return GU;
+    else if (bp_type == "UU") return UU;
+    else {
+      auto it = other_bp_types.find(bp_type);
+      return it != other_bp_types.end() ? it->second : -1;
+    }
   }
 };
 

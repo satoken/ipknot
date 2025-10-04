@@ -52,7 +52,9 @@ typedef Vienna::FLT_OR_DBL FLT_OR_DBL;
 #endif
 
 #include "nupack/nupack.h"
+#ifdef WITH_MXFOLD2
 #include "mxfold2.h"
+#endif
 
 extern "C" {
 #include "boltzmann_param.h"
@@ -1407,8 +1409,13 @@ BPEngineSeq::build(const char* model, const char* param, uint beam_size, uint n_
     en = std::make_unique<LinearPartitionModel>(false, beam_size);
   else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
     en = std::make_unique<LinearPartitionModel>(true, beam_size);
+#ifdef WITH_MXFOLD2
   else if (strcasecmp(model, "MXfold2")==0)
     en = std::make_unique<MXfold2Model>(n_th, mxfold2_config, mxfold2_gpu);
+#else
+  else if (strcasecmp(model, "MXfold2")==0)
+    throw std::runtime_error("MXfold2 support not available. Rebuild with -DMXFOLD2=ON.");
+#endif
   return en;
 }
 
@@ -1458,11 +1465,18 @@ BPEngineAln::build(const std::vector<std::string>& model, const char* param, uin
         auto e = std::make_unique<LinearPartitionModel>(true, beam_size);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
+#ifdef WITH_MXFOLD2
       else if (strcasecmp(m, "MXfold2")==0)
       {
         auto e = std::make_unique<MXfold2Model>(n_th, mxfold2_config, mxfold2_gpu);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
+#else
+      else if (strcasecmp(m, "MXfold2")==0)
+      {
+        throw std::runtime_error("MXfold2 support not available. Rebuild with -DMXFOLD2=ON.");
+      }
+#endif
       else
         return std::unique_ptr<BPEngineAln>();
     }
@@ -1471,4 +1485,3 @@ BPEngineAln::build(const std::vector<std::string>& model, const char* param, uin
   }
   return std::move(mix_en ? mix_en : en_a[0]);
 }
-

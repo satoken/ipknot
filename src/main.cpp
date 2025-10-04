@@ -43,7 +43,9 @@
 #include "aln.h"
 #include "fold.h"
 #include "nupack/nupack.h"
+#ifdef WITH_MXFOLD2
 #include "mxfold2.h"
+#endif
 #include "bpseq.h"
 
 #include "cxxopts.hpp"
@@ -51,23 +53,47 @@
 #include "spdlog/sinks/basic_file_sink.h"
 #include "spdlog/stopwatch.h"
 
+// Function to check if a base pair type is canonical (Watson-Crick or wobble)
+bool is_canonical_base_pair(const std::string& bp_type) {
+  return bp_type == "GC" || bp_type == "AU" || bp_type == "GU";
+}
+
 // Function to normalize base pair type to canonical form
 std::string normalize_base_pair_type(const std::string& bp_type) {
   std::string normalized = bp_type;
-  
+
   // Convert to uppercase
   std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
-  
-  // Normalize to canonical order
-  if (normalized == "GC" || normalized == "CG") {
+
+  // Normalize to canonical order (alphabetically for consistency)
+  if (normalized.size() == 2 && normalized[0] > normalized[1]) {
+    std::swap(normalized[0], normalized[1]);
+  }
+
+  // Validate and normalize known pairs
+  if (normalized == "CG" || normalized == "GC") {
     return "GC";
-  } else if (normalized == "AU" || normalized == "AT" || normalized == "UA" || normalized == "TA") {
+  } else if (normalized == "AT" || normalized == "AU" || normalized == "TA" || normalized == "UA") {
     return "AU";
-  } else if (normalized == "GU" || normalized == "GT" || normalized == "UG" || normalized == "TG") {
+  } else if (normalized == "GT" || normalized == "GU" || normalized == "TG" || normalized == "UG") {
     return "GU";
-  } else if (normalized == "UU" || normalized == "TT") {
+  } else if (normalized == "TT" || normalized == "UU") {
     return "UU";
+  } else if (normalized == "CT" || normalized == "CU" || normalized == "TC" || normalized == "UC") {
+    return "CU";
+  } else if (normalized == "CC") {
+    return "CC";
+  } else if (normalized == "AA") {
+    return "AA";
+  } else if (normalized == "AC" || normalized == "CA") {
+    return "AC";
+  } else if (normalized == "AG" || normalized == "GA") {
+    return "AG";
   } else {
+    // Allow any two-letter combination as a potential base pair
+    if (normalized.size() == 2) {
+      return normalized;
+    }
     throw std::invalid_argument("Unknown base pair type: " + bp_type);
   }
 }
@@ -75,68 +101,64 @@ std::string normalize_base_pair_type(const std::string& bp_type) {
 // Function to parse base pair constraints from string
 BPConstraints parse_base_pair_constraints(const std::string& str) {
   BPConstraints constraints;
-  
+
   std::istringstream ss(str);
   std::string pair;
-  
+
   while (std::getline(ss, pair, ',')) {
     // Remove whitespace
     pair.erase(std::remove_if(pair.begin(), pair.end(), ::isspace), pair.end());
-    
+
     size_t eq_pos = pair.find('=');
     if (eq_pos == std::string::npos) {
       throw std::invalid_argument("Invalid base pair constraint format: " + pair);
     }
-    
+
     std::string bp_type = pair.substr(0, eq_pos);
     int count = std::stoi(pair.substr(eq_pos + 1));
-    
+
     // Normalize base pair type
     std::string normalized_bp_type = normalize_base_pair_type(bp_type);
-    
-    if (normalized_bp_type == "GC") {
-      constraints.GC = count;
-    } else if (normalized_bp_type == "AU") {
-      constraints.AU = count;
-    } else if (normalized_bp_type == "GU") {
-      constraints.GU = count;
-    } else if (normalized_bp_type == "UU") {
-      constraints.UU = count;
-    }
+
+    // Use the new set_constraint method
+    constraints.set_constraint(normalized_bp_type, count);
   }
-  
+
   return constraints;
 }
 
 // Function to determine base pair type
 std::string get_base_pair_type(char a, char b) {
-  // Normalize to uppercase and canonical order
-  if (a > b) std::swap(a, b);
+  // Normalize to uppercase
   a = std::toupper(a);
   b = std::toupper(b);
-  
-  if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) {
-    return "GC";
-  } else if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) {
-    return "AU";
-  } else if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) {
-    return "GU";
-  } else if (a == 'U' && b == 'U') {
-    return "UU";
+
+  // Canonical order (alphabetically)
+  if (a > b) std::swap(a, b);
+
+  // Create two-character string
+  std::string bp_type;
+  bp_type += a;
+  bp_type += b;
+
+  // Normalize using existing function
+  try {
+    return normalize_base_pair_type(bp_type);
+  } catch (...) {
+    return "UNKNOWN";
   }
-  return "UNKNOWN";
 }
 
 // Function to count base pairs in a structure
 BPConstraints count_base_pairs(const std::string& seq, const VI& bpseq) {
   BPConstraints counts;
   counts.GC = counts.AU = counts.GU = counts.UU = 0;
-  
+
   for (uint i = 0; i < bpseq.size(); ++i) {
     if (bpseq[i] >= 0 && (int)i < bpseq[i]) {  // Only count each pair once
       int j = bpseq[i];
       std::string bp_type = get_base_pair_type(seq[i], seq[j]);
-      
+
       if (bp_type == "GC") {
         counts.GC++;
       } else if (bp_type == "AU") {
@@ -145,10 +167,13 @@ BPConstraints count_base_pairs(const std::string& seq, const VI& bpseq) {
         counts.GU++;
       } else if (bp_type == "UU") {
         counts.UU++;
+      } else {
+        // Count other non-canonical base pairs
+        counts.other_bp_types[bp_type]++;
       }
     }
   }
-  
+
   return counts;
 }
 
@@ -158,6 +183,14 @@ bool satisfies_constraints(const BPConstraints& counts, const BPConstraints& con
   if (constraints.AU >= 0 && counts.AU != constraints.AU) return false;
   if (constraints.GU >= 0 && counts.GU != constraints.GU) return false;
   if (constraints.UU >= 0 && counts.UU != constraints.UU) return false;
+
+  // Check other base pair types
+  for (const auto& [bp_type, expected_count] : constraints.other_bp_types) {
+    auto it = counts.other_bp_types.find(bp_type);
+    int actual_count = it != counts.other_bp_types.end() ? it->second : 0;
+    if (actual_count != expected_count) return false;
+  }
+
   return true;
 }
 
@@ -525,10 +558,12 @@ main(int argc, char* argv[])
       cxxopts::value<uint>()->default_value("100"), "N")
     ("base-pairs", "Specify base pair count constraints (e.g., GC=1,AU=3,GU=1,UU=1)",
       cxxopts::value<std::string>(), "CONSTRAINTS")
+#ifdef WITH_MXFOLD2
     ("mxfold2-config", "config file for MXfold2 model",
       cxxopts::value<std::string>()->default_value(""), "FILE")
     ("mxfold2-gpu", "Use GPU for MXfold2 model (default: -1 for CPU)",
       cxxopts::value<int>()->default_value("-1"), "GPUID")
+#endif
     ("version", "Print version")
     ("h,help", "Print usage"); 
   options.parse_positional({"input"});
@@ -582,15 +617,25 @@ main(int argc, char* argv[])
     }
   }
   input = res["input"].as<std::string>();
+#ifdef WITH_MXFOLD2
   auto mxfold2_config = res["mxfold2-config"].as<std::string>();
   auto mxfold2_gpu = res["mxfold2-gpu"].as<int>();
+#else
+  std::string mxfold2_config;
+  int mxfold2_gpu = -1;
+#endif
   
   // Parse base pair constraints
   if (res.count("base-pairs")) {
     try {
       bp_constraints = parse_base_pair_constraints(res["base-pairs"].as<std::string>());
-      spdlog::info("Base pair constraints: GC={}, AU={}, GU={}, UU={}",
-        bp_constraints.GC, bp_constraints.AU, bp_constraints.GU, bp_constraints.UU);
+      std::ostringstream bp_ss;
+      bp_ss << "GC=" << bp_constraints.GC << ", AU=" << bp_constraints.AU
+            << ", GU=" << bp_constraints.GU << ", UU=" << bp_constraints.UU;
+      for (const auto& [bp_type, count] : bp_constraints.other_bp_types) {
+        bp_ss << ", " << bp_type << "=" << count;
+      }
+      spdlog::info("Base pair constraints: {}", bp_ss.str());
     } catch (const std::exception& e) {
       spdlog::error("Error parsing base pair constraints: {}", e.what());
       return 1;
@@ -846,8 +891,13 @@ main(int argc, char* argv[])
         // Count and display base pairs if constraints are specified or verbose mode
         if (bp_constraints.has_constraints() && spdlog::get_level() <= spdlog::level::info) {
           BPConstraints actual_counts = count_base_pairs(fa->seq(), bpseq);
-          spdlog::info("Base pair counts in predicted structure: GC={} AU={} GU={} UU={}",
-                        actual_counts.GC, actual_counts.AU, actual_counts.GU, actual_counts.UU);
+          std::ostringstream counts_ss;
+          counts_ss << "GC=" << actual_counts.GC << " AU=" << actual_counts.AU
+                    << " GU=" << actual_counts.GU << " UU=" << actual_counts.UU;
+          for (const auto& [bp_type, count] : actual_counts.other_bp_types) {
+            counts_ss << " " << bp_type << "=" << count;
+          }
+          spdlog::info("Base pair counts in predicted structure: {}", counts_ss.str());
           if (satisfies_constraints(actual_counts, bp_constraints)) {
             spdlog::info("Base pair constraints are satisfied.");
           } else {
