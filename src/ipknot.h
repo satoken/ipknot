@@ -40,43 +40,32 @@ using SVI = std::vector<std::pair<uint,int>>;
 using VSVI = std::vector<SVI>; 
 using VVSVI = std::vector<VSVI>;
 using SVF = std::vector<std::pair<uint,float>>;
-using VSVF = std::vector<SVF>; 
+using VSVF = std::vector<SVF>;
+
+// Utility functions for base pair type normalization
+char normalize_base(char c);
+std::string normalize_base_pair_type(char a, char b);
+std::string normalize_base_pair_type(const std::string& bp_type);
+bool is_canonical_base_pair(const std::string& bp_type);
 
 // Structure for base pair constraints
 struct BPConstraints {
-  int GC = -1;  // -1 means no constraint
-  int AU = -1;
-  int GU = -1;
-  int UU = -1;
-
-  // Support for additional non-canonical base pairs
-  std::map<std::string, int> other_bp_types;
+  // Map from base pair type to required count (-1 means no constraint)
+  std::map<std::string, int> constraints;
 
   bool has_constraints() const {
-    return GC >= 0 || AU >= 0 || GU >= 0 || UU >= 0 || !other_bp_types.empty();
+    return !constraints.empty();
   }
 
-  bool has_noncanonical_constraints() const {
-    return UU >= 0 || !other_bp_types.empty();
-  }
+  bool has_noncanonical_constraints() const;
 
   void set_constraint(const std::string& bp_type, int count) {
-    if (bp_type == "GC") GC = count;
-    else if (bp_type == "AU") AU = count;
-    else if (bp_type == "GU") GU = count;
-    else if (bp_type == "UU") UU = count;
-    else other_bp_types[bp_type] = count;
+    constraints[bp_type] = count;
   }
 
   int get_constraint(const std::string& bp_type) const {
-    if (bp_type == "GC") return GC;
-    else if (bp_type == "AU") return AU;
-    else if (bp_type == "GU") return GU;
-    else if (bp_type == "UU") return UU;
-    else {
-      auto it = other_bp_types.find(bp_type);
-      return it != other_bp_types.end() ? it->second : -1;
-    }
+    auto it = constraints.find(bp_type);
+    return it != constraints.end() ? it->second : -1;
   }
 };
 

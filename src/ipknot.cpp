@@ -30,14 +30,53 @@
 #include <iostream>
 #include <iterator>
 #include <list>
+#include <set>
 #include <sstream>
 
 #include "ipknot.h"
 #include "ip.h"
-#include "bpseq.h" 
+#include "bpseq.h"
 
 #include "spdlog/spdlog.h"
 //#include "spdlog/sinks/basic_file_sink.h"
+
+// Utility functions for base pair type normalization
+char normalize_base(char c) {
+  c = std::toupper(c);
+  return (c == 'T') ? 'U' : c;
+}
+
+std::string normalize_base_pair_type(char a, char b) {
+  // Normalize individual bases
+  a = normalize_base(a);
+  b = normalize_base(b);
+
+  // Sort alphabetically for canonical order
+  if (a > b) std::swap(a, b);
+
+  // Return as string
+  return std::string{a, b};
+}
+
+std::string normalize_base_pair_type(const std::string& bp_type) {
+  if (bp_type.size() != 2) {
+    throw std::invalid_argument("Base pair type must be exactly 2 characters: " + bp_type);
+  }
+  return normalize_base_pair_type(bp_type[0], bp_type[1]);
+}
+
+bool is_canonical_base_pair(const std::string& bp_type) {
+  return bp_type == "GC" || bp_type == "AU" || bp_type == "GU";
+}
+
+bool BPConstraints::has_noncanonical_constraints() const {
+  for (const auto& [bp_type, count] : constraints) {
+    if (count >= 0 && !is_canonical_base_pair(bp_type)) {
+      return true;
+    }
+  }
+  return false;
+}
 //#include "spdlog/stopwatch.h"
 
 IPknot::IPknot(uint pk_level, const float* alpha,
@@ -105,43 +144,26 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
     VI c_l(L, 0), c_r(L, 0);
     uint n=0;
 
-    // Helper to get base pair type
-    auto get_bp_type = [](char a, char b) -> std::string {
-      a = std::toupper(a);
-      b = std::toupper(b);
-      if (a > b) std::swap(a, b);
-      if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) return "GC";
-      if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) return "AU";
-      if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) return "GU";
-      if (a == 'U' && b == 'U') return "UU";
-      if ((a == 'C' && b == 'U') || (a == 'U' && b == 'C')) return "CU";
-      std::string result;
-      result += a;
-      result += b;
-      return result;
-    };
+    // Collect required non-canonical base pair types from constraints
+    std::set<std::string> required_noncanonical_bp_types;
 
-    // Helper to check if a base pair type is canonical
-    auto is_canonical = [](const std::string& bp_type) -> bool {
-      return bp_type == "GC" || bp_type == "AU" || bp_type == "GU";
-    };
-
-    // Check if non-canonical base pairs are needed
-    bool has_noncanonical_bp_constraint = bp_constraints.has_noncanonical_constraints();
-    bool has_noncanonical_stack_constraint = false;
-    if (stack_constraints.has_constraints()) {
-      for (const auto& sc : stack_constraints.constraints) {
-        for (const auto& bp_type : sc.bp_types) {
-          if (!is_canonical(bp_type)) {
-            has_noncanonical_stack_constraint = true;
-            break;
-          }
-        }
-        if (has_noncanonical_stack_constraint) break;
+    // From base pair constraints
+    for (const auto& [bp_type, count] : bp_constraints.constraints) {
+      if (count >= 0 && !is_canonical_base_pair(bp_type)) {
+        required_noncanonical_bp_types.insert(bp_type);
       }
     }
 
-    bool add_noncanonical_pairs = has_noncanonical_bp_constraint || has_noncanonical_stack_constraint;
+    // From stack constraints
+    if (stack_constraints.has_constraints()) {
+      for (const auto& sc : stack_constraints.constraints) {
+        for (const auto& bp_type : sc.bp_types) {
+          if (!is_canonical_base_pair(bp_type)) {
+            required_noncanonical_bp_types.insert(bp_type);
+          }
+        }
+      }
+    }
 
     // make objective variables with their weights
     for (auto i=1; i<=L; ++i)
@@ -176,11 +198,13 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
         }
       }
 
-      // Add non-canonical base pairs if needed
-      if (add_noncanonical_pairs) {
+      // Add non-canonical base pairs that are required by constraints
+      if (!required_noncanonical_bp_types.empty()) {
         for (auto j=i+1; j<=L; ++j) {
-          std::string bp_type = get_bp_type(seq[i-1], seq[j-1]);
-          if (!is_canonical(bp_type)) {
+          std::string bp_type = normalize_base_pair_type(seq[i-1], seq[j-1]);
+
+          // Only add if this type is required by constraints
+          if (required_noncanonical_bp_types.count(bp_type) > 0) {
             // Check if this non-canonical pair is already added
             bool already_added = false;
             for (const auto [jj, v_ij]: v_l[0][i-1]) {
@@ -373,27 +397,6 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
       }
     }
 
-    // Helper function to get base pair type (used by both bp and stacking constraints)
-    auto get_bp_type = [](char a, char b) -> std::string {
-      a = std::toupper(a);
-      b = std::toupper(b);
-      if (a > b) std::swap(a, b);
-      if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) return "GC";
-      if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) return "AU";
-      if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) return "GU";
-      if (a == 'U' && b == 'U') return "UU";
-      if ((a == 'C' && b == 'U') || (a == 'U' && b == 'C')) return "CU";
-      std::string result;
-      result += a;
-      result += b;
-      return result;
-    };
-
-    // Helper to check if a base pair type is canonical
-    auto is_canonical = [](const std::string& bp_type) -> bool {
-      return bp_type == "GC" || bp_type == "AU" || bp_type == "GU";
-    };
-
     // Add base pair type constraints if specified
     if (bp_constraints.has_constraints() && !seq.empty())
     {
@@ -406,56 +409,15 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
         for (auto i = 0; i < L; ++i) {
           for (const auto [j, v_ij] : v_l[lv][i]) {
             if (i < j && i < seq.size() && j < seq.size()) {
-              std::string bp_type = get_bp_type(seq[i], seq[j]);
+              std::string bp_type = normalize_base_pair_type(seq[i], seq[j]);
               bp_type_vars[bp_type].push_back(v_ij);
             }
           }
         }
       }
 
-      // Add constraints for GC, AU, GU, UU
-      if (bp_constraints.GC >= 0) {
-        auto it = bp_type_vars.find("GC");
-        if (it != bp_type_vars.end() && !it->second.empty()) {
-          int row = ip.make_constraint(IP::FX, bp_constraints.GC, bp_constraints.GC);
-          for (int var : it->second) {
-            ip.add_constraint(row, var, 1);
-          }
-        }
-      }
-
-      if (bp_constraints.AU >= 0) {
-        auto it = bp_type_vars.find("AU");
-        if (it != bp_type_vars.end() && !it->second.empty()) {
-          int row = ip.make_constraint(IP::FX, bp_constraints.AU, bp_constraints.AU);
-          for (int var : it->second) {
-            ip.add_constraint(row, var, 1);
-          }
-        }
-      }
-
-      if (bp_constraints.GU >= 0) {
-        auto it = bp_type_vars.find("GU");
-        if (it != bp_type_vars.end() && !it->second.empty()) {
-          int row = ip.make_constraint(IP::FX, bp_constraints.GU, bp_constraints.GU);
-          for (int var : it->second) {
-            ip.add_constraint(row, var, 1);
-          }
-        }
-      }
-
-      if (bp_constraints.UU >= 0) {
-        auto it = bp_type_vars.find("UU");
-        if (it != bp_type_vars.end() && !it->second.empty()) {
-          int row = ip.make_constraint(IP::FX, bp_constraints.UU, bp_constraints.UU);
-          for (int var : it->second) {
-            ip.add_constraint(row, var, 1);
-          }
-        }
-      }
-
-      // Add constraints for other non-canonical base pair types
-      for (const auto& [bp_type, count] : bp_constraints.other_bp_types) {
+      // Add constraints for all base pair types
+      for (const auto& [bp_type, count] : bp_constraints.constraints) {
         if (count >= 0) {
           auto it = bp_type_vars.find(bp_type);
           if (it != bp_type_vars.end() && !it->second.empty()) {
@@ -463,7 +425,7 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
             for (int var : it->second) {
               ip.add_constraint(row, var, 1);
             }
-            spdlog::info("Added constraint for base pair type {}: {} pairs", bp_type, count);
+            spdlog::debug("Added constraint for base pair type {}: {} pairs", bp_type, count);
           }
         }
       }
