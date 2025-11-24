@@ -249,6 +249,7 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
              const StackConstraints& stack_constraints) const
 {
     uint L = seq.size();
+
     if (!constraint)
     {
       bpseq.resize(L);
@@ -438,44 +439,72 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
     // Add stack constraints if specified
     if (stack_constraints.has_constraints())
     {
+      // Create level-independent base pair variables for stack constraints
+      // bp_pair[i][j] = 1 if positions i and j form a base pair at any level
+      // Only create variables for base pairs used in stack constraint instances
+      std::map<std::pair<int,int>, int> bp_pair_vars;
+
+      // First pass: identify all base pairs needed by stack constraint instances
+      std::set<std::pair<int,int>> required_pairs;
+      for (const auto& instance : stack_constraints.instances) {
+        for (const auto& [i, j] : instance.pairs) {
+          required_pairs.insert(std::make_pair(i, j));
+        }
+      }
+
+      // Second pass: create bp_pair_var only for required pairs
+      for (const auto& [i, j] : required_pairs) {
+        // Create a new binary variable for this base pair position
+        int bp_pair_var = ip.make_variable(0.0, 0, 1);
+        bp_pair_vars[std::make_pair(i, j)] = bp_pair_var;
+
+        // Add constraint: bp_pair_var = sum of v_ij across all levels
+        // This means bp_pair_var = 1 iff the pair exists at any level
+        int row = ip.make_constraint(IP::FX, 0, 0);  // bp_pair_var - sum(v_ij) = 0
+        ip.add_constraint(row, bp_pair_var, 1);
+
+        // Add all level-specific variables for this position
+        for (auto lv = 0; lv != pk_level_; ++lv) {
+          for (const auto [j2, v_ij] : v_l[lv][i]) {
+            if (j2 == j) {
+              ip.add_constraint(row, v_ij, -1);
+              break;
+            }
+          }
+        }
+      }
+
+      spdlog::info("Created {} level-independent base pair variables for stack constraints", bp_pair_vars.size());
+
+      // Store all instance_vars and their bp_vars for non-overlap constraints
+      std::vector<int> all_instance_vars;
+      std::vector<std::vector<int>> all_instance_bp_vars;
+      std::vector<int> instance_to_constraint_id;
+
       // For each stack constraint, at least one instance must be selected
       for (size_t constraint_id = 0; constraint_id < stack_constraints.constraints.size(); ++constraint_id)
       {
         std::vector<int> instance_vars;  // Variables representing each instance
 
-        // For each instance of this constraint
+        // For each instance of this constraint (now level-independent)
         for (size_t inst_idx = 0; inst_idx < stack_constraints.instances.size(); ++inst_idx)
         {
           const auto& instance = stack_constraints.instances[inst_idx];
           if (instance.constraint_id != (int)constraint_id) continue;
 
-          // Find the IP variables corresponding to the base pairs in this instance
+          // Find the level-independent bp_pair variables for this instance
           std::vector<int> bp_vars;
           bool all_pairs_found = true;
           for (const auto& [i, j] : instance.pairs)
           {
-            // Find the variable v_ij in v_l
-            int found_var = -1;
-            for (auto lv = 0; lv != pk_level_; ++lv)
+            auto pair_key = std::make_pair(i, j);
+            auto it = bp_pair_vars.find(pair_key);
+            if (it != bp_pair_vars.end())
             {
-              for (const auto& [jj, v_ij] : v_l[lv][i])
-              {
-                if (jj == j)
-                {
-                  found_var = v_ij;
-                  break;
-                }
-              }
-              if (found_var >= 0) break;
-            }
-
-            if (found_var >= 0)
-            {
-              bp_vars.push_back(found_var);
+              bp_vars.push_back(it->second);
             }
             else
             {
-              //spdlog::warn("Stack constraint: base pair ({},{}) not found in variables, skipping this instance", i+1, j+1);
               all_pairs_found = false;
               break;
             }
@@ -487,36 +516,38 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
             continue;
           }
 
-          // Create a binary variable for this instance
+          // Create a binary variable for this instance (level-independent)
           // This variable is 1 if all base pairs in the stack are selected
-          int instance_var = ip.make_variable(0.0);  // No weight, just a helper variable
+          int instance_var = ip.make_variable(0.0, 0, 1);  // Binary variable with no weight
           instance_vars.push_back(instance_var);
 
-          // Add constraints: instance_var = 1 if and only if all bp_vars = 1
-          // This is implemented as:
-          // 1. instance_var <= bp_var_k for all k (if any bp is 0, instance must be 0)
-          // 2. instance_var >= sum(bp_vars) - n + 1 (if all bp are 1, instance must be 1)
+          // Store for non-overlap constraints
+          all_instance_vars.push_back(instance_var);
+          all_instance_bp_vars.push_back(bp_vars);
+          instance_to_constraint_id.push_back(constraint_id);
+
+          // Debug: log the positions for this instance
+          std::ostringstream pos_str;
+          for (const auto& [i, j] : instance.pairs) {
+            pos_str << "(" << (i+1) << "," << (j+1) << ") ";
+          }
+          spdlog::info("Constraint {} instance: {}", constraint_id + 1, pos_str.str());
+
+          // Add constraint: instance_var can only be 1 if all bp_vars are 1
+          // This is implemented as: instance_var <= bp_var_k for all k
+          // If any bp_var is 0, instance_var must be 0
+          // Combined with "at least one instance" constraint, this ensures correct behavior
           const int n_pairs = bp_vars.size();
           if (n_pairs > 0)
           {
-            // Constraint 1: instance_var <= each bp_var
             for (int bp_var : bp_vars)
             {
-              int row = ip.make_constraint(IP::LO, 0, 0);  // instance_var - bp_var <= 0
+              int row = ip.make_constraint(IP::UP, 0, 0);  // instance_var - bp_var <= 0
               ip.add_constraint(row, instance_var, 1);
               ip.add_constraint(row, bp_var, -1);
             }
-
-            // Constraint 2: instance_var >= sum(bp_vars) - n + 1
-            // Equivalent to: sum(bp_vars) - instance_var <= n - 1
-            int row = ip.make_constraint(IP::UP, 0, n_pairs - 1);
-            for (int bp_var : bp_vars)
-            {
-              ip.add_constraint(row, bp_var, 1);
-            }
-            ip.add_constraint(row, instance_var, -1);
           }
-        }
+        }  // end inst_idx loop
 
         // At least one instance of this constraint must be selected
         if (!instance_vars.empty())
@@ -526,8 +557,8 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
           {
             ip.add_constraint(row, inst_var, 1);
           }
-          spdlog::info("Added stack constraint {} with {} possible instances",
-                       constraint_id + 1, instance_vars.size());
+          spdlog::info("Added stack constraint {} with {} possible instances (total instances so far: {})",
+                       constraint_id + 1, instance_vars.size(), all_instance_vars.size());
         }
         else
         {
@@ -537,10 +568,85 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
           throw std::runtime_error("Stack constraint cannot be satisfied: no valid instances found");
         }
       }
-    }
 
-    // execute optimization
-    ip.solve();
+      // Add non-overlap constraints between instances from different stack constraints
+      // If two instances share base pair variables and are from different constraints,
+      // they cannot both be selected (instance_var1 + instance_var2 <= 1)
+      if (stack_constraints.constraints.size() > 1)
+      {
+        spdlog::info("Checking for non-overlap constraints between {} instances from {} stack constraints",
+                     all_instance_vars.size(), stack_constraints.constraints.size());
+        int num_non_overlap = 0;
+        for (size_t i1 = 0; i1 < all_instance_vars.size(); ++i1)
+        {
+          for (size_t i2 = i1 + 1; i2 < all_instance_vars.size(); ++i2)
+          {
+            // Only add constraints between instances from different stack constraints
+            if (instance_to_constraint_id[i1] == instance_to_constraint_id[i2])
+              continue;
+
+            spdlog::debug("Comparing instance {} (constraint {}) with instance {} (constraint {})",
+                         i1, instance_to_constraint_id[i1] + 1, i2, instance_to_constraint_id[i2] + 1);
+
+            // Check if these instances share any base pair variable
+            bool shares_bp = false;
+            for (int bp_var1 : all_instance_bp_vars[i1])
+            {
+              for (int bp_var2 : all_instance_bp_vars[i2])
+              {
+                if (bp_var1 == bp_var2)
+                {
+                  shares_bp = true;
+                  spdlog::debug("  Found shared bp_var: {}", bp_var1);
+                  break;
+                }
+              }
+              if (shares_bp) break;
+            }
+
+            // If they share a base pair, add constraint that at most one can be selected
+            if (shares_bp)
+            {
+              int row = ip.make_constraint(IP::UP, 0, 1);  // instance_var1 + instance_var2 <= 1
+              ip.add_constraint(row, all_instance_vars[i1], 1);
+              ip.add_constraint(row, all_instance_vars[i2], 1);
+              num_non_overlap++;
+              spdlog::debug("  Added non-overlap constraint between instance {} and {}", i1, i2);
+            }
+          }
+        }
+        if (num_non_overlap > 0)
+        {
+          spdlog::info("Added {} non-overlap constraints between different stack constraints", num_non_overlap);
+        }
+        else if (stack_constraints.constraints.size() > 1)
+        {
+          spdlog::warn("No non-overlap constraints added - different stack constraints may not share any base pairs");
+        }
+      }
+
+      // Update IP solver
+      ip.update();
+
+      // execute optimization
+      ip.solve();
+
+      // Log which stack constraint instances were selected
+      for (size_t i = 0; i < all_instance_vars.size(); ++i)
+      {
+        double val = ip.get_value(all_instance_vars[i]);
+        if (val > 0.5)
+        {
+          spdlog::info("Instance {} (constraint {}) selected with value {}",
+                      i, instance_to_constraint_id[i] + 1, val);
+        }
+      }
+    }
+    else
+    {
+      // execute optimization without stack constraints
+      ip.solve();
+    }
 
     // build the result
     bpseq.resize(L);
