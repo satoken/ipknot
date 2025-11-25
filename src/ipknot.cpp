@@ -80,12 +80,14 @@ bool BPConstraints::has_noncanonical_constraints() const {
 //#include "spdlog/stopwatch.h"
 
 IPknot::IPknot(uint pk_level, const float* alpha,
-         bool levelwise, bool stacking_constraints, int n_th)
+         bool levelwise, bool stacking_constraints, int n_th,
+         bool require_canonical_neighbor)
     : pk_level_(pk_level),
       alpha_(alpha, alpha+pk_level_),
       levelwise_(levelwise),
       stacking_constraints_(stacking_constraints),
-      n_th_(n_th)
+      n_th_(n_th),
+      require_canonical_neighbor_(require_canonical_neighbor)
 {
 }
 
@@ -165,7 +167,7 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
       }
     }
 
-    // make objective variables with their weights
+    // make objective variables with their weights (canonical base pairs first)
     for (auto i=1; i<=L; ++i)
     {
       bool found_constraint_j = false;
@@ -197,35 +199,63 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
           n++;
         }
       }
+    }
 
-      // Add non-canonical base pairs that are required by constraints
-      if (!required_noncanonical_bp_types.empty()) {
+    // Helper function to check if a variable exists for position (i, j) at level 0
+    auto has_variable_at = [&v_l](uint i_0idx, uint j_0idx) -> bool {
+      for (const auto [jj, v_ij]: v_l[0][i_0idx]) {
+        if (jj == j_0idx) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Add non-canonical base pairs that are required by constraints
+    // This is done after canonical base pairs so we can check for canonical neighbors
+    if (!required_noncanonical_bp_types.empty()) {
+      for (auto i=1; i<=L; ++i) {
         for (auto j=i+1; j<=L; ++j) {
           std::string bp_type = normalize_base_pair_type(seq[i-1], seq[j-1]);
 
           // Only add if this type is required by constraints
           if (required_noncanonical_bp_types.count(bp_type) > 0) {
             // Check if this non-canonical pair is already added
-            bool already_added = false;
-            for (const auto [jj, v_ij]: v_l[0][i-1]) {
-              if (jj == j-1) {
-                already_added = true;
-                break;
+            if (has_variable_at(i-1, j-1)) {
+              continue;
+            }
+
+            // If require_canonical_neighbor_ is set, check if canonical neighbor variable exists
+            if (require_canonical_neighbor_) {
+              bool has_canonical_neighbor = false;
+              // Check above: (i-1, j+1) - positions (i-2, j) in 0-indexed
+              if (i >= 2 && j < L) {
+                if (has_variable_at(i-2, j)) {
+                  has_canonical_neighbor = true;
+                }
+              }
+              // Check below: (i+1, j-1) - positions (i, j-2) in 0-indexed
+              if (!has_canonical_neighbor && i < L && j >= 2) {
+                if (has_variable_at(i, j-2)) {
+                  has_canonical_neighbor = true;
+                }
+              }
+              if (!has_canonical_neighbor) {
+                spdlog::debug("Skipping non-canonical base pair ({},{}) type {}: no canonical neighbor variable", i, j, bp_type);
+                continue;
               }
             }
 
-            if (!already_added) {
-              // Add with zero weight (will only be selected if constraint requires it)
-              const auto p = 0.0;
-              for (auto lv=0; lv!=pk_level_; ++lv) {
-                const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
-                v_l[lv][i-1].emplace_back(j-1, v_ij);
-                v_r[lv][j-1].emplace_back(i-1, v_ij);
-                c_l[i-1]++; c_r[j-1]++;
-                n++;
-              }
-              spdlog::debug("Added non-canonical base pair ({},{}) type {} for constraint", i, j, bp_type);
+            // Add with zero weight (will only be selected if constraint requires it)
+            const auto p = 0.0;
+            for (auto lv=0; lv!=pk_level_; ++lv) {
+              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+              v_l[lv][i-1].emplace_back(j-1, v_ij);
+              v_r[lv][j-1].emplace_back(i-1, v_ij);
+              c_l[i-1]++; c_r[j-1]++;
+              n++;
             }
+            spdlog::debug("Added non-canonical base pair ({},{}) type {} for constraint", i, j, bp_type);
           }
         }
       }
@@ -618,10 +648,6 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
         if (num_non_overlap > 0)
         {
           spdlog::info("Added {} non-overlap constraints between different stack constraints", num_non_overlap);
-        }
-        else if (stack_constraints.constraints.size() > 1)
-        {
-          spdlog::warn("No non-overlap constraints added - different stack constraints may not share any base pairs");
         }
       }
 

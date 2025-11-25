@@ -424,6 +424,7 @@ main(int argc, char* argv[])
   uint beam_size;
   std::string input;
   bool verbose = false;
+  bool require_canonical_neighbor = false;
   BPConstraints bp_constraints;
   StackConstraints stack_constraints;
 
@@ -478,6 +479,8 @@ main(int argc, char* argv[])
       cxxopts::value<uint>()->default_value("100"), "N")
     ("base-pairs", "Specify base pair count constraints (e.g., GC=1,AU=3,GU=1,UU=1)",
       cxxopts::value<std::string>(), "CONSTRAINTS")
+    ("without-canonical-neighbor", "Add non-canonical base pairs even without a canonical neighbor above or below",
+      cxxopts::value<bool>()->default_value("false"))
 #ifdef WITH_MXFOLD2
     ("mxfold2-config", "config file for MXfold2 model",
       cxxopts::value<std::string>()->default_value(""), "FILE")
@@ -517,6 +520,7 @@ main(int argc, char* argv[])
   if (res.count("stack-constraint")) stack_constraint_args = res["stack-constraint"].as<std::vector<std::string>>();
   beam_size = res["beam-size"].as<uint>();
   verbose = res["verbose"].as<bool>();
+  require_canonical_neighbor = !res["without-canonical-neighbor"].as<bool>();
   spdlog::set_level(spdlog::level::warn); // Default log level
   if (verbose) 
     spdlog::set_level(spdlog::level::info);
@@ -721,7 +725,7 @@ main(int argc, char* argv[])
 
   try
   {
-    IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th);
+    IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th, require_canonical_neighbor);
     std::vector<int> bpseq;
     std::vector<int> plevel;
 

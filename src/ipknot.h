@@ -139,7 +139,8 @@ public:
 
 public:
   IPknot(uint pk_level, const float* alpha,
-         bool levelwise, bool stacking_constraints, int n_th);
+         bool levelwise, bool stacking_constraints, int n_th,
+         bool require_canonical_neighbor = false);
 
 public:
   void solve(const std::string& seq, const VF& bp, const VI& offset,
@@ -184,6 +185,7 @@ private:
   bool levelwise_;
   bool stacking_constraints_;
   int n_th_;
+  bool require_canonical_neighbor_;  // require canonical base pair above or below for non-canonical pairs
 };
 
 template < class T >
