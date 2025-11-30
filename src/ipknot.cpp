@@ -215,7 +215,7 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
     // This is done after canonical base pairs so we can check for canonical neighbors
     if (!required_noncanonical_bp_types.empty()) {
       for (auto i=1; i<=L; ++i) {
-        for (auto j=i+1; j<=L; ++j) {
+        for (auto j=i+4; j<=L; ++j) {  // j >= i+4 to avoid sharp hairpin (at least 3 bases between i and j)
           std::string bp_type = normalize_base_pair_type(seq[i-1], seq[j-1]);
 
           // Only add if this type is required by constraints
