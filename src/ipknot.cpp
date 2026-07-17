@@ -51,7 +51,12 @@ std::string normalize_base_pair_type(char a, char b) {
   a = normalize_base(a);
   b = normalize_base(b);
 
-  // Sort alphabetically for canonical order
+  // Use the conventional names for canonical/wobble pairs.
+  if ((a == 'G' && b == 'C') || (a == 'C' && b == 'G')) return "GC";
+  if ((a == 'A' && b == 'U') || (a == 'U' && b == 'A')) return "AU";
+  if ((a == 'G' && b == 'U') || (a == 'U' && b == 'G')) return "GU";
+
+  // Give all remaining (non-canonical) types a direction-independent name.
   if (a > b) std::swap(a, b);
 
   // Return as string
@@ -260,6 +265,31 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
         }
       }
     }
+
+    // Every pair belonging to a concrete stack/bulge instance must be an IP
+    // candidate even when its posterior probability is below the threshold.
+    // Otherwise an explicit NMR constraint could be silently skipped when no
+    // ordinary candidate variable was created.
+    if (stack_constraints.has_constraints()) {
+      std::set<std::pair<int, int>> required_instance_pairs;
+      for (const auto& instance : stack_constraints.instances) {
+        required_instance_pairs.insert(instance.pairs.begin(), instance.pairs.end());
+      }
+      for (const auto& [i, j] : required_instance_pairs) {
+        if (i < 0 || j < 0 || static_cast<uint>(j) >= L || j < i + 4 ||
+            has_variable_at(i, j)) {
+          continue;
+        }
+        for (auto lv=0; lv!=pk_level_; ++lv) {
+          const auto v_ij = ip.make_variable((0.0-th[lv])*alpha_[lv]);
+          v_l[lv][i].emplace_back(j, v_ij);
+          v_r[lv][j].emplace_back(i, v_ij);
+          c_l[i]++; c_r[j]++;
+          n++;
+        }
+        spdlog::debug("Added base pair ({},{}) required by stack/bulge constraint", i+1, j+1);
+      }
+    }
     ip.update();
 
     if (n>0)
@@ -396,6 +426,9 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
 
     if (stacking_constraints_)
     {
+      // When an NMR stack constraint is present, a selected pair may be
+      // supported by a neighboring pair across a one-nucleotide bulge.
+      const int max_neighbor_distance = stack_constraints.has_constraints() ? 2 : 1;
       for (auto lv=0; lv!=pk_level_; ++lv)
       {
         // upstream
@@ -404,12 +437,14 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
           int row = ip.make_constraint(IP::LO, 0, 0);
           for (auto [j, v_ji]: v_r[lv][i])
             ip.add_constraint(row, v_ji, -1);
-          if (i>0)
-            for (auto [j, v_ji]: v_r[lv][i-1])
-              ip.add_constraint(row, v_ji, 1);
-          if (i+1<L)
-            for (auto [j, v_ji]: v_r[lv][i+1])
-              ip.add_constraint(row, v_ji, 1);
+          for (int d=1; d<=max_neighbor_distance; ++d) {
+            if (i>=static_cast<uint>(d))
+              for (auto [j, v_ji]: v_r[lv][i-d])
+                ip.add_constraint(row, v_ji, 1);
+            if (i+d<L)
+              for (auto [j, v_ji]: v_r[lv][i+d])
+                ip.add_constraint(row, v_ji, 1);
+          }
         }
 
         // downstream
@@ -418,12 +453,14 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
           auto row = ip.make_constraint(IP::LO, 0, 0);
           for (auto [j, v_ij]: v_l[lv][i])
             ip.add_constraint(row, v_ij, -1);
-          if (i>0)
-            for (auto [j, v_ij]: v_l[lv][i-1])
-              ip.add_constraint(row, v_ij, 1);
-          if (i+1<L)
-            for (auto [j, v_ij]: v_l[lv][i+1])
-              ip.add_constraint(row, v_ij, 1);
+          for (int d=1; d<=max_neighbor_distance; ++d) {
+            if (i>=static_cast<uint>(d))
+              for (auto [j, v_ij]: v_l[lv][i-d])
+                ip.add_constraint(row, v_ij, 1);
+            if (i+d<L)
+              for (auto [j, v_ij]: v_l[lv][i+d])
+                ip.add_constraint(row, v_ij, 1);
+          }
         }
       }
     }
@@ -451,13 +488,16 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
       for (const auto& [bp_type, count] : bp_constraints.constraints) {
         if (count >= 0) {
           auto it = bp_type_vars.find(bp_type);
-          if (it != bp_type_vars.end() && !it->second.empty()) {
-            int row = ip.make_constraint(IP::FX, count, count);
+          // Always create the equality.  An empty sum is zero, so a positive
+          // requested count correctly makes the model infeasible instead of
+          // silently dropping the user's constraint.
+          int row = ip.make_constraint(IP::FX, count, count);
+          if (it != bp_type_vars.end()) {
             for (int var : it->second) {
               ip.add_constraint(row, var, 1);
             }
-            spdlog::debug("Added constraint for base pair type {}: {} pairs", bp_type, count);
           }
+          spdlog::debug("Added constraint for base pair type {}: {} pairs", bp_type, count);
         }
       }
 
@@ -484,6 +524,21 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
 
       // Second pass: create bp_pair_var only for required pairs
       for (const auto& [i, j] : required_pairs) {
+        bool has_level_variable = false;
+        for (auto lv = 0; lv != pk_level_ && !has_level_variable; ++lv) {
+          for (const auto [j2, v_ij] : v_l[lv][i]) {
+            if (j2 == j) {
+              has_level_variable = true;
+              break;
+            }
+          }
+        }
+        // A textual pattern match is not necessarily a feasible RNA base-pair
+        // candidate (for example, it may violate the minimum hairpin length).
+        if (!has_level_variable) {
+          continue;
+        }
+
         // Create a new binary variable for this base pair position
         int bp_pair_var = ip.make_variable(0.0, 0, 1);
         bp_pair_vars[std::make_pair(i, j)] = bp_pair_var;

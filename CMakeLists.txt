@@ -103,3 +103,53 @@ if (WITH_MXFOLD2)
 endif()
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)
+
+include(CTest)
+if(BUILD_TESTING)
+  set(NMR_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_constraints.fa")
+  set(NMR_COMPACT_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_compact_stack.fa")
+  set(NMR_BULGE_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_single_bulge.fa")
+  set(NMR_RIGHT_BULGE_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_single_bulge_right.fa")
+
+  add_test(NAME nmr_base_pair_noncanonical
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs UU=1
+            --without-canonical-neighbor ${NMR_TEST_FASTA})
+
+  add_test(NAME nmr_base_pair_impossible
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs GC=99 ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_base_pair_impossible PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_base_pair_negative
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs UU=-1 ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_base_pair_negative PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_base_pair_duplicate
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs GC=1,CG=2 ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_base_pair_duplicate PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_stack_space_delimited
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "AU AU" ${NMR_TEST_FASTA})
+
+  add_test(NAME nmr_stack_comma_delimited
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "AU,AU" ${NMR_TEST_FASTA})
+
+  add_test(NAME nmr_stack_compact_notation
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "(GU)-G-U"
+            ${NMR_COMPACT_TEST_FASTA})
+
+  add_test(NAME nmr_stack_compact_invalid_base
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "(GU)-A-U" ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_stack_compact_invalid_base PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_stack_single_bulge
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "GC AU"
+            ${NMR_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_single_bulge PROPERTIES
+    PASS_REGULAR_EXPRESSION "\\(\\.\\(\\.\\.\\.\\.\\.\\.\\)\\)")
+
+  add_test(NAME nmr_stack_single_bulge_right
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "GC AU"
+            ${NMR_RIGHT_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_single_bulge_right PROPERTIES
+    PASS_REGULAR_EXPRESSION "\\(\\(\\.\\.\\.\\.\\.\\.\\)\\.\\)")
+endif()

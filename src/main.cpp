@@ -36,6 +36,8 @@
 #include <algorithm>
 #include <memory>
 #include <cctype>
+#include <functional>
+#include <set>
 
 #include "ipknot.h"
 #include "ip.h"
@@ -70,16 +72,88 @@ BPConstraints parse_base_pair_constraints(const std::string& str) {
     }
 
     std::string bp_type = pair.substr(0, eq_pos);
-    int count = std::stoi(pair.substr(eq_pos + 1));
+    const std::string count_text = pair.substr(eq_pos + 1);
+    if (bp_type.empty() || count_text.empty()) {
+      throw std::invalid_argument("Invalid base pair constraint format: " + pair);
+    }
+    size_t parsed_chars = 0;
+    int count = std::stoi(count_text, &parsed_chars);
+    if (parsed_chars != count_text.size()) {
+      throw std::invalid_argument("Invalid base pair count: " + count_text);
+    }
+    if (count < 0) {
+      throw std::invalid_argument("Base pair count must be non-negative: " + pair);
+    }
 
     // Normalize base pair type
     std::string normalized_bp_type = normalize_base_pair_type(bp_type);
 
-    // Use the new set_constraint method
+    if (constraints.get_constraint(normalized_bp_type) >= 0) {
+      throw std::invalid_argument("Duplicate base pair constraint: " + bp_type);
+    }
+
     constraints.set_constraint(normalized_bp_type, count);
   }
 
   return constraints;
+}
+
+// Parse either the regular stacking notation ("GU GC AU" / "GU,GC,AU")
+// or the compact NMR notation ("(GU)-G-U").  In the NMR notation the
+// parenthesized token is an explicitly observed base pair, while each bare
+// G or U denotes its canonical pair (G-C or U-A, respectively).
+StackConstraint parse_stack_constraint(const std::string& str) {
+  StackConstraint constraint;
+  const bool nmr_notation = str.find('(') != std::string::npos ||
+                            str.find(')') != std::string::npos ||
+                            str.find('-') != std::string::npos;
+
+  if (!nmr_notation) {
+    std::string normalized_str = str;
+    std::replace(normalized_str.begin(), normalized_str.end(), ',', ' ');
+    std::istringstream ss(normalized_str);
+    std::string bp_type;
+    while (ss >> bp_type) {
+      constraint.add_bp_type(normalize_base_pair_type(bp_type));
+    }
+    return constraint;
+  }
+
+  std::istringstream ss(str);
+  std::string token;
+  bool saw_parenthesized_pair = false;
+  while (std::getline(ss, token, '-')) {
+    token.erase(std::remove_if(token.begin(), token.end(), ::isspace), token.end());
+    if (token.empty()) {
+      throw std::invalid_argument("Empty token in NMR stack constraint: " + str);
+    }
+
+    if (token.front() == '(' || token.back() == ')') {
+      if (token.size() != 4 || token.front() != '(' || token.back() != ')') {
+        throw std::invalid_argument("Invalid parenthesized base pair in NMR stack constraint: " + token);
+      }
+      constraint.add_bp_type(normalize_base_pair_type(token.substr(1, 2)));
+      saw_parenthesized_pair = true;
+      continue;
+    }
+
+    if (token.size() != 1) {
+      throw std::invalid_argument("Invalid base in NMR stack constraint: " + token);
+    }
+    const char base = normalize_base(token[0]);
+    if (base == 'G') {
+      constraint.add_bp_type("GC");
+    } else if (base == 'U') {
+      constraint.add_bp_type("AU");
+    } else {
+      throw std::invalid_argument("NMR stack constraint supports bare G or U only: " + token);
+    }
+  }
+
+  if (!saw_parenthesized_pair) {
+    throw std::invalid_argument("NMR stack constraint requires a parenthesized base pair: " + str);
+  }
+  return constraint;
 }
 
 
@@ -219,8 +293,9 @@ read_constraints(const char* filename, VI& bpseq)
   }
 }
 
-// Find all instances of stack patterns in the sequence
-// A stack pattern can be matched in two directions (forward or reverse)
+// Find all instances of stack patterns in the sequence.  NMR does not reveal
+// a one-nucleotide bulge reliably, so consecutive constrained base pairs may
+// be directly stacked or separated by one bulged base on either strand.
 static
 void
 find_stack_instances(const std::string& seq, StackConstraints& stack_constraints)
@@ -229,78 +304,57 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
 
   for (size_t constraint_id = 0; constraint_id < stack_constraints.constraints.size(); ++constraint_id) {
     const auto& constraint = stack_constraints.constraints[constraint_id];
-    const size_t n = constraint.size();
     const size_t L = seq.size();
+    std::set<std::vector<std::pair<int, int>>> unique_instances;
 
-    // Try all possible positions in the sequence
-    // For each position i, try to match the stack pattern starting from (i, j) pairs
-    for (size_t i = 0; i + n - 1 < L; ++i) {
-      for (size_t j = i + n; j < L; ++j) {
-        // Try forward direction: (i, j), (i+1, j-1), (i+2, j-2), ...
-        bool forward_match = true;
-        StackInstance forward_instance(constraint_id);
-
-        for (size_t k = 0; k < n; ++k) {
-          size_t left = i + k;
-          size_t right = j - k;
-
-          if (left >= right) {
-            forward_match = false;
-            break;
-          }
-
-          std::string actual_bp = normalize_base_pair_type(seq[left], seq[right]);
-          if (actual_bp != constraint.bp_types[k]) {
-            forward_match = false;
-            break;
-          }
-
-          forward_instance.add_pair(left, right);
+    auto enumerate_direction = [&](const std::vector<std::string>& bp_types) {
+      std::function<void(size_t, size_t, size_t, std::vector<std::pair<int, int>>&)> extend;
+      extend = [&](size_t type_index, size_t left, size_t right,
+                   std::vector<std::pair<int, int>>& pairs) {
+        if (left >= right ||
+            normalize_base_pair_type(seq[left], seq[right]) != bp_types[type_index]) {
+          return;
         }
 
-        if (forward_match) {
-          stack_constraints.add_instance(forward_instance);
-          std::ostringstream pos_ss;
-          for (const auto& [l, r] : forward_instance.pairs) {
-            pos_ss << "(" << l+1 << "," << r+1 << ") ";
+        pairs.emplace_back(left, right);
+        if (type_index + 1 == bp_types.size()) {
+          if (unique_instances.insert(pairs).second) {
+            StackInstance instance(constraint_id);
+            for (const auto& [l, r] : pairs) instance.add_pair(l, r);
+            stack_constraints.add_instance(instance);
+
+            std::ostringstream pos_ss;
+            for (const auto& [l, r] : pairs) pos_ss << "(" << l+1 << "," << r+1 << ") ";
+            spdlog::debug("Found stack/bulge instance: {}", pos_ss.str());
           }
-          spdlog::debug("Found stack instance (forward): {}", pos_ss.str());
+        } else {
+          // Direct stack, one-base bulge on the left strand, or one-base
+          // bulge on the right strand.
+          const std::pair<size_t, size_t> steps[] = {{1, 1}, {2, 1}, {1, 2}};
+          for (const auto& [left_step, right_step] : steps) {
+            if (left + left_step < L && right >= right_step) {
+              const size_t next_left = left + left_step;
+              const size_t next_right = right - right_step;
+              if (next_left < next_right) {
+                extend(type_index + 1, next_left, next_right, pairs);
+              }
+            }
+          }
         }
+        pairs.pop_back();
+      };
 
-        // Try reverse direction: match the pattern in reverse order
-        bool reverse_match = true;
-        StackInstance reverse_instance(constraint_id);
-
-        for (size_t k = 0; k < n; ++k) {
-          size_t left = i + k;
-          size_t right = j - k;
-
-          if (left >= right) {
-            reverse_match = false;
-            break;
-          }
-
-          std::string actual_bp = normalize_base_pair_type(seq[left], seq[right]);
-          // Match in reverse order
-          if (actual_bp != constraint.bp_types[n - 1 - k]) {
-            reverse_match = false;
-            break;
-          }
-
-          reverse_instance.add_pair(left, right);
-        }
-
-        // Only add reverse instance if it's different from forward
-        if (reverse_match && !forward_match) {
-          stack_constraints.add_instance(reverse_instance);
-          std::ostringstream pos_ss;
-          for (const auto& [l, r] : reverse_instance.pairs) {
-            pos_ss << "(" << l+1 << "," << r+1 << ") ";
-          }
-          spdlog::debug("Found stack instance (reverse): {}", pos_ss.str());
+      for (size_t i = 0; i < L; ++i) {
+        for (size_t j = i + 1; j < L; ++j) {
+          std::vector<std::pair<int, int>> pairs;
+          extend(0, i, j, pairs);
         }
       }
-    }
+    };
+
+    enumerate_direction(constraint.bp_types);
+    std::vector<std::string> reverse_types(constraint.bp_types.rbegin(), constraint.bp_types.rend());
+    enumerate_direction(reverse_types);
   }
 
   spdlog::info("Found {} stack instances in sequence", stack_constraints.instances.size());
@@ -403,6 +457,25 @@ int
 main(int argc, char* argv[])
 {
   char* progname=argv[0];
+  // cxxopts uses commas as the delimiter for vector-valued options.  For a
+  // stack pattern, however, commas separate base-pair types within one
+  // pattern.  Normalize only stack-constraint arguments before parsing so
+  // both "GC AU GU" and "GC,AU,GU" retain the same grouping.
+  std::vector<std::string> normalized_args;
+  normalized_args.reserve(argc);
+  for (int i = 0; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (i > 0 && std::string(argv[i - 1]) == "--stack-constraint") {
+      std::replace(arg.begin(), arg.end(), ',', ' ');
+    } else if (arg.rfind("--stack-constraint=", 0) == 0) {
+      std::replace(arg.begin() + arg.find('=') + 1, arg.end(), ',', ' ');
+    }
+    normalized_args.push_back(std::move(arg));
+  }
+  std::vector<const char*> normalized_argv;
+  normalized_argv.reserve(normalized_args.size());
+  for (const auto& arg : normalized_args) normalized_argv.push_back(arg.c_str());
+
   // parse options
   uint pk_level=0;
   std::vector< std::vector<float> > th;
@@ -470,7 +543,7 @@ main(int argc, char* argv[])
       cxxopts::value<bool>()->default_value("false"))
     ("c,constraint", "Specify the structure constraint by a BPSEQ formatted file",
       cxxopts::value<std::string>(), "FILE")
-    ("stack-constraint", "Specify stack constraint as space-separated base pairs (e.g., 'GC AU GU'). Can be specified multiple times for multiple constraints.",
+    ("stack-constraint", "Specify stack constraint using base-pair types (e.g., 'GU GC AU') or compact NMR notation (e.g., '(GU)-G-U'). Can be specified multiple times.",
       cxxopts::value<std::vector<std::string>>(), "\"BP1 BP2 ...\"")
     ("V,verbose", "Verbose output")
     ("loglevel", "Set the logging level (trace, debug, info, warn, error, critical)",
@@ -494,7 +567,7 @@ main(int argc, char* argv[])
     .positional_help("FASTA_OR_ALN")
     .show_positional_help();
 
-  auto res = options.parse(argc, argv);
+  auto res = options.parse(argc, normalized_argv.data());
   if (res.count("version")) 
   {
     std::cout << format("IPknot version %s", PACKAGE_VERSION) << std::endl;
@@ -572,25 +645,7 @@ main(int argc, char* argv[])
     try {
       for (const auto& constraint_str : stack_constraint_args) {
         spdlog::debug("Parsing stack constraint string: '{}'", constraint_str);
-        StackConstraint constraint;
-        std::istringstream ss(constraint_str);
-        std::string bp_type;
-
-        // Parse space-separated base pair types
-        while (ss >> bp_type) {
-          spdlog::debug("Parsed bp_type: '{}'", bp_type);
-
-          if (!bp_type.empty()) {
-            try {
-              std::string normalized = normalize_base_pair_type(bp_type);
-              constraint.add_bp_type(normalized);
-              spdlog::debug("Added normalized bp_type: '{}'", normalized);
-            } catch (const std::exception& e) {
-              spdlog::error("Invalid base pair type '{}': {}", bp_type, e.what());
-              return 1;
-            }
-          }
-        }
+        StackConstraint constraint = parse_stack_constraint(constraint_str);
 
         spdlog::debug("Constraint size: {}", constraint.size());
         if (constraint.is_valid()) {
@@ -723,6 +778,7 @@ main(int argc, char* argv[])
 #endif
   pk_level = alpha.size();
 
+  int exit_code = 0;
   try
   {
     IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th, require_canonical_neighbor);
@@ -945,25 +1001,28 @@ main(int argc, char* argv[])
     }
     else
     {
-      throw (input+": Format error").c_str();
+      throw std::runtime_error(input + ": Format error");
     }
   }
   catch (const char* msg)
   {
-    std::cout << msg << std::endl;
+    std::cerr << msg << std::endl;
+    exit_code = 1;
   }
-  catch (std::logic_error err)
+  catch (const std::logic_error& err)
   {
-    std::cout << err.what() << std::endl;
+    std::cerr << err.what() << std::endl;
+    exit_code = 1;
   }
-  catch (std::runtime_error err)
+  catch (const std::runtime_error& err)
   {
-    std::cout << err.what() << std::endl;
+    std::cerr << err.what() << std::endl;
+    exit_code = 1;
   }
 
   if (os_bpseq!=&std::cout) delete os_bpseq;
   if (os_bpp) delete os_bpp;
   if (os_mfa!=&std::cout) delete os_mfa;
 
-  return 0;
+  return exit_code;
 }

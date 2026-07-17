@@ -116,8 +116,10 @@ public:
     glp_init_smcp(&smcp); smcp.msg_lev = GLP_MSG_ERR;
     glp_init_iocp(&iocp); iocp.msg_lev = GLP_MSG_ERR;
     glp_load_matrix(ip_, ia_.size()-1, &ia_[0], &ja_[0], &ar_[0]);
-    glp_simplex(ip_, &smcp);
-    glp_intopt(ip_, &iocp);
+    if (glp_simplex(ip_, &smcp) != 0 || glp_intopt(ip_, &iocp) != 0 ||
+        glp_mip_status(ip_) != GLP_OPT) {
+      throw std::runtime_error("GLPK failed to find an optimal solution");
+    }
     return glp_mip_obj_val(ip_);
   }
 
@@ -204,6 +206,9 @@ public:
     u_.clear();
     m_.clear();
     model_->optimize();
+    if (model_->get(GRB_IntAttr_Status) != GRB_OPTIMAL) {
+      throw std::runtime_error("Gurobi failed to find an optimal solution");
+    }
     return model_->get(GRB_DoubleAttr_ObjVal);
   }
 
@@ -344,6 +349,9 @@ public:
     CPXsetintparam(env_, CPXPARAM_Simplex_Display, 0);
 
     status = CPXmipopt(env_, lp_);
+    if (status != 0 || CPXgetstat(env_, lp_) != CPXMIP_OPTIMAL) {
+      throw std::runtime_error("CPLEX failed to find an optimal solution");
+    }
     double objval;
     status = CPXgetobjval(env_, lp_, &objval);
     res_cols_.resize(CPXgetnumcols(env_, lp_));
@@ -470,6 +478,9 @@ public:
     SCIPsolve(scip_);
     SCIP_STATUS soln_status = SCIPgetStatus(scip_); 
     sol_ = SCIPgetBestSol(scip_);
+    if (soln_status != SCIP_STATUS_OPTIMAL || sol_ == nullptr) {
+      throw std::runtime_error("SCIP failed to find an optimal solution");
+    }
     return SCIPgetSolOrigObj(scip_, sol_);
   }
 
@@ -597,8 +608,6 @@ public:
 
     // Get the model status
     const HighsModelStatus& model_status = highs_.getModelStatus();
-    // TODO: Investigate why stack constraints with non-overlap make the model infeasible
-    // For now, just warn instead of throwing
     if (model_status != HighsModelStatus::kOptimal) {
       std::string status_str;
       switch (model_status) {
@@ -619,8 +628,7 @@ public:
         case HighsModelStatus::kUnknown: status_str = "Unknown"; break;
         default: status_str = "Other"; break;
       }
-      // spdlog might not be available here, so just use std::cerr
-      std::cerr << "WARNING: HiGHS model status is not optimal: " << status_str << std::endl;
+      throw std::runtime_error("HiGHS failed to find an optimal solution: " + status_str);
     }
 
     const HighsInfo& info = highs_.getInfo();

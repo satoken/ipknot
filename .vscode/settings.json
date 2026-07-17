@@ -1,0 +1,16 @@
+{
+    "cmake.configureSettings": {
+        "ENABLE_HIGHS": true,
+        "PYBIND11_FINDPYTHON": "ON",
+        "WITH_MXFOLD2": "ON"
+    },
+    "cmake.configureEnvironment": {
+        "HiGHS_ROOT": "${userHome}/.local/app/highs-1.11.0",
+        "pybind11_DIR": "${workspaceFolder}/.venv/lib/python3.12/site-packages/pybind11",
+        "PKG_CONFIG_PATH": "${userHome}/.local/app/viennarna-2.7.0/lib/pkgconfig",
+        "VIRTUAL_ENV": "${workspaceFolder}/.venv",
+    },
+    "debug.javascript.defaultRuntimeExecutable": {
+        "pwa-node": "/home/7/up04167/.local/share/mise/shims/node"
+    },
+}
