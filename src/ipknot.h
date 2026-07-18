@@ -108,10 +108,35 @@ struct StackInstance {
   }
 };
 
+enum class CoaxialKind {
+  CLOSING_FIRST_CHILD,
+  ADJACENT_CHILDREN,
+  LAST_CHILD_CLOSING
+};
+
+enum class HelixFace {
+  INNER,
+  OUTER
+};
+
+// A flush coaxial-stacking candidate in a multibranch loop.  pair1 and
+// pair2 are the NMR-observed terminal pairs.  At least one support pair is
+// required to establish the third helix.
+struct CoaxialInstance {
+  std::pair<int, int> pair1;
+  std::pair<int, int> pair2;
+  HelixFace face1;
+  HelixFace face2;
+  CoaxialKind kind;
+  int constraint_id;
+  std::vector<std::pair<int, int>> support_pairs;
+};
+
 // Container for multiple stack constraints
 struct StackConstraints {
   std::vector<StackConstraint> constraints;
   std::vector<StackInstance> instances;  // All found instances in the sequence
+  std::vector<CoaxialInstance> coaxial_instances;
 
   bool has_constraints() const {
     return !constraints.empty();
@@ -129,6 +154,7 @@ struct StackConstraints {
 
   void clear_instances() {
     instances.clear();
+    coaxial_instances.clear();
   }
 };
 
@@ -140,7 +166,8 @@ public:
 public:
   IPknot(uint pk_level, const float* alpha,
          bool levelwise, bool stacking_constraints, int n_th,
-         bool require_canonical_neighbor = false);
+         bool require_canonical_neighbor = false,
+         bool allow_coaxial_stacking = false);
 
 public:
   void solve(const std::string& seq, const VF& bp, const VI& offset,
@@ -186,6 +213,7 @@ private:
   bool stacking_constraints_;
   int n_th_;
   bool require_canonical_neighbor_;  // require canonical base pair above or below for non-canonical pairs
+  bool allow_coaxial_stacking_;      // consider flush coaxial stacks in multibranch loops
 };
 
 template < class T >

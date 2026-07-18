@@ -110,6 +110,9 @@ if(BUILD_TESTING)
   set(NMR_COMPACT_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_compact_stack.fa")
   set(NMR_BULGE_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_single_bulge.fa")
   set(NMR_RIGHT_BULGE_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_single_bulge_right.fa")
+  set(NMR_COAXIAL_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_coaxial_multibranch.fa")
+  set(NMR_COAXIAL_CHILDREN_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_coaxial_children.fa")
+  set(NMR_COAXIAL_LAST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_coaxial_last_child.fa")
 
   add_test(NAME nmr_base_pair_noncanonical
     COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs UU=1
@@ -152,4 +155,27 @@ if(BUILD_TESTING)
             ${NMR_RIGHT_BULGE_TEST_FASTA})
   set_tests_properties(nmr_stack_single_bulge_right PROPERTIES
     PASS_REGULAR_EXPRESSION "\\(\\(\\.\\.\\.\\.\\.\\.\\)\\.\\)")
+
+  add_test(NAME nmr_stack_coaxial_disabled
+    COMMAND ipknot -r 0 -t 0,0 --stack-constraint "UU CC"
+            ${NMR_COAXIAL_TEST_FASTA})
+  set_tests_properties(nmr_stack_coaxial_disabled PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_stack_coaxial_multibranch
+    COMMAND ipknot -r 0 -t 0,0 --stack-constraint "UU CC"
+            --coaxial-stacking --loglevel info ${NMR_COAXIAL_TEST_FASTA})
+  set_tests_properties(nmr_stack_coaxial_multibranch PROPERTIES
+    PASS_REGULAR_EXPRESSION "satisfied by flush coaxial stacking")
+
+  add_test(NAME nmr_stack_coaxial_adjacent_children
+    COMMAND ipknot -r 0 -t 0,0 --stack-constraint "UU CC"
+            --coaxial-stacking --loglevel info ${NMR_COAXIAL_CHILDREN_FASTA})
+  set_tests_properties(nmr_stack_coaxial_adjacent_children PROPERTIES
+    PASS_REGULAR_EXPRESSION "satisfied by flush coaxial stacking")
+
+  add_test(NAME nmr_stack_coaxial_last_child
+    COMMAND ipknot -r 0 -t 0,0 --stack-constraint "UU CC"
+            --coaxial-stacking --loglevel info ${NMR_COAXIAL_LAST_FASTA})
+  set_tests_properties(nmr_stack_coaxial_last_child PROPERTIES
+    PASS_REGULAR_EXPRESSION "satisfied by flush coaxial stacking")
 endif()

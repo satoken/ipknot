@@ -82,17 +82,159 @@ bool BPConstraints::has_noncanonical_constraints() const {
   }
   return false;
 }
+
+using Pair = std::pair<int, int>;
+
+static bool pair_encloses(const Pair& outer, const Pair& inner) {
+  return outer.first < inner.first && inner.second < outer.second;
+}
+
+static bool pair_crosses(const Pair& a, const Pair& b) {
+  return (a.first < b.first && b.first < a.second && a.second < b.second) ||
+         (b.first < a.first && a.first < b.second && b.second < a.second);
+}
+
+static std::vector<Pair>
+collect_candidate_pairs(const VVSVI& v_l) {
+  std::vector<Pair> pairs;
+  for (const auto& level : v_l) {
+    for (int i = 0; i < static_cast<int>(level.size()); ++i) {
+      for (const auto& [j, var] : level[i]) {
+        if (i < static_cast<int>(j)) pairs.emplace_back(i, static_cast<int>(j));
+      }
+    }
+  }
+  std::sort(pairs.begin(), pairs.end());
+  pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+  return pairs;
+}
+
+// Enumerate flush coaxial-stacking candidates.  Only two-base-pair NMR
+// constraints are eligible: longer patterns continue to mean a conventional
+// stack/bulge.  Supporting third-helix pairs are taken from the ordinary BPP
+// candidates so the NMR observation does not invent an arbitrary branch.
+static void
+find_coaxial_instances(const std::string& seq, const VVSVI& v_l,
+                       StackConstraints& stack_constraints) {
+  const auto ordinary_pairs = collect_candidate_pairs(v_l);
+  std::map<std::string, std::vector<Pair>> observed_by_type;
+  std::set<std::string> observed_types;
+  for (const auto& constraint : stack_constraints.constraints) {
+    if (constraint.size() == 2) {
+      observed_types.insert(constraint.bp_types.begin(), constraint.bp_types.end());
+    }
+  }
+
+  for (int i = 0; i < static_cast<int>(seq.size()); ++i) {
+    for (int j = i + 4; j < static_cast<int>(seq.size()); ++j) {
+      const auto type = normalize_base_pair_type(seq[i], seq[j]);
+      if (observed_types.count(type)) observed_by_type[type].emplace_back(i, j);
+    }
+  }
+
+  using InstanceKey = std::tuple<int, int, int, int, int, int>;
+  std::set<InstanceKey> seen;
+  auto add_instance = [&](int constraint_id, CoaxialKind kind,
+                          const Pair& pair1, HelixFace face1,
+                          const Pair& pair2, HelixFace face2,
+                          std::vector<Pair> support_pairs) {
+    if (support_pairs.empty()) return;
+    const auto key = std::make_tuple(constraint_id, static_cast<int>(kind),
+                                     pair1.first, pair1.second,
+                                     pair2.first, pair2.second);
+    if (!seen.insert(key).second) return;
+
+    CoaxialInstance instance{pair1, pair2, face1, face2, kind,
+                             constraint_id, std::move(support_pairs)};
+    stack_constraints.coaxial_instances.push_back(std::move(instance));
+  };
+
+  for (int constraint_id = 0;
+       constraint_id < static_cast<int>(stack_constraints.constraints.size());
+       ++constraint_id) {
+    const auto& constraint = stack_constraints.constraints[constraint_id];
+    if (constraint.size() != 2) continue;
+
+    for (int direction = 0; direction < 2; ++direction) {
+      const auto& type1 = constraint.bp_types[direction == 0 ? 0 : 1];
+      const auto& type2 = constraint.bp_types[direction == 0 ? 1 : 0];
+      if (direction == 1 && type1 == type2) continue;
+      const auto& pairs1 = observed_by_type[type1];
+      const auto& pairs2 = observed_by_type[type2];
+      std::map<int, std::vector<Pair>> pairs2_by_left;
+      std::map<int, std::vector<Pair>> pairs2_by_right;
+      for (const auto& p : pairs2) {
+        pairs2_by_left[p.first].push_back(p);
+        pairs2_by_right[p.second].push_back(p);
+      }
+
+      // Closing helix coaxially stacked with its first direct child.
+      for (const auto& closing : pairs1) {
+        const auto children = pairs2_by_left.find(closing.first + 1);
+        if (children == pairs2_by_left.end()) continue;
+        for (const auto& child : children->second) {
+          if (!pair_encloses(closing, child)) continue;
+          std::vector<Pair> supports;
+          for (const auto& p : ordinary_pairs) {
+            if (child.second < p.first && p.second < closing.second)
+              supports.push_back(p);
+          }
+          add_instance(constraint_id, CoaxialKind::CLOSING_FIRST_CHILD,
+                       closing, HelixFace::INNER, child, HelixFace::OUTER,
+                       std::move(supports));
+        }
+      }
+
+      // Two adjacent direct child helices with a common closing pair.
+      for (const auto& child1 : pairs1) {
+        const auto children = pairs2_by_left.find(child1.second + 1);
+        if (children == pairs2_by_left.end()) continue;
+        for (const auto& child2 : children->second) {
+          std::vector<Pair> supports;
+          for (const auto& p : ordinary_pairs) {
+            if (pair_encloses(p, child1) && pair_encloses(p, child2))
+              supports.push_back(p);
+          }
+          add_instance(constraint_id, CoaxialKind::ADJACENT_CHILDREN,
+                       child1, HelixFace::OUTER, child2, HelixFace::OUTER,
+                       std::move(supports));
+        }
+      }
+
+      // Last direct child coaxially stacked with the closing helix.
+      for (const auto& child : pairs1) {
+        const auto closings = pairs2_by_right.find(child.second + 1);
+        if (closings == pairs2_by_right.end()) continue;
+        for (const auto& closing : closings->second) {
+          if (!pair_encloses(closing, child)) continue;
+          std::vector<Pair> supports;
+          for (const auto& p : ordinary_pairs) {
+            if (closing.first < p.first && p.second < child.first)
+              supports.push_back(p);
+          }
+          add_instance(constraint_id, CoaxialKind::LAST_CHILD_CLOSING,
+                       child, HelixFace::OUTER, closing, HelixFace::INNER,
+                       std::move(supports));
+        }
+      }
+    }
+  }
+  spdlog::info("Found {} flush coaxial-stacking instances",
+               stack_constraints.coaxial_instances.size());
+}
 //#include "spdlog/stopwatch.h"
 
 IPknot::IPknot(uint pk_level, const float* alpha,
          bool levelwise, bool stacking_constraints, int n_th,
-         bool require_canonical_neighbor)
+         bool require_canonical_neighbor,
+         bool allow_coaxial_stacking)
     : pk_level_(pk_level),
       alpha_(alpha, alpha+pk_level_),
       levelwise_(levelwise),
       stacking_constraints_(stacking_constraints),
       n_th_(n_th),
-      require_canonical_neighbor_(require_canonical_neighbor)
+      require_canonical_neighbor_(require_canonical_neighbor),
+      allow_coaxial_stacking_(allow_coaxial_stacking)
 {
 }
 
@@ -145,6 +287,8 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
              const StackConstraints& stack_constraints) const
 {
     uint L = seq.size();
+    StackConstraints effective_stack_constraints = stack_constraints;
+    effective_stack_constraints.coaxial_instances.clear();
     IP ip(IP::MAX, n_th_);
     VVSVI v_l(pk_level_, VSVI(L));
     VVSVI v_r(pk_level_, VSVI(L));
@@ -204,6 +348,10 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
           n++;
         }
       }
+    }
+
+    if (allow_coaxial_stacking_ && effective_stack_constraints.has_constraints()) {
+      find_coaxial_instances(seq, v_l, effective_stack_constraints);
     }
 
     // Helper function to check if a variable exists for position (i, j) at level 0
@@ -270,10 +418,14 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
     // candidate even when its posterior probability is below the threshold.
     // Otherwise an explicit NMR constraint could be silently skipped when no
     // ordinary candidate variable was created.
-    if (stack_constraints.has_constraints()) {
+    if (effective_stack_constraints.has_constraints()) {
       std::set<std::pair<int, int>> required_instance_pairs;
-      for (const auto& instance : stack_constraints.instances) {
+      for (const auto& instance : effective_stack_constraints.instances) {
         required_instance_pairs.insert(instance.pairs.begin(), instance.pairs.end());
+      }
+      for (const auto& instance : effective_stack_constraints.coaxial_instances) {
+        required_instance_pairs.insert(instance.pair1);
+        required_instance_pairs.insert(instance.pair2);
       }
       for (const auto& [i, j] : required_instance_pairs) {
         if (i < 0 || j < 0 || static_cast<uint>(j) >= L || j < i + 4 ||
@@ -287,13 +439,14 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
           c_l[i]++; c_r[j]++;
           n++;
         }
-        spdlog::debug("Added base pair ({},{}) required by stack/bulge constraint", i+1, j+1);
+        spdlog::debug("Added base pair ({},{}) required by stack/bulge/coaxial constraint", i+1, j+1);
       }
     }
     ip.update();
 
     if (n>0)
-      solve(seq, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint, bp_constraints, stack_constraints);
+      solve(seq, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint,
+            bp_constraints, effective_stack_constraints);
     else
     {
       bpseq.resize(L);
@@ -521,6 +674,10 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
           required_pairs.insert(std::make_pair(i, j));
         }
       }
+      for (const auto& instance : stack_constraints.coaxial_instances) {
+        required_pairs.insert(instance.pair1);
+        required_pairs.insert(instance.pair2);
+      }
 
       // Second pass: create bp_pair_var only for required pairs
       for (const auto& [i, j] : required_pairs) {
@@ -565,6 +722,22 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
       std::vector<int> all_instance_vars;
       std::vector<std::vector<int>> all_instance_bp_vars;
       std::vector<int> instance_to_constraint_id;
+      std::map<std::tuple<int,int,int>, std::vector<int>> coaxial_face_vars;
+      const auto all_candidate_pairs = collect_candidate_pairs(v_l);
+
+      auto add_pair_sum = [&](int row, const Pair& pair, double coefficient) {
+        int count = 0;
+        for (auto lv = 0; lv != pk_level_; ++lv) {
+          for (const auto& [j2, v_ij] : v_l[lv][pair.first]) {
+            if (static_cast<int>(j2) == pair.second) {
+              ip.add_constraint(row, v_ij, coefficient);
+              ++count;
+              break;
+            }
+          }
+        }
+        return count;
+      };
 
       // For each stack constraint, at least one instance must be selected
       for (size_t constraint_id = 0; constraint_id < stack_constraints.constraints.size(); ++constraint_id)
@@ -634,6 +807,78 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
           }
         }  // end inst_idx loop
 
+        // Flush coaxial-stacking alternatives for this NMR constraint.
+        for (const auto& instance : stack_constraints.coaxial_instances)
+        {
+          if (instance.constraint_id != static_cast<int>(constraint_id)) continue;
+          const auto it1 = bp_pair_vars.find(instance.pair1);
+          const auto it2 = bp_pair_vars.find(instance.pair2);
+          if (it1 == bp_pair_vars.end() || it2 == bp_pair_vars.end()) continue;
+
+          // Make a separate witness for every possible third helix/closing
+          // pair.  This lets the topology blockers refer to the exact
+          // multibranch-loop context selected by the solver.
+          for (const auto& support : instance.support_pairs) {
+            int instance_var = ip.make_variable(0.0, 0, 1);
+            instance_vars.push_back(instance_var);
+            all_instance_vars.push_back(instance_var);
+            all_instance_bp_vars.push_back({it1->second, it2->second});
+            instance_to_constraint_id.push_back(constraint_id);
+
+            for (int bp_var : {it1->second, it2->second}) {
+              int row = ip.make_constraint(IP::UP, 0, 0);
+              ip.add_constraint(row, instance_var, 1);
+              ip.add_constraint(row, bp_var, -1);
+            }
+            int support_row = ip.make_constraint(IP::UP, 0, 0);
+            ip.add_constraint(support_row, instance_var, 1);
+            if (add_pair_sum(support_row, support, -1) == 0) continue;
+
+            // If this witness is selected, its three helix-terminal pairs
+            // form one planar context.  Reject any intervening pair that
+            // would make an observed/supporting child indirect to the
+            // selected multibranch-loop closing pair.
+            for (const auto& blocker : all_candidate_pairs) {
+              if (blocker == instance.pair1 || blocker == instance.pair2 ||
+                  blocker == support) continue;
+              bool blocks = pair_crosses(blocker, instance.pair1) ||
+                            pair_crosses(blocker, instance.pair2) ||
+                            pair_crosses(blocker, support);
+              if (instance.kind == CoaxialKind::CLOSING_FIRST_CHILD) {
+                blocks = blocks ||
+                         (pair_encloses(instance.pair1, blocker) &&
+                          (pair_encloses(blocker, instance.pair2) ||
+                           pair_encloses(blocker, support)));
+              } else if (instance.kind == CoaxialKind::ADJACENT_CHILDREN) {
+                blocks = blocks ||
+                         (pair_encloses(support, blocker) &&
+                          (pair_encloses(blocker, instance.pair1) ||
+                           pair_encloses(blocker, instance.pair2)));
+              } else {
+                blocks = blocks ||
+                         (pair_encloses(instance.pair2, blocker) &&
+                          (pair_encloses(blocker, instance.pair1) ||
+                           pair_encloses(blocker, support)));
+              }
+              if (blocks) {
+                int row = ip.make_constraint(IP::UP, 0, 1);
+                ip.add_constraint(row, instance_var, 1);
+                add_pair_sum(row, blocker, 1);
+              }
+            }
+
+            coaxial_face_vars[{instance.pair1.first, instance.pair1.second,
+                               static_cast<int>(instance.face1)}].push_back(instance_var);
+            coaxial_face_vars[{instance.pair2.first, instance.pair2.second,
+                               static_cast<int>(instance.face2)}].push_back(instance_var);
+            spdlog::debug("Constraint {} coaxial witness: ({},{}) ({},{}) support ({},{})",
+                          constraint_id + 1,
+                          instance.pair1.first + 1, instance.pair1.second + 1,
+                          instance.pair2.first + 1, instance.pair2.second + 1,
+                          support.first + 1, support.second + 1);
+          }
+        }
+
         // At least one instance of this constraint must be selected
         if (!instance_vars.empty())
         {
@@ -652,6 +897,13 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
                       constraint_id + 1);
           throw std::runtime_error("Stack constraint cannot be satisfied: no valid instances found");
         }
+      }
+
+      // One loop-facing end of a helix can have at most one coaxial partner.
+      for (const auto& [face, vars] : coaxial_face_vars) {
+        if (vars.size() < 2) continue;
+        int row = ip.make_constraint(IP::UP, 0, 1);
+        for (int var : vars) ip.add_constraint(row, var, 1);
       }
 
       // Add non-overlap constraints between instances from different stack constraints

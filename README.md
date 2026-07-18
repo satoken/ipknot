@@ -106,6 +106,18 @@ IPknot can fold a given sequence or alignment with some constraints. The constra
 
 This example shows folding with constraints that 16th base and 100th base are paired, 41st and 42nd bases are unpaired.
 
+NMR-derived base-pair and stacking constraints can be supplied with
+`--base-pairs` and `--stack-constraint`, respectively. By default, a stacking
+constraint matches a conventional stack or a stack containing a one-nucleotide
+bulge. Add `--coaxial-stacking` to also allow a two-base-pair stacking
+constraint to match flush coaxial stacking between helix termini in a
+multibranch loop:
+
+	% ipknot --stack-constraint "GC AU" --coaxial-stacking sequence.fa
+
+Without `--coaxial-stacking`, multibranch-loop coaxial candidates are not
+generated and the previous stacking-constraint behavior is preserved.
+
 ### Run with Docker
 
 	docker build . -t ipknot

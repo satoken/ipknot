@@ -189,8 +189,63 @@ bool satisfies_constraints(const BPConstraints& counts, const BPConstraints& bp_
 }
 
 // Function to check if predicted structure satisfies stack constraints
+bool satisfies_flush_coaxial_constraint(const std::string& seq, const VI& bpseq,
+                                         const StackConstraint& constraint) {
+  if (constraint.size() != 2) return false;
+  std::vector<std::pair<int,int>> selected_pairs;
+  for (int i = 0; i < static_cast<int>(bpseq.size()); ++i)
+    if (i < bpseq[i]) selected_pairs.emplace_back(i, bpseq[i]);
+
+  auto encloses = [](const auto& outer, const auto& inner) {
+    return outer.first < inner.first && inner.second < outer.second;
+  };
+  auto crosses = [](const auto& a, const auto& b) {
+    return (a.first < b.first && b.first < a.second && a.second < b.second) ||
+           (b.first < a.first && a.first < b.second && b.second < a.second);
+  };
+  auto types_match = [&](const auto& a, const auto& b) {
+    const auto ta = normalize_base_pair_type(seq[a.first], seq[a.second]);
+    const auto tb = normalize_base_pair_type(seq[b.first], seq[b.second]);
+    return (ta == constraint.bp_types[0] && tb == constraint.bp_types[1]) ||
+           (ta == constraint.bp_types[1] && tb == constraint.bp_types[0]);
+  };
+
+  for (const auto& closing : selected_pairs) {
+    bool planar = true;
+    for (const auto& p : selected_pairs)
+      if (crosses(closing, p)) { planar = false; break; }
+    if (!planar) continue;
+
+    std::vector<std::pair<int,int>> children;
+    for (const auto& p : selected_pairs) {
+      if (!encloses(closing, p)) continue;
+      bool direct = true;
+      for (const auto& q : selected_pairs) {
+        if (q != p && encloses(closing, q) && encloses(q, p)) {
+          direct = false;
+          break;
+        }
+      }
+      if (direct) children.push_back(p);
+    }
+    std::sort(children.begin(), children.end());
+    if (children.size() < 2) continue;
+
+    if (children.front().first == closing.first + 1 &&
+        types_match(closing, children.front())) return true;
+    for (size_t i = 1; i < children.size(); ++i) {
+      if (children[i].first == children[i-1].second + 1 &&
+          types_match(children[i-1], children[i])) return true;
+    }
+    if (closing.second == children.back().second + 1 &&
+        types_match(children.back(), closing)) return true;
+  }
+  return false;
+}
+
 bool satisfies_stack_constraints(const std::string& seq, const VI& bpseq,
-                                  const StackConstraints& stack_constraints) {
+                                  const StackConstraints& stack_constraints,
+                                  bool allow_coaxial_stacking) {
   if (!stack_constraints.has_constraints()) return true;
 
   // For each constraint, check if at least one instance is fully satisfied
@@ -218,6 +273,16 @@ bool satisfies_stack_constraints(const std::string& seq, const VI& bpseq,
         }
         spdlog::info("Stack constraint {} satisfied by instance: {}", constraint_id + 1, pos_ss.str());
         break;  // At least one instance is satisfied, move to next constraint
+      }
+    }
+
+    if (!constraint_satisfied) {
+      if (allow_coaxial_stacking &&
+          satisfies_flush_coaxial_constraint(seq, bpseq,
+                                              stack_constraints.constraints[constraint_id])) {
+        spdlog::info("Stack constraint {} satisfied by flush coaxial stacking",
+                     constraint_id + 1);
+        constraint_satisfied = true;
       }
     }
 
@@ -498,6 +563,7 @@ main(int argc, char* argv[])
   std::string input;
   bool verbose = false;
   bool require_canonical_neighbor = false;
+  bool allow_coaxial_stacking = false;
   BPConstraints bp_constraints;
   StackConstraints stack_constraints;
 
@@ -554,6 +620,8 @@ main(int argc, char* argv[])
       cxxopts::value<std::string>(), "CONSTRAINTS")
     ("without-canonical-neighbor", "Add non-canonical base pairs even without a canonical neighbor above or below",
       cxxopts::value<bool>()->default_value("false"))
+    ("coaxial-stacking", "Allow NMR stacking constraints to match flush coaxial stacking in multibranch loops",
+      cxxopts::value<bool>()->default_value("false"))
 #ifdef WITH_MXFOLD2
     ("mxfold2-config", "config file for MXfold2 model",
       cxxopts::value<std::string>()->default_value(""), "FILE")
@@ -594,6 +662,7 @@ main(int argc, char* argv[])
   beam_size = res["beam-size"].as<uint>();
   verbose = res["verbose"].as<bool>();
   require_canonical_neighbor = !res["without-canonical-neighbor"].as<bool>();
+  allow_coaxial_stacking = res["coaxial-stacking"].as<bool>();
   spdlog::set_level(spdlog::level::warn); // Default log level
   if (verbose) 
     spdlog::set_level(spdlog::level::info);
@@ -781,7 +850,8 @@ main(int argc, char* argv[])
   int exit_code = 0;
   try
   {
-    IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th, require_canonical_neighbor);
+    IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th,
+                  require_canonical_neighbor, allow_coaxial_stacking);
     std::vector<int> bpseq;
     std::vector<int> plevel;
 
@@ -889,7 +959,8 @@ main(int argc, char* argv[])
 
         // Check stack constraints
         if (stack_constraints.has_constraints() && spdlog::get_level() <= spdlog::level::info) {
-          if (satisfies_stack_constraints(fa->seq(), bpseq, stack_constraints)) {
+          if (satisfies_stack_constraints(fa->seq(), bpseq, stack_constraints,
+                                          allow_coaxial_stacking)) {
             spdlog::info("All stack constraints are satisfied.");
           } else {
             spdlog::warn("Some stack constraints are NOT satisfied.");
