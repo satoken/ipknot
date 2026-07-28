@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <memory>
 #include <cctype>
+#include <cmath>
 #include <functional>
 #include <set>
 
@@ -361,9 +362,16 @@ read_constraints(const char* filename, VI& bpseq)
 // Find all instances of stack patterns in the sequence.  NMR does not reveal
 // a one-nucleotide bulge reliably, so consecutive constrained base pairs may
 // be directly stacked or separated by one bulged base on either strand.
+enum class NMRBulgeMode {
+  NONE,
+  FALLBACK,
+  ALL
+};
+
 static
 void
-find_stack_instances(const std::string& seq, StackConstraints& stack_constraints)
+find_stack_instances(const std::string& seq, StackConstraints& stack_constraints,
+                     NMRBulgeMode bulge_mode)
 {
   stack_constraints.clear_instances();
 
@@ -371,12 +379,17 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
     const auto& constraint = stack_constraints.constraints[constraint_id];
     const size_t L = seq.size();
     std::set<std::vector<std::pair<int, int>>> unique_instances;
+    const size_t first_instance = stack_constraints.instances.size();
 
     auto enumerate_direction = [&](const std::vector<std::string>& bp_types) {
-      std::function<void(size_t, size_t, size_t, std::vector<std::pair<int, int>>&)> extend;
+      std::function<void(size_t, size_t, size_t, bool,
+                         std::vector<std::pair<int, int>>&)> extend;
       extend = [&](size_t type_index, size_t left, size_t right,
+                   bool has_bulge,
                    std::vector<std::pair<int, int>>& pairs) {
-        if (left >= right ||
+        // IPknot does not admit sharp hairpins with fewer than three enclosed
+        // nucleotides, so such textual matches can never become witnesses.
+        if (left >= right || right < left + 4 ||
             normalize_base_pair_type(seq[left], seq[right]) != bp_types[type_index]) {
           return;
         }
@@ -384,7 +397,7 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
         pairs.emplace_back(left, right);
         if (type_index + 1 == bp_types.size()) {
           if (unique_instances.insert(pairs).second) {
-            StackInstance instance(constraint_id);
+            StackInstance instance(constraint_id, has_bulge);
             for (const auto& [l, r] : pairs) instance.add_pair(l, r);
             stack_constraints.add_instance(instance);
 
@@ -395,13 +408,20 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
         } else {
           // Direct stack, one-base bulge on the left strand, or one-base
           // bulge on the right strand.
-          const std::pair<size_t, size_t> steps[] = {{1, 1}, {2, 1}, {1, 2}};
-          for (const auto& [left_step, right_step] : steps) {
+          const std::pair<size_t, size_t> steps_with_bulge[] = {
+              {1, 1}, {2, 1}, {1, 2}};
+          const std::pair<size_t, size_t> direct_step[] = {{1, 1}};
+          const bool enumerate_bulges = bulge_mode != NMRBulgeMode::NONE;
+          const auto* steps = enumerate_bulges ? steps_with_bulge : direct_step;
+          const size_t step_count = enumerate_bulges ? 3 : 1;
+          for (size_t step_index = 0; step_index < step_count; ++step_index) {
+            const auto [left_step, right_step] = steps[step_index];
             if (left + left_step < L && right >= right_step) {
               const size_t next_left = left + left_step;
               const size_t next_right = right - right_step;
               if (next_left < next_right) {
-                extend(type_index + 1, next_left, next_right, pairs);
+                extend(type_index + 1, next_left, next_right,
+                       has_bulge || left_step != 1 || right_step != 1, pairs);
               }
             }
           }
@@ -412,7 +432,7 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
       for (size_t i = 0; i < L; ++i) {
         for (size_t j = i + 1; j < L; ++j) {
           std::vector<std::pair<int, int>> pairs;
-          extend(0, i, j, pairs);
+          extend(0, i, j, false, pairs);
         }
       }
     };
@@ -420,6 +440,34 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
     enumerate_direction(constraint.bp_types);
     std::vector<std::string> reverse_types(constraint.bp_types.rbegin(), constraint.bp_types.rend());
     enumerate_direction(reverse_types);
+
+    if (bulge_mode == NMRBulgeMode::FALLBACK) {
+      const auto begin = stack_constraints.instances.begin() + first_instance;
+      const bool has_direct_instance = std::any_of(
+          begin, stack_constraints.instances.end(),
+          [](const StackInstance& instance) { return !instance.has_bulge; });
+      if (has_direct_instance) {
+        const size_t before = stack_constraints.instances.size();
+        stack_constraints.instances.erase(
+            std::remove_if(begin, stack_constraints.instances.end(),
+                           [](const StackInstance& instance) {
+                             return instance.has_bulge;
+                           }),
+            stack_constraints.instances.end());
+        const size_t direct_count = stack_constraints.instances.size() - first_instance;
+        spdlog::info(
+            "NMR bulge fallback: constraint {} uses {} direct instance(s); "
+            "discarded {} bulged instance(s)",
+            constraint_id + 1, direct_count,
+            before - stack_constraints.instances.size());
+      } else {
+        spdlog::info(
+            "NMR bulge fallback: constraint {} has no direct instance; "
+            "retained {} bulged instance(s)",
+            constraint_id + 1,
+            stack_constraints.instances.size() - first_instance);
+      }
+    }
   }
 
   spdlog::info("Found {} stack instances in sequence", stack_constraints.instances.size());
@@ -564,6 +612,8 @@ main(int argc, char* argv[])
   bool verbose = false;
   bool require_canonical_neighbor = false;
   bool allow_coaxial_stacking = false;
+  NMRBulgeMode nmr_bulge_mode = NMRBulgeMode::ALL;
+  NMRConstraintOptions nmr_options;
   BPConstraints bp_constraints;
   StackConstraints stack_constraints;
 
@@ -622,6 +672,16 @@ main(int argc, char* argv[])
       cxxopts::value<bool>()->default_value("false"))
     ("coaxial-stacking", "Allow NMR stacking constraints to match flush coaxial stacking in multibranch loops",
       cxxopts::value<bool>()->default_value("false"))
+    ("without-nmr-bulge", "Require directly adjacent base pairs for NMR stack constraints (disable one-nucleotide bulges)",
+      cxxopts::value<bool>()->default_value("false"))
+    ("nmr-bulge-mode", "NMR stack matching mode: none, fallback (use bulges only when no direct instance exists), or all",
+      cxxopts::value<std::string>()->default_value("all"), "MODE")
+    ("nmr-soft", "Treat NMR base-pair counts and stacking observations as soft constraints",
+      cxxopts::value<bool>()->default_value("false"))
+    ("nmr-count-penalty", "Penalty per missing or excess base pair in soft NMR mode",
+      cxxopts::value<double>()->default_value("1.0"), "WEIGHT")
+    ("nmr-stack-penalty", "Penalty per unsatisfied stacking observation in soft NMR mode",
+      cxxopts::value<double>()->default_value("1.0"), "WEIGHT")
 #ifdef WITH_MXFOLD2
     ("mxfold2-config", "config file for MXfold2 model",
       cxxopts::value<std::string>()->default_value(""), "FILE")
@@ -663,6 +723,32 @@ main(int argc, char* argv[])
   verbose = res["verbose"].as<bool>();
   require_canonical_neighbor = !res["without-canonical-neighbor"].as<bool>();
   allow_coaxial_stacking = res["coaxial-stacking"].as<bool>();
+  const auto nmr_bulge_mode_arg = res["nmr-bulge-mode"].as<std::string>();
+  if (nmr_bulge_mode_arg == "none") {
+    nmr_bulge_mode = NMRBulgeMode::NONE;
+  } else if (nmr_bulge_mode_arg == "fallback") {
+    nmr_bulge_mode = NMRBulgeMode::FALLBACK;
+  } else if (nmr_bulge_mode_arg == "all") {
+    nmr_bulge_mode = NMRBulgeMode::ALL;
+  } else {
+    spdlog::error("NMR bulge mode must be 'none', 'fallback', or 'all' (got '{}')",
+                  nmr_bulge_mode_arg);
+    return 1;
+  }
+  // Retain the original flag as a backward-compatible alias.
+  if (res["without-nmr-bulge"].as<bool>()) {
+    nmr_bulge_mode = NMRBulgeMode::NONE;
+  }
+  nmr_options.soft = res["nmr-soft"].as<bool>();
+  nmr_options.count_penalty = res["nmr-count-penalty"].as<double>();
+  nmr_options.stack_penalty = res["nmr-stack-penalty"].as<double>();
+  if (!std::isfinite(nmr_options.count_penalty) ||
+      nmr_options.count_penalty <= 0.0 ||
+      !std::isfinite(nmr_options.stack_penalty) ||
+      nmr_options.stack_penalty <= 0.0) {
+    spdlog::error("NMR soft-constraint penalties must be finite and positive");
+    return 1;
+  }
   spdlog::set_level(spdlog::level::warn); // Default log level
   if (verbose) 
     spdlog::set_level(spdlog::level::info);
@@ -681,6 +767,13 @@ main(int argc, char* argv[])
     } else if (loglevel == "critical") {
       spdlog::set_level(spdlog::level::critical);
     }
+  }
+  if (nmr_options.soft) {
+    spdlog::info(
+        "NMR soft-constraint mode: count penalty={}, stack penalty={}",
+        nmr_options.count_penalty, nmr_options.stack_penalty);
+  } else {
+    spdlog::info("NMR hard-constraint mode");
   }
   input = res["input"].as<std::string>();
 #ifdef WITH_MXFOLD2
@@ -851,7 +944,8 @@ main(int argc, char* argv[])
   try
   {
     IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th,
-                  require_canonical_neighbor, allow_coaxial_stacking);
+                  require_canonical_neighbor, allow_coaxial_stacking,
+                  nmr_options);
     std::vector<int> bpseq;
     std::vector<int> plevel;
 
@@ -910,7 +1004,7 @@ main(int argc, char* argv[])
 
         // Find stack constraint instances in the sequence
         if (stack_constraints.has_constraints()) {
-          find_stack_instances(fa->seq(), stack_constraints);
+          find_stack_instances(fa->seq(), stack_constraints, nmr_bulge_mode);
         }
 
         std::vector<std::vector<std::pair<uint, float>>> sbp;
@@ -953,7 +1047,8 @@ main(int argc, char* argv[])
           if (satisfies_constraints(actual_counts, bp_constraints)) {
             spdlog::info("Base pair constraints are satisfied.");
           } else {
-            spdlog::warn("Base pair constraints are NOT satisfied.");
+            spdlog::warn("Base pair constraints are NOT satisfied{}.",
+                         nmr_options.soft ? " (allowed in soft NMR mode)" : "");
           }
         }
 
@@ -963,7 +1058,8 @@ main(int argc, char* argv[])
                                           allow_coaxial_stacking)) {
             spdlog::info("All stack constraints are satisfied.");
           } else {
-            spdlog::warn("Some stack constraints are NOT satisfied.");
+            spdlog::warn("Some stack constraints are NOT satisfied{}.",
+                         nmr_options.soft ? " (allowed in soft NMR mode)" : "");
           }
         }
         

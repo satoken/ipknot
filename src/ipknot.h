@@ -95,8 +95,10 @@ struct StackConstraint {
 struct StackInstance {
   std::vector<std::pair<int, int>> pairs;  // Actual (i, j) positions (0-indexed)
   int constraint_id;  // Which constraint this instance belongs to
+  bool has_bulge;  // True when at least one adjacent pair skips one nucleotide
 
-  StackInstance(int id) : constraint_id(id) {}
+  StackInstance(int id, bool bulged = false)
+      : constraint_id(id), has_bulge(bulged) {}
 
   void add_pair(int i, int j) {
     if (i > j) std::swap(i, j);
@@ -158,6 +160,14 @@ struct StackConstraints {
   }
 };
 
+// NMR observations can either be enforced exactly or treated as soft
+// constraints.  Structural validity constraints remain hard in both modes.
+struct NMRConstraintOptions {
+  bool soft = false;
+  double count_penalty = 1.0;  // per missing/excess base pair
+  double stack_penalty = 1.0;  // per unsatisfied stacking observation
+};
+
 class IPknot
 {
 public:
@@ -167,7 +177,8 @@ public:
   IPknot(uint pk_level, const float* alpha,
          bool levelwise, bool stacking_constraints, int n_th,
          bool require_canonical_neighbor = false,
-         bool allow_coaxial_stacking = false);
+         bool allow_coaxial_stacking = false,
+         NMRConstraintOptions nmr_options = NMRConstraintOptions());
 
 public:
   void solve(const std::string& seq, const VF& bp, const VI& offset,
@@ -193,10 +204,16 @@ public:
   static uint length(const std::list<std::string>& aln);
 
 private:
-  void solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
-             const VF& th, VI& bpseq, VI& plevel, bool constraint,
-             const BPConstraints& bp_constraints,
-             const StackConstraints& stack_constraints) const;
+  double solve_with_penalty(const std::string& seq, const VSVF& bp,
+                            const VF& th, VI& bpseq, VI& plevel,
+                            bool constraint,
+                            const BPConstraints& bp_constraints,
+                            const StackConstraints& stack_constraints) const;
+
+  double solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
+               const VF& th, VI& bpseq, VI& plevel, bool constraint,
+               const BPConstraints& bp_constraints,
+               const StackConstraints& stack_constraints) const;
 
   static auto compute_expected_accuracy(float etp, float etn, float efp, float efn) -> std::tuple<float,float,float,float>;
   static auto compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>;
@@ -214,6 +231,7 @@ private:
   int n_th_;
   bool require_canonical_neighbor_;  // require canonical base pair above or below for non-canonical pairs
   bool allow_coaxial_stacking_;      // consider flush coaxial stacks in multibranch loops
+  NMRConstraintOptions nmr_options_;
 };
 
 template < class T >

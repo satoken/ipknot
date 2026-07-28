@@ -30,6 +30,7 @@
 #include <iostream>
 #include <iterator>
 #include <list>
+#include <limits>
 #include <set>
 #include <sstream>
 
@@ -227,14 +228,16 @@ find_coaxial_instances(const std::string& seq, const VVSVI& v_l,
 IPknot::IPknot(uint pk_level, const float* alpha,
          bool levelwise, bool stacking_constraints, int n_th,
          bool require_canonical_neighbor,
-         bool allow_coaxial_stacking)
+         bool allow_coaxial_stacking,
+         NMRConstraintOptions nmr_options)
     : pk_level_(pk_level),
       alpha_(alpha, alpha+pk_level_),
       levelwise_(levelwise),
       stacking_constraints_(stacking_constraints),
       n_th_(n_th),
       require_canonical_neighbor_(require_canonical_neighbor),
-      allow_coaxial_stacking_(allow_coaxial_stacking)
+      allow_coaxial_stacking_(allow_coaxial_stacking),
+      nmr_options_(nmr_options)
 {
 }
 
@@ -282,6 +285,15 @@ void IPknot::solve(const std::string& seq, const VF& bp, const VI& offset,
 #endif
 
 void IPknot::solve(const std::string& seq, const VSVF& bp,
+             const VF& th, VI& bpseq, VI& plevel, bool constraint,
+             const BPConstraints& bp_constraints,
+             const StackConstraints& stack_constraints) const
+{
+    solve_with_penalty(seq, bp, th, bpseq, plevel, constraint,
+                       bp_constraints, stack_constraints);
+}
+
+double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
              const BPConstraints& bp_constraints,
              const StackConstraints& stack_constraints) const
@@ -444,24 +456,41 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
     }
     ip.update();
 
-    if (n>0)
-      solve(seq, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint,
-            bp_constraints, effective_stack_constraints);
+    // Constraints must still be processed when the posterior threshold leaves
+    // no ordinary candidate pairs.  Soft constraints then pay a violation
+    // penalty; hard constraints correctly report infeasibility/no instances.
+    if (n>0 || bp_constraints.has_constraints() ||
+        effective_stack_constraints.has_constraints())
+    {
+      const double penalty = solve(seq, ip, v_l, v_r, c_l, c_r, th,
+                                   bpseq, plevel, constraint, bp_constraints,
+                                   effective_stack_constraints);
+      return penalty;
+    }
     else
     {
       bpseq.resize(L);
       std::fill(std::begin(bpseq), std::end(bpseq), -1);
       plevel.resize(L);
       std::fill(std::begin(plevel), std::end(plevel), -1);
+      return 0.0;
     }
   }
 
-void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
+double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
              const BPConstraints& bp_constraints,
              const StackConstraints& stack_constraints) const
 {
     uint L = seq.size();
+    struct CountViolationVars {
+      std::string bp_type;
+      int expected;
+      int excess_var;
+      int missing_var;
+    };
+    std::vector<CountViolationVars> count_violation_vars;
+    std::vector<std::pair<size_t, int>> stack_violation_vars;
 
     if (!constraint)
     {
@@ -641,16 +670,33 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
       for (const auto& [bp_type, count] : bp_constraints.constraints) {
         if (count >= 0) {
           auto it = bp_type_vars.find(bp_type);
-          // Always create the equality.  An empty sum is zero, so a positive
-          // requested count correctly makes the model infeasible instead of
-          // silently dropping the user's constraint.
           int row = ip.make_constraint(IP::FX, count, count);
           if (it != bp_type_vars.end()) {
             for (int var : it->second) {
               ip.add_constraint(row, var, 1);
             }
           }
-          spdlog::debug("Added constraint for base pair type {}: {} pairs", bp_type, count);
+          if (nmr_options_.soft) {
+            // actual - excess + missing = expected.  Both deviations are
+            // integer-valued and receive an L1 penalty in the objective.
+            const int max_deviation = std::max(static_cast<int>(L), count);
+            const int excess_var = ip.make_variable(
+                -nmr_options_.count_penalty, 0, max_deviation);
+            const int missing_var = ip.make_variable(
+                -nmr_options_.count_penalty, 0, max_deviation);
+            ip.add_constraint(row, excess_var, -1);
+            ip.add_constraint(row, missing_var, 1);
+            count_violation_vars.push_back(
+                {bp_type, count, excess_var, missing_var});
+            spdlog::debug(
+                "Added soft base-pair constraint {}={} with penalty {}",
+                bp_type, count, nmr_options_.count_penalty);
+          } else {
+            // An empty sum is zero, so a positive requested count correctly
+            // makes the hard model infeasible.
+            spdlog::debug("Added hard base-pair constraint {}={}",
+                          bp_type, count);
+          }
         }
       }
 
@@ -718,7 +764,8 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
 
       spdlog::info("Created {} level-independent base pair variables for stack constraints", bp_pair_vars.size());
 
-      // Store all instance_vars and their bp_vars for non-overlap constraints
+      // Store all witness variables and their base pairs for the compact
+      // per-base-pair capacity constraints below.
       std::vector<int> all_instance_vars;
       std::vector<std::vector<int>> all_instance_bp_vars;
       std::vector<int> instance_to_constraint_id;
@@ -879,24 +926,31 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
           }
         }
 
-        // At least one instance of this constraint must be selected
-        if (!instance_vars.empty())
-        {
-          int row = ip.make_constraint(IP::LO, 1, 0);  // sum(instance_vars) >= 1
-          for (int inst_var : instance_vars)
-          {
-            ip.add_constraint(row, inst_var, 1);
-          }
-          spdlog::info("Added stack constraint {} with {} possible instances (total instances so far: {})",
-                       constraint_id + 1, instance_vars.size(), all_instance_vars.size());
-        }
-        else
-        {
-          // No valid instances found for this constraint - cannot satisfy
+        // Select exactly one explanation for each observation.  Additional
+        // witnesses have no structural meaning: a witness only certifies that
+        // the observation is satisfied by one concrete instance.  Exact-one
+        // removes symmetric witness assignments without restricting the
+        // underlying selected base pairs.  In soft mode the violation variable
+        // is the alternative explanation when no instance is selected.
+        if (instance_vars.empty() && !nmr_options_.soft) {
           spdlog::error("Stack constraint {} has no valid instances - cannot satisfy constraint",
                       constraint_id + 1);
           throw std::runtime_error("Stack constraint cannot be satisfied: no valid instances found");
         }
+
+        int row = ip.make_constraint(IP::FX, 1, 1);
+        for (int inst_var : instance_vars) ip.add_constraint(row, inst_var, 1);
+        if (nmr_options_.soft) {
+          const int violation_var = ip.make_variable(
+              -nmr_options_.stack_penalty, 0, 1);
+          ip.add_constraint(row, violation_var, 1);
+          stack_violation_vars.emplace_back(constraint_id, violation_var);
+        }
+        spdlog::info(
+            "Added {} stack constraint {} with {} possible instances "
+            "(total instances so far: {})",
+            nmr_options_.soft ? "soft" : "hard", constraint_id + 1,
+            instance_vars.size(), all_instance_vars.size());
       }
 
       // One loop-facing end of a helix can have at most one coaxial partner.
@@ -906,55 +960,49 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
         for (int var : vars) ip.add_constraint(row, var, 1);
       }
 
-      // Add non-overlap constraints between instances from different stack constraints
-      // If two instances share base pair variables and are from different constraints,
-      // they cannot both be selected (instance_var1 + instance_var2 <= 1)
+      // Different observations cannot be assigned to witnesses that share a
+      // base pair.  Previously this was encoded by one constraint for every
+      // conflicting witness pair, which grows quadratically in the number of
+      // instances.  Since each observation now selects at most one witness,
+      // one capacity constraint per shared base pair is exactly equivalent:
+      //   sum(instance_var using bp_var) <= 1.
       if (stack_constraints.constraints.size() > 1)
       {
-        spdlog::info("Checking for non-overlap constraints between {} instances from {} stack constraints",
-                     all_instance_vars.size(), stack_constraints.constraints.size());
-        int num_non_overlap = 0;
-        for (size_t i1 = 0; i1 < all_instance_vars.size(); ++i1)
-        {
-          for (size_t i2 = i1 + 1; i2 < all_instance_vars.size(); ++i2)
-          {
-            // Only add constraints between instances from different stack constraints
-            if (instance_to_constraint_id[i1] == instance_to_constraint_id[i2])
-              continue;
-
-            spdlog::debug("Comparing instance {} (constraint {}) with instance {} (constraint {})",
-                         i1, instance_to_constraint_id[i1] + 1, i2, instance_to_constraint_id[i2] + 1);
-
-            // Check if these instances share any base pair variable
-            bool shares_bp = false;
-            for (int bp_var1 : all_instance_bp_vars[i1])
-            {
-              for (int bp_var2 : all_instance_bp_vars[i2])
-              {
-                if (bp_var1 == bp_var2)
-                {
-                  shares_bp = true;
-                  spdlog::debug("  Found shared bp_var: {}", bp_var1);
-                  break;
-                }
-              }
-              if (shares_bp) break;
-            }
-
-            // If they share a base pair, add constraint that at most one can be selected
-            if (shares_bp)
-            {
-              int row = ip.make_constraint(IP::UP, 0, 1);  // instance_var1 + instance_var2 <= 1
-              ip.add_constraint(row, all_instance_vars[i1], 1);
-              ip.add_constraint(row, all_instance_vars[i2], 1);
-              num_non_overlap++;
-              spdlog::debug("  Added non-overlap constraint between instance {} and {}", i1, i2);
-            }
+        std::map<int, std::vector<size_t>> bp_var_to_instances;
+        for (size_t instance_index = 0;
+             instance_index < all_instance_bp_vars.size(); ++instance_index) {
+          for (int bp_var : all_instance_bp_vars[instance_index]) {
+            bp_var_to_instances[bp_var].push_back(instance_index);
           }
         }
-        if (num_non_overlap > 0)
-        {
-          spdlog::info("Added {} non-overlap constraints between different stack constraints", num_non_overlap);
+
+        int num_capacity_constraints = 0;
+        for (const auto& [bp_var, instance_indices] : bp_var_to_instances) {
+          std::set<int> constraint_ids;
+          for (size_t instance_index : instance_indices) {
+            constraint_ids.insert(instance_to_constraint_id[instance_index]);
+          }
+          // Exact-one already prevents multiple witnesses from the same
+          // observation, so a capacity row is needed only when this base pair
+          // occurs in candidates for two or more observations.
+          if (constraint_ids.size() < 2) continue;
+
+          int row = ip.make_constraint(IP::UP, 0, 1);
+          for (size_t instance_index : instance_indices) {
+            ip.add_constraint(row, all_instance_vars[instance_index], 1);
+          }
+          ++num_capacity_constraints;
+          spdlog::debug(
+              "Added witness capacity constraint for bp_var {} across {} "
+              "instances from {} observations",
+              bp_var, instance_indices.size(), constraint_ids.size());
+        }
+        if (num_capacity_constraints > 0) {
+          spdlog::info(
+              "Added {} base-pair witness capacity constraints for {} "
+              "instances from {} stack constraints",
+              num_capacity_constraints, all_instance_vars.size(),
+              stack_constraints.constraints.size());
         }
       }
 
@@ -981,6 +1029,38 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
       ip.solve();
     }
 
+    double nmr_violation_penalty = 0.0;
+    for (const auto& violation : count_violation_vars) {
+      const double excess = ip.get_value(violation.excess_var);
+      const double missing = ip.get_value(violation.missing_var);
+      const double actual = violation.expected + excess - missing;
+      const double cost = nmr_options_.count_penalty * (excess + missing);
+      nmr_violation_penalty += cost;
+      if (excess > 0.5 || missing > 0.5) {
+        spdlog::info(
+            "Soft NMR base-pair constraint {} violated: expected {}, "
+            "actual {:.0f}, missing {:.0f}, excess {:.0f}, penalty {}",
+            violation.bp_type, violation.expected, actual, missing, excess,
+            cost);
+      } else {
+        spdlog::info("Soft NMR base-pair constraint {}={} satisfied",
+                     violation.bp_type, violation.expected);
+      }
+    }
+    for (const auto& [constraint_id, violation_var] : stack_violation_vars) {
+      const double violation = ip.get_value(violation_var);
+      const double cost = nmr_options_.stack_penalty * violation;
+      nmr_violation_penalty += cost;
+      if (violation > 0.5) {
+        spdlog::info(
+            "Soft NMR stack constraint {} violated, penalty {}",
+            constraint_id + 1, cost);
+      } else {
+        spdlog::info("Soft NMR stack constraint {} satisfied",
+                     constraint_id + 1);
+      }
+    }
+
     // build the result
     bpseq.resize(L);
     std::fill(bpseq.begin(), bpseq.end(), -1);
@@ -997,6 +1077,8 @@ void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI
 
     if (!levelwise_)
       decompose_plevel(bpseq, plevel);
+
+    return nmr_violation_penalty;
   }
 
 auto IPknot::solve(const std::string& seq, const VSVF& bp,
@@ -1009,6 +1091,8 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
     VI bpseq_temp, plevel_temp;
     VI max_bpseq, max_plevel;
     float max_fval=-100.0, max_fval_pk=-100.0;
+    double max_nmr_penalty = 0.0;
+    double max_selection_score = -std::numeric_limits<double>::infinity();
     spdlog::info("Search for the best thresholds by pseudo expected F-value:");
     const auto sump = compute_sump_pk(bp);
     do {
@@ -1019,26 +1103,34 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
       if (i!=th.size()) continue;
       bpseq_temp = bpseq;
       plevel_temp = plevel;
-      solve(seq, bp, th, bpseq_temp, plevel_temp, constraint, bp_constraints, stack_constraints);
+      const double nmr_penalty = solve_with_penalty(
+          seq, bp, th, bpseq_temp, plevel_temp, constraint,
+          bp_constraints, stack_constraints);
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
       const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
       if (spdlog::get_level() <= spdlog::level::info)
       {
         std::ostringstream th_ss;
         std::copy(th.begin(), th.end(), std::ostream_iterator<float>(th_ss, ","));
-        spdlog::info("th={} pF={}, pF_pk={}", th_ss.str(), fval, fval_pk);
+        spdlog::info("th={} pF={}, pF_pk={}, NMR penalty={}",
+                     th_ss.str(), fval, fval_pk, nmr_penalty);
       }
-      if (fval+fval_pk>max_fval+max_fval_pk)
+      const double selection_score = fval + fval_pk - nmr_penalty;
+      if (selection_score > max_selection_score)
       {
+        max_selection_score = selection_score;
         max_fval = fval;
         max_fval_pk = fval_pk;
+        max_nmr_penalty = nmr_penalty;
         max_bpseq = bpseq_temp;
         max_plevel = plevel_temp;
       }
     } while (!ep.succ());
     bpseq = max_bpseq;
     plevel = max_plevel;
-    spdlog::info("max pF={}, pF_pk={}", max_fval, max_fval_pk);
+    spdlog::info("max pF={}, pF_pk={}, NMR penalty={}, selection score={}",
+                 max_fval, max_fval_pk, max_nmr_penalty,
+                 max_selection_score);
 
     return {max_fval, max_fval_pk};
   }

@@ -110,6 +110,7 @@ if(BUILD_TESTING)
   set(NMR_COMPACT_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_compact_stack.fa")
   set(NMR_BULGE_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_single_bulge.fa")
   set(NMR_RIGHT_BULGE_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_single_bulge_right.fa")
+  set(NMR_MIXED_BULGE_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_bulge_mixed.fa")
   set(NMR_COAXIAL_TEST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_coaxial_multibranch.fa")
   set(NMR_COAXIAL_CHILDREN_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_coaxial_children.fa")
   set(NMR_COAXIAL_LAST_FASTA "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nmr_coaxial_last_child.fa")
@@ -156,6 +157,40 @@ if(BUILD_TESTING)
   set_tests_properties(nmr_stack_single_bulge_right PROPERTIES
     PASS_REGULAR_EXPRESSION "\\(\\(\\.\\.\\.\\.\\.\\.\\)\\.\\)")
 
+  add_test(NAME nmr_stack_single_bulge_disabled
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "GC AU"
+            --without-nmr-bulge ${NMR_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_single_bulge_disabled PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_stack_single_bulge_mode_none
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "GC AU"
+            --nmr-bulge-mode none ${NMR_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_single_bulge_mode_none PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_stack_single_bulge_mode_fallback
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "GC AU"
+            --nmr-bulge-mode fallback --loglevel info ${NMR_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_single_bulge_mode_fallback PROPERTIES
+    PASS_REGULAR_EXPRESSION "has no direct instance; retained [1-9][0-9]* bulged instance")
+
+  add_test(NAME nmr_stack_bulge_mode_fallback_prefers_direct
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "GC AU"
+            --nmr-bulge-mode fallback --loglevel info ${NMR_MIXED_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_bulge_mode_fallback_prefers_direct PROPERTIES
+    PASS_REGULAR_EXPRESSION "uses [1-9][0-9]* direct instance.*discarded [1-9][0-9]* bulged instance")
+
+  add_test(NAME nmr_stack_bulge_mode_invalid
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "AU AU"
+            --nmr-bulge-mode invalid ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_stack_bulge_mode_invalid PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_stack_duplicate_observations_require_distinct_instances
+    COMMAND ipknot -r 0 -t 0.01,0.01
+            --stack-constraint "GC AU" --stack-constraint "GC AU"
+            --nmr-bulge-mode all ${NMR_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_duplicate_observations_require_distinct_instances
+    PROPERTIES WILL_FAIL TRUE)
+
   add_test(NAME nmr_stack_coaxial_disabled
     COMMAND ipknot -r 0 -t 0,0 --stack-constraint "UU CC"
             ${NMR_COAXIAL_TEST_FASTA})
@@ -178,4 +213,35 @@ if(BUILD_TESTING)
             --coaxial-stacking --loglevel info ${NMR_COAXIAL_LAST_FASTA})
   set_tests_properties(nmr_stack_coaxial_last_child PROPERTIES
     PASS_REGULAR_EXPRESSION "satisfied by flush coaxial stacking")
+
+  add_test(NAME nmr_soft_base_pair_satisfied
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs UU=1
+            --without-canonical-neighbor --nmr-soft --loglevel info
+            ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_soft_base_pair_satisfied PROPERTIES
+    PASS_REGULAR_EXPRESSION "Soft NMR base-pair constraint UU=1 satisfied")
+
+  add_test(NAME nmr_soft_base_pair_low_penalty
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs UU=1
+            --without-canonical-neighbor --nmr-soft
+            --nmr-count-penalty 0.0001 --loglevel info ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_soft_base_pair_low_penalty PROPERTIES
+    PASS_REGULAR_EXPRESSION "Soft NMR base-pair constraint UU violated")
+
+  add_test(NAME nmr_soft_base_pair_impossible
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs GC=99
+            --nmr-soft --loglevel info ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_soft_base_pair_impossible PROPERTIES
+    PASS_REGULAR_EXPRESSION "Soft NMR base-pair constraint GC violated: expected 99")
+
+  add_test(NAME nmr_soft_stack_impossible
+    COMMAND ipknot -r 0 -t 0,0 --stack-constraint "UU CC"
+            --nmr-soft --loglevel info ${NMR_COAXIAL_TEST_FASTA})
+  set_tests_properties(nmr_soft_stack_impossible PROPERTIES
+    PASS_REGULAR_EXPRESSION "Soft NMR stack constraint 1 violated")
+
+  add_test(NAME nmr_soft_invalid_penalty
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs UU=1
+            --nmr-soft --nmr-count-penalty -1 ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_soft_invalid_penalty PROPERTIES WILL_FAIL TRUE)
 endif()

@@ -107,16 +107,38 @@ IPknot can fold a given sequence or alignment with some constraints. The constra
 This example shows folding with constraints that 16th base and 100th base are paired, 41st and 42nd bases are unpaired.
 
 NMR-derived base-pair and stacking constraints can be supplied with
-`--base-pairs` and `--stack-constraint`, respectively. By default, a stacking
-constraint matches a conventional stack or a stack containing a one-nucleotide
-bulge. Add `--coaxial-stacking` to also allow a two-base-pair stacking
-constraint to match flush coaxial stacking between helix termini in a
-multibranch loop:
+`--base-pairs` and `--stack-constraint`, respectively. The
+`--nmr-bulge-mode` option controls one-nucleotide-bulge candidates:
+
+- `all` (default): consider direct and one-nucleotide-bulged instances.
+- `fallback`: use bulged instances for an observation only when it has no
+  structurally valid direct instance.
+- `none`: consider directly adjacent base pairs only.
+
+The existing `--without-nmr-bulge` flag remains an alias for
+`--nmr-bulge-mode none`. Add `--coaxial-stacking` to also allow a
+two-base-pair stacking constraint to match flush coaxial stacking between
+helix termini in a multibranch loop:
 
 	% ipknot --stack-constraint "GC AU" --coaxial-stacking sequence.fa
 
 Without `--coaxial-stacking`, multibranch-loop coaxial candidates are not
 generated and the previous stacking-constraint behavior is preserved.
+
+NMR observations are hard constraints by default. Add `--nmr-soft` to allow
+base-pair count mismatches and unsatisfied stacking observations with finite
+objective penalties:
+
+	% ipknot --base-pairs "GC=2,AU=3" --stack-constraint "GC AU" \
+	    --nmr-soft --nmr-count-penalty 1.0 --nmr-stack-penalty 1.0 sequence.fa
+
+`--nmr-count-penalty` is charged for each missing or excess base pair, while
+`--nmr-stack-penalty` is charged once for each unsatisfied stacking
+observation. Both weights must be positive. Omitting `--nmr-soft` retains the
+hard-constraint behavior. Base-pair uniqueness, pseudoknot-level topology,
+stack/bulge witness validity, and coaxial topology remain hard in both modes.
+When thresholds are selected automatically, the NMR violation penalty is also
+subtracted from the pseudo-expected-accuracy selection score.
 
 ### Run with Docker
 

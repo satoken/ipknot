@@ -261,6 +261,10 @@ public:
     coef_.push_back(coef);
     vlb_.push_back(0.0);
     vub_.push_back(1.0);
+    // NMR constraints may introduce auxiliary variables after the initial
+    // update().  Keep the sparse column storage in step with vars_ so that
+    // add_constraint() can address those columns immediately.
+    m_.emplace_back();
     return col;
   }
 
@@ -271,6 +275,7 @@ public:
     coef_.push_back(coef);
     vlb_.push_back(lo);
     vub_.push_back(hi);
+    m_.emplace_back();
     return col;
   }
  
@@ -332,13 +337,17 @@ public:
 
     status = CPXcopylp(env_, lp_, numcols, numrows,
                         dir_==IP::MIN ? CPX_MIN : CPX_MAX,
-                        &coef_[0], &rhs_[0], &bnd_[0], 
-                        &matbeg[0], &matcnt[0], &matind[0], &matval[0],
-                        &vlb_[0], &vub_[0], &rngval_[0] );
+                        coef_.data(), rhs_.data(), bnd_.data(),
+                        matbeg.data(), matcnt.data(), matind.data(), matval.data(),
+                        vlb_.data(), vub_.data(), rngval_.data() );
+    if (status != 0)
+      throw std::runtime_error("CPLEX failed to copy the optimization model");
     vlb_.clear();
     vub_.clear();
 
-    status = CPXcopyctype(env_, lp_, &vars_[0]);
+    status = CPXcopyctype(env_, lp_, vars_.data());
+    if (status != 0)
+      throw std::runtime_error("CPLEX failed to copy variable types");
     vars_.clear();
 
     CPXsetintparam(env_, CPXPARAM_MIP_Display, 0);
@@ -349,13 +358,22 @@ public:
     CPXsetintparam(env_, CPXPARAM_Simplex_Display, 0);
 
     status = CPXmipopt(env_, lp_);
-    if (status != 0 || CPXgetstat(env_, lp_) != CPXMIP_OPTIMAL) {
-      throw std::runtime_error("CPLEX failed to find an optimal solution");
+    if (status != 0) {
+      throw std::runtime_error("CPLEX failed while optimizing the model");
+    }
+    const int solution_status = CPXgetstat(env_, lp_);
+    if (solution_status != CPXMIP_OPTIMAL &&
+        solution_status != CPXMIP_OPTIMAL_TOL) {
+      char status_message[CPXMESSAGEBUFSIZE];
+      CPXgetstatstring(env_, solution_status, status_message);
+      throw std::runtime_error(
+          std::string("CPLEX failed to find an optimal solution: ") +
+          status_message);
     }
     double objval;
     status = CPXgetobjval(env_, lp_, &objval);
     res_cols_.resize(CPXgetnumcols(env_, lp_));
-    status = CPXgetx(env_, lp_, &res_cols_[0], 0, res_cols_.size()-1);
+    status = CPXgetx(env_, lp_, res_cols_.data(), 0, res_cols_.size()-1);
 
     return objval;
   }
@@ -412,6 +430,8 @@ public:
   {
     int col = vars_.size();
     SCIP_VAR *var = nullptr;
+    const SCIP_VARTYPE variable_type =
+        (lo == 0 && hi == 1) ? SCIP_VARTYPE_BINARY : SCIP_VARTYPE_INTEGER;
     char buf[16];
     snprintf(buf, sizeof(buf), "var[%d]", col);
     SCIPcreateVarBasic(scip_,                // SCIP environment
@@ -420,7 +440,7 @@ public:
                        lo,                   // Lower bound of the variable
                        hi,                   // upper bound of the variable
                        coef,                 // Obj. coefficient. 
-                       SCIP_VARTYPE_BINARY   // Binary variable
+                       variable_type         // Binary or bounded integer
                       );
     SCIPaddVar(scip_, var);
     vars_.push_back(var);
