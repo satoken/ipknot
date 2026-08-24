@@ -160,12 +160,19 @@ struct StackConstraints {
   }
 };
 
+enum class NMRCountMode {
+  EXACT,
+  LOWER_BOUND
+};
+
 // NMR observations can either be enforced exactly or treated as soft
 // constraints.  Structural validity constraints remain hard in both modes.
 struct NMRConstraintOptions {
   bool soft = false;
   double count_penalty = 1.0;  // per missing/excess base pair
   double stack_penalty = 1.0;  // per unsatisfied stacking observation
+  NMRCountMode count_mode = NMRCountMode::EXACT;
+  bool allow_shared_stack_pairs = false;
 };
 
 class IPknot

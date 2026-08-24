@@ -177,13 +177,19 @@ BPConstraints count_base_pairs(const std::string& seq, const VI& bpseq) {
 }
 
 // Function to check if base pair counts satisfy constraints
-bool satisfies_constraints(const BPConstraints& counts, const BPConstraints& bp_constraints) {
+bool satisfies_constraints(const BPConstraints& counts,
+                           const BPConstraints& bp_constraints,
+                           NMRCountMode count_mode = NMRCountMode::EXACT) {
   // Check all constraint requirements
   for (const auto& [bp_type, expected_count] : bp_constraints.constraints) {
     if (expected_count >= 0) {
       int actual_count = counts.get_constraint(bp_type);
       if (actual_count < 0) actual_count = 0;  // Not found means 0
-      if (actual_count != expected_count) return false;
+      if (count_mode == NMRCountMode::LOWER_BOUND) {
+        if (actual_count < expected_count) return false;
+      } else if (actual_count != expected_count) {
+        return false;
+      }
     }
   }
   return true;
@@ -682,6 +688,10 @@ main(int argc, char* argv[])
       cxxopts::value<double>()->default_value("1.0"), "WEIGHT")
     ("nmr-stack-penalty", "Penalty per unsatisfied stacking observation in soft NMR mode",
       cxxopts::value<double>()->default_value("1.0"), "WEIGHT")
+    ("nmr-count-mode", "Interpret NMR base-pair counts as exact totals or observed lower bounds: exact or lower-bound",
+      cxxopts::value<std::string>()->default_value("exact"), "MODE")
+    ("nmr-allow-shared-stack-pairs", "Allow different NMR stack observations to use witnesses that share base pairs",
+      cxxopts::value<bool>()->default_value("false"))
 #ifdef WITH_MXFOLD2
     ("mxfold2-config", "config file for MXfold2 model",
       cxxopts::value<std::string>()->default_value(""), "FILE")
@@ -742,6 +752,19 @@ main(int argc, char* argv[])
   nmr_options.soft = res["nmr-soft"].as<bool>();
   nmr_options.count_penalty = res["nmr-count-penalty"].as<double>();
   nmr_options.stack_penalty = res["nmr-stack-penalty"].as<double>();
+  const auto nmr_count_mode_arg = res["nmr-count-mode"].as<std::string>();
+  if (nmr_count_mode_arg == "exact") {
+    nmr_options.count_mode = NMRCountMode::EXACT;
+  } else if (nmr_count_mode_arg == "lower-bound") {
+    nmr_options.count_mode = NMRCountMode::LOWER_BOUND;
+  } else {
+    spdlog::error(
+        "NMR count mode must be 'exact' or 'lower-bound' (got '{}')",
+        nmr_count_mode_arg);
+    return 1;
+  }
+  nmr_options.allow_shared_stack_pairs =
+      res["nmr-allow-shared-stack-pairs"].as<bool>();
   if (!std::isfinite(nmr_options.count_penalty) ||
       nmr_options.count_penalty <= 0.0 ||
       !std::isfinite(nmr_options.stack_penalty) ||
@@ -1044,7 +1067,8 @@ main(int argc, char* argv[])
             first = false;
           }
           spdlog::info("Base pair counts in predicted structure: {}", counts_ss.str());
-          if (satisfies_constraints(actual_counts, bp_constraints)) {
+          if (satisfies_constraints(actual_counts, bp_constraints,
+                                    nmr_options.count_mode)) {
             spdlog::info("Base pair constraints are satisfied.");
           } else {
             spdlog::warn("Base pair constraints are NOT satisfied{}.",

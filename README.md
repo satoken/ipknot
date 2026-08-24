@@ -80,7 +80,6 @@ You can specify the model using `-e` option.
 IPknot predicts the pseudoknot structure hierarchically. The `-t` option is used to specify the base pairing probability threshold for each level. For example, if you run `ipknot -t 0.25 -t 0.125 seq.fa`, the threshold for the first level is 0.25 and the threshold for the second level is 0.125.
 
 IPknot can search for the best thresholds from multiple combinations of thresholds using *pseudo-expected accuracy*. For example, `ipknot -t 0.5_0.25 -t 0.25_0.125 seq.fa` searches for the combination of 0.5 and 0.125 for the first layer and 0.25 and 0.125 for the second layer, and outputs the secondary structure with the maximum pseudo-expected accuracy as the final prediction. By default, `-t auto -t auto` is specified, where `auto` means `0.5_0.25_0.125_0.0625`.
-
 ### Aligned sequences
 
 IPknot can also take CLUSTAL formatted RNA alignments produced by CLUSTALW and MAFFT, then predicts their common secondary structures.
@@ -139,6 +138,19 @@ hard-constraint behavior. Base-pair uniqueness, pseudoknot-level topology,
 stack/bulge witness validity, and coaxial topology remain hard in both modes.
 When thresholds are selected automatically, the NMR violation penalty is also
 subtracted from the pseudo-expected-accuracy selection score.
+
+By default, `--base-pairs GC=2` means that the complete predicted structure
+contains exactly two GC pairs. If the value is instead the number of observed
+or assigned peaks, use `--nmr-count-mode lower-bound`; this interprets it as
+at least two GC pairs and penalizes only a shortfall in soft mode:
+
+	% ipknot --base-pairs "GC=2,AU=3" --nmr-count-mode lower-bound \
+	    --nmr-soft sequence.fa
+
+Different stacking observations use disjoint witness base pairs by default.
+`--nmr-allow-shared-stack-pairs` relaxes this assignment rule for sensitivity
+analysis when multiple observations may describe overlapping parts of the
+same helix.
 
 ### Run with Docker
 

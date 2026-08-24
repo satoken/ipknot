@@ -486,6 +486,7 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
     struct CountViolationVars {
       std::string bp_type;
       int expected;
+      std::vector<int> bp_vars;
       int excess_var;
       int missing_var;
     };
@@ -608,9 +609,17 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
 
     if (stacking_constraints_)
     {
-      // When an NMR stack constraint is present, a selected pair may be
-      // supported by a neighboring pair across a one-nucleotide bulge.
-      const int max_neighbor_distance = stack_constraints.has_constraints() ? 2 : 1;
+      // Relax ordinary stacking support only when the effective NMR witness
+      // set actually contains a one-nucleotide bulge.  In particular,
+      // --nmr-bulge-mode none must retain IPknot's original adjacent-pair
+      // rule instead of broadening the feasible structure set merely because
+      // an NMR stack constraint is present.
+      const bool has_bulged_instance = std::any_of(
+          stack_constraints.instances.begin(),
+          stack_constraints.instances.end(),
+          [](const StackInstance& instance) { return instance.has_bulge; });
+      const int max_neighbor_distance = has_bulged_instance ? 2 : 1;
+      spdlog::debug("Stacking neighbor distance: {}", max_neighbor_distance);
       for (auto lv=0; lv!=pk_level_; ++lv)
       {
         // upstream
@@ -670,27 +679,38 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       for (const auto& [bp_type, count] : bp_constraints.constraints) {
         if (count >= 0) {
           auto it = bp_type_vars.find(bp_type);
-          int row = ip.make_constraint(IP::FX, count, count);
+          const bool lower_bound =
+              nmr_options_.count_mode == NMRCountMode::LOWER_BOUND;
+          int row = lower_bound
+              ? ip.make_constraint(IP::LO, count, 0)
+              : ip.make_constraint(IP::FX, count, count);
+          std::vector<int> constrained_vars;
           if (it != bp_type_vars.end()) {
             for (int var : it->second) {
               ip.add_constraint(row, var, 1);
+              constrained_vars.push_back(var);
             }
           }
           if (nmr_options_.soft) {
-            // actual - excess + missing = expected.  Both deviations are
-            // integer-valued and receive an L1 penalty in the objective.
             const int max_deviation = std::max(static_cast<int>(L), count);
-            const int excess_var = ip.make_variable(
-                -nmr_options_.count_penalty, 0, max_deviation);
+            int excess_var = -1;
+            if (!lower_bound) {
+              // exact: actual - excess + missing = expected
+              excess_var = ip.make_variable(
+                  -nmr_options_.count_penalty, 0, max_deviation);
+              ip.add_constraint(row, excess_var, -1);
+            }
+            // lower bound: actual + missing >= observed
             const int missing_var = ip.make_variable(
                 -nmr_options_.count_penalty, 0, max_deviation);
-            ip.add_constraint(row, excess_var, -1);
             ip.add_constraint(row, missing_var, 1);
             count_violation_vars.push_back(
-                {bp_type, count, excess_var, missing_var});
+                {bp_type, count, std::move(constrained_vars), excess_var,
+                 missing_var});
             spdlog::debug(
-                "Added soft base-pair constraint {}={} with penalty {}",
-                bp_type, count, nmr_options_.count_penalty);
+                "Added soft base-pair constraint {} {} {} with penalty {}",
+                bp_type, lower_bound ? ">=" : "=", count,
+                nmr_options_.count_penalty);
           } else {
             // An empty sum is zero, so a positive requested count correctly
             // makes the hard model infeasible.
@@ -723,6 +743,9 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       for (const auto& instance : stack_constraints.coaxial_instances) {
         required_pairs.insert(instance.pair1);
         required_pairs.insert(instance.pair2);
+        for (const auto& support : instance.support_pairs) {
+          required_pairs.insert(support);
+        }
       }
 
       // Second pass: create bp_pair_var only for required pairs
@@ -866,10 +889,14 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
           // pair.  This lets the topology blockers refer to the exact
           // multibranch-loop context selected by the solver.
           for (const auto& support : instance.support_pairs) {
+            const auto support_it = bp_pair_vars.find(support);
+            if (support_it == bp_pair_vars.end()) continue;
+
             int instance_var = ip.make_variable(0.0, 0, 1);
             instance_vars.push_back(instance_var);
             all_instance_vars.push_back(instance_var);
-            all_instance_bp_vars.push_back({it1->second, it2->second});
+            all_instance_bp_vars.push_back(
+                {it1->second, it2->second, support_it->second});
             instance_to_constraint_id.push_back(constraint_id);
 
             for (int bp_var : {it1->second, it2->second}) {
@@ -879,7 +906,7 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
             }
             int support_row = ip.make_constraint(IP::UP, 0, 0);
             ip.add_constraint(support_row, instance_var, 1);
-            if (add_pair_sum(support_row, support, -1) == 0) continue;
+            ip.add_constraint(support_row, support_it->second, -1);
 
             // If this witness is selected, its three helix-terminal pairs
             // form one planar context.  Reject any intervening pair that
@@ -966,7 +993,8 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       // instances.  Since each observation now selects at most one witness,
       // one capacity constraint per shared base pair is exactly equivalent:
       //   sum(instance_var using bp_var) <= 1.
-      if (stack_constraints.constraints.size() > 1)
+      if (stack_constraints.constraints.size() > 1 &&
+          !nmr_options_.allow_shared_stack_pairs)
       {
         std::map<int, std::vector<size_t>> bp_var_to_instances;
         for (size_t instance_index = 0;
@@ -1031,9 +1059,11 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
 
     double nmr_violation_penalty = 0.0;
     for (const auto& violation : count_violation_vars) {
-      const double excess = ip.get_value(violation.excess_var);
+      double actual = 0.0;
+      for (int bp_var : violation.bp_vars) actual += ip.get_value(bp_var);
+      const double excess = violation.excess_var >= 0
+          ? ip.get_value(violation.excess_var) : 0.0;
       const double missing = ip.get_value(violation.missing_var);
-      const double actual = violation.expected + excess - missing;
       const double cost = nmr_options_.count_penalty * (excess + missing);
       nmr_violation_penalty += cost;
       if (excess > 0.5 || missing > 0.5) {

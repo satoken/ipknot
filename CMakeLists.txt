@@ -167,6 +167,18 @@ if(BUILD_TESTING)
             --nmr-bulge-mode none ${NMR_BULGE_TEST_FASTA})
   set_tests_properties(nmr_stack_single_bulge_mode_none PROPERTIES WILL_FAIL TRUE)
 
+  add_test(NAME nmr_stack_mode_none_keeps_adjacent_support
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "AU AU"
+            --nmr-bulge-mode none --loglevel debug ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_stack_mode_none_keeps_adjacent_support PROPERTIES
+    PASS_REGULAR_EXPRESSION "Stacking neighbor distance: 1")
+
+  add_test(NAME nmr_stack_mode_all_allows_bulged_support
+    COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "GC AU"
+            --nmr-bulge-mode all --loglevel debug ${NMR_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_mode_all_allows_bulged_support PROPERTIES
+    PASS_REGULAR_EXPRESSION "Stacking neighbor distance: 2")
+
   add_test(NAME nmr_stack_single_bulge_mode_fallback
     COMMAND ipknot -r 0 -t 0.01,0.01 --stack-constraint "GC AU"
             --nmr-bulge-mode fallback --loglevel info ${NMR_BULGE_TEST_FASTA})
@@ -244,4 +256,41 @@ if(BUILD_TESTING)
     COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs UU=1
             --nmr-soft --nmr-count-penalty -1 ${NMR_TEST_FASTA})
   set_tests_properties(nmr_soft_invalid_penalty PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_soft_base_pair_lower_bound
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs AU=1
+            --nmr-soft --nmr-count-mode lower-bound --loglevel info
+            ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_soft_base_pair_lower_bound PROPERTIES
+    PASS_REGULAR_EXPRESSION "Soft NMR base-pair constraint AU=1 satisfied")
+
+  add_test(NAME nmr_hard_base_pair_lower_bound_allows_excess
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs AU=1
+            --nmr-count-mode lower-bound --loglevel info
+            ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_hard_base_pair_lower_bound_allows_excess PROPERTIES
+    PASS_REGULAR_EXPRESSION "Base pair constraints are satisfied"
+    FAIL_REGULAR_EXPRESSION "Base pair constraints are NOT satisfied")
+
+  add_test(NAME nmr_soft_base_pair_lower_bound_allows_excess
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs AU=0
+            --nmr-soft --nmr-count-mode lower-bound --loglevel info
+            ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_soft_base_pair_lower_bound_allows_excess PROPERTIES
+    PASS_REGULAR_EXPRESSION "Soft NMR base-pair constraint AU=0 satisfied"
+    FAIL_REGULAR_EXPRESSION "Base pair constraints are NOT satisfied")
+
+  add_test(NAME nmr_count_mode_invalid
+    COMMAND ipknot -r 0 -t 0.01,0.01 --base-pairs AU=1
+            --nmr-soft --nmr-count-mode invalid ${NMR_TEST_FASTA})
+  set_tests_properties(nmr_count_mode_invalid PROPERTIES WILL_FAIL TRUE)
+
+  add_test(NAME nmr_stack_duplicate_observations_allow_shared_pairs
+    COMMAND ipknot -r 0 -t 0.01,0.01
+            --stack-constraint "GC AU" --stack-constraint "GC AU"
+            --nmr-bulge-mode all --nmr-allow-shared-stack-pairs --loglevel info
+            ${NMR_BULGE_TEST_FASTA})
+  set_tests_properties(nmr_stack_duplicate_observations_allow_shared_pairs
+    PROPERTIES PASS_REGULAR_EXPRESSION "All stack constraints are satisfied")
+
 endif()
