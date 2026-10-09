@@ -1,0 +1,7 @@
+IPKNOT_PK_BOUNDED_V1
+bias 0
+support 0.17760403663337099
+competition 0.50361103349036151
+loop_cost 0.0030163874136709869
+cap 0.025
+loop_model cc

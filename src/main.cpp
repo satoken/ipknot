@@ -36,9 +36,11 @@
 #include <algorithm>
 #include <memory>
 #include <cctype>
+#include <cstdint>
 #include <cmath>
 #include <functional>
 #include <set>
+#include <limits>
 
 #include "ipknot.h"
 #include "ip.h"
@@ -50,6 +52,7 @@
 #include "mxfold2.h"
 #endif
 #include "bpseq.h"
+#include "nmr_sequence_index.h"
 
 #include "cxxopts.hpp"
 #include "spdlog/spdlog.h"
@@ -341,7 +344,7 @@ read_constraints(const char* filename, VI& bpseq)
   int i;
   while (is >> i >> s)
   {
-    if (i<=0 && i>bpseq.size())
+    if (i<=0 || i>static_cast<int>(bpseq.size()))
       spdlog::warn("invalid format base number i={}, ignored.", i);
     else switch (s[0]) {
       default:
@@ -381,13 +384,30 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
 {
   stack_constraints.clear_instances();
 
+  // A pair's type depends only on its two bases.  Cache codes for the small
+  // sequence alphabet so recursive bulge enumeration does not repeatedly
+  // normalize bases and construct strings for the same pair types.
+  const size_t L = seq.size();
+  const NMRSequenceIndex sequence_index(seq, normalize_base,
+      [](char a, char b) { return normalize_base_pair_type(a, b); });
+  const bool log_instances =
+      spdlog::default_logger()->should_log(spdlog::level::debug);
+
   for (size_t constraint_id = 0; constraint_id < stack_constraints.constraints.size(); ++constraint_id) {
     const auto& constraint = stack_constraints.constraints[constraint_id];
-    const size_t L = seq.size();
     std::set<std::vector<std::pair<int, int>>> unique_instances;
     const size_t first_instance = stack_constraints.instances.size();
 
-    auto enumerate_direction = [&](const std::vector<std::string>& bp_types) {
+    auto enumerate_direction = [&](const std::vector<std::string>& bp_types,
+                                   bool enumerate_bulges) {
+      // Each remaining pair consumes at least one nucleotide on each strand;
+      // the innermost pair still needs three unpaired hairpin nucleotides.
+      if (L < 5 || bp_types.size() - 1 > (L - 5) / 2) return;
+      const size_t minimum_gap = 4 + 2 * (bp_types.size() - 1);
+      std::vector<uint16_t> type_codes;
+      type_codes.reserve(bp_types.size());
+      for (const auto& type : bp_types) type_codes.push_back(NMRSequenceIndex::type_code(type));
+
       std::function<void(size_t, size_t, size_t, bool,
                          std::vector<std::pair<int, int>>&)> extend;
       extend = [&](size_t type_index, size_t left, size_t right,
@@ -396,7 +416,8 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
         // IPknot does not admit sharp hairpins with fewer than three enclosed
         // nucleotides, so such textual matches can never become witnesses.
         if (left >= right || right < left + 4 ||
-            normalize_base_pair_type(seq[left], seq[right]) != bp_types[type_index]) {
+            bp_types.size() - type_index - 1 > (right - left - 4) / 2 ||
+            sequence_index.pair_type(left, right) != type_codes[type_index]) {
           return;
         }
 
@@ -407,9 +428,11 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
             for (const auto& [l, r] : pairs) instance.add_pair(l, r);
             stack_constraints.add_instance(instance);
 
-            std::ostringstream pos_ss;
-            for (const auto& [l, r] : pairs) pos_ss << "(" << l+1 << "," << r+1 << ") ";
-            spdlog::debug("Found stack/bulge instance: {}", pos_ss.str());
+            if (log_instances) {
+              std::ostringstream pos_ss;
+              for (const auto& [l, r] : pairs) pos_ss << "(" << l+1 << "," << r+1 << ") ";
+              spdlog::debug("Found stack/bulge instance: {}", pos_ss.str());
+            }
           }
         } else {
           // Direct stack, one-base bulge on the left strand, or one-base
@@ -417,7 +440,6 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
           const std::pair<size_t, size_t> steps_with_bulge[] = {
               {1, 1}, {2, 1}, {1, 2}};
           const std::pair<size_t, size_t> direct_step[] = {{1, 1}};
-          const bool enumerate_bulges = bulge_mode != NMRBulgeMode::NONE;
           const auto* steps = enumerate_bulges ? steps_with_bulge : direct_step;
           const size_t step_count = enumerate_bulges ? 3 : 1;
           for (size_t step_index = 0; step_index < step_count; ++step_index) {
@@ -435,44 +457,37 @@ find_stack_instances(const std::string& seq, StackConstraints& stack_constraints
         pairs.pop_back();
       };
 
-      for (size_t i = 0; i < L; ++i) {
-        for (size_t j = i + 1; j < L; ++j) {
-          std::vector<std::pair<int, int>> pairs;
-          extend(0, i, j, false, pairs);
-        }
-      }
+      std::vector<std::pair<int, int>> pairs;
+      pairs.reserve(bp_types.size());
+      sequence_index.for_each_pair({type_codes.front()}, minimum_gap,
+          [&](size_t i, size_t j) { extend(0, i, j, false, pairs); });
     };
 
-    enumerate_direction(constraint.bp_types);
     std::vector<std::string> reverse_types(constraint.bp_types.rbegin(), constraint.bp_types.rend());
-    enumerate_direction(reverse_types);
-
     if (bulge_mode == NMRBulgeMode::FALLBACK) {
-      const auto begin = stack_constraints.instances.begin() + first_instance;
-      const bool has_direct_instance = std::any_of(
-          begin, stack_constraints.instances.end(),
-          [](const StackInstance& instance) { return !instance.has_bulge; });
-      if (has_direct_instance) {
-        const size_t before = stack_constraints.instances.size();
-        stack_constraints.instances.erase(
-            std::remove_if(begin, stack_constraints.instances.end(),
-                           [](const StackInstance& instance) {
-                             return instance.has_bulge;
-                           }),
-            stack_constraints.instances.end());
+      // Direct-first enumeration gives precisely the same filtered instance
+      // order while avoiding paths which fallback would subsequently discard.
+      enumerate_direction(constraint.bp_types, false);
+      if (reverse_types != constraint.bp_types) enumerate_direction(reverse_types, false);
+      if (stack_constraints.instances.size() != first_instance) {
         const size_t direct_count = stack_constraints.instances.size() - first_instance;
         spdlog::info(
             "NMR bulge fallback: constraint {} uses {} direct instance(s); "
-            "discarded {} bulged instance(s)",
-            constraint_id + 1, direct_count,
-            before - stack_constraints.instances.size());
+            "skipped bulged enumeration",
+            constraint_id + 1, direct_count);
       } else {
+        enumerate_direction(constraint.bp_types, true);
+        if (reverse_types != constraint.bp_types) enumerate_direction(reverse_types, true);
         spdlog::info(
             "NMR bulge fallback: constraint {} has no direct instance; "
             "retained {} bulged instance(s)",
             constraint_id + 1,
             stack_constraints.instances.size() - first_instance);
       }
+    } else {
+      const bool bulges = bulge_mode == NMRBulgeMode::ALL;
+      enumerate_direction(constraint.bp_types, bulges);
+      if (reverse_types != constraint.bp_types) enumerate_direction(reverse_types, bulges);
     }
   }
 
@@ -539,6 +554,12 @@ output_bpp(std::ostream& os,
             const std::string& desc, const std::string& seq,
             const VSVF& sbp)
 {
+  const auto previous_precision = os.precision();
+  const auto previous_flags = os.flags();
+  // Cached probabilities must round-trip to the same float used by the
+  // decoder. Six significant digits can change threshold/objective ties.
+  os.precision(std::numeric_limits<float>::max_digits10);
+  os.setf(std::ios::fmtflags(0), std::ios::floatfield);
   os << "# " << desc << std::endl; 
   for (uint i=1; i!=sbp.size(); ++i)
   {
@@ -548,6 +569,8 @@ output_bpp(std::ostream& os,
         os << " " << j << ":" << v;
     os << std::endl;
   }
+  os.precision(previous_precision);
+  os.flags(previous_flags);
 }
 
 template <class T>
@@ -620,6 +643,8 @@ main(int argc, char* argv[])
   bool allow_coaxial_stacking = false;
   NMRBulgeMode nmr_bulge_mode = NMRBulgeMode::ALL;
   NMRConstraintOptions nmr_options;
+  PKScoreOptions pk_score_options;
+  double pk_energy_table_seconds = 0;
   BPConstraints bp_constraints;
   StackConstraints stack_constraints;
 
@@ -629,6 +654,86 @@ main(int argc, char* argv[])
       cxxopts::value<std::string>(), "FASTA_OR_ALN")
     ("e,model", "Probabilistic model",
       cxxopts::value<std::vector<std::string>>()->default_value("LinearPartition-C"), "MODEL")
+    ("decoder", "Decoder: dd (default), ilp, or auto (ILP when linked, DD otherwise)",
+      cxxopts::value<std::string>()->default_value("dd"), "NAME")
+    ("dd-constraints", "Constraint model: linear (bounded candidates/work), full (diagnostic)",
+      cxxopts::value<std::string>()->default_value("linear"))
+    ("dd-noe-solver", "NOE factor: relaxed (solver-free) or ilp (joint NOE choices; RNA pairs stay in DP)",
+      cxxopts::value<std::string>()->default_value("relaxed"))
+    ("dd-constraint-passes", "Maximum propagation sweeps per repair state in linear mode",
+      cxxopts::value<int>()->default_value("8"))
+    ("dd-nmr-pair-beam", "Additional NMR pair candidates per left endpoint and type",
+      cxxopts::value<int>()->default_value("64"))
+    ("dd-nmr-witnesses", "Maximum retained stack/coaxial witnesses per observation",
+      cxxopts::value<int>()->default_value("64"))
+    ("dd-nmr-pattern-beam", "Maximum bulge pattern extensions per seed",
+      cxxopts::value<int>()->default_value("32"))
+    ("dd-constraint-states", "Total visited repair states per threshold/refinement solve (0: unlimited, full mode)",
+      cxxopts::value<int>()->default_value("2048"))
+    ("dd-constraint-recovery-every", "Resume constrained primal recovery every N iterations (0: final-only); shares total state budget",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("dd-max-iter", "Maximum DD iterations per threshold/refinement",
+      cxxopts::value<int>()->default_value("50"), "N")
+    ("dd-dp", "Per-level DP: beam, improved-beam (suffix dominance), or nussinov (exact; ignores --dd-beam)",
+      cxxopts::value<std::string>()->default_value("beam"), "NAME")
+    ("dd-beam", "Beam DP width (0: exact); ignored by --dd-dp nussinov",
+      cxxopts::value<int>()->default_value("100"), "N")
+    ("dd-crossing-beam", "Active crossing candidates per level (0: unbounded)",
+      cxxopts::value<int>()->default_value("100"), "N")
+    ("dd-witnesses", "Crossing witnesses per pair/lower-level row (0: all)",
+      cxxopts::value<int>()->default_value("16"), "N")
+    ("dd-step", "Polyak relaxation (0 < value < 2)",
+      cxxopts::value<double>()->default_value("1.5"), "VALUE")
+    ("dd-patience", "Stop after this many iterations without primal improvement (0: disabled)",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("dd-projected-norm", "Exclude outward boundary gradients from the DD step denominator",
+      cxxopts::value<bool>()->default_value("true"), "BOOL")
+    ("dd-unpruned-bound", "Use an exact oracle bound when no DP state was pruned",
+      cxxopts::value<bool>()->default_value("false"))
+    ("dd-bound-block", "Exact internal-block certificate width (0: off; maximum 64)",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("dd-bound-every", "Evaluate block bounds every N iterations, also at first and last",
+      cxxopts::value<int>()->default_value("10"), "N")
+    ("dd-global-bound", "Add a global base-capacity certificate, computed once per solve",
+      cxxopts::value<bool>()->default_value("false"))
+    ("dd-bound-shift", "Take the minimum of two block partitions shifted by half a window",
+      cxxopts::value<bool>()->default_value("false"))
+    ("dd-bound-strict-stack", "Borrow only available external stack candidates in block bounds",
+      cxxopts::value<bool>()->default_value("false"))
+    ("dd-joint-bound", "Joint integer window certificate width (0: off; maximum 12)",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("dd-joint-clusters", "Group distant PK/support endpoints instead of consecutive sequence windows",
+      cxxopts::value<bool>()->default_value("false"))
+    ("dd-joint-shift", "Also evaluate joint windows shifted by half their width",
+      cxxopts::value<bool>()->default_value("false"))
+    ("dd-joint-matching", "Use matching-only joint certificates for comparison",
+      cxxopts::value<bool>()->default_value("false"))
+    ("dd-joint-states", "Search states per certificate window (0: unlimited diagnostic)",
+      cxxopts::value<int>()->default_value("20000"), "N")
+    ("dd-exchange", "Feasible joint local exchange width (0: off; maximum 12)",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("dd-exchange-passes", "Exchange passes with alternating partitions (1..4)",
+      cxxopts::value<int>()->default_value("1"), "N")
+    ("dd-exchange-every", "Additional exchange interval (0: first and before stopping only)",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("dd-exchange-states", "Search states per exchange window (0: unlimited diagnostic)",
+      cxxopts::value<int>()->default_value("20000"), "N")
+    ("dd-recovery-cache", "Cache the static all-upper recovery proposal",
+      cxxopts::value<bool>()->default_value("true"))
+    ("dd-recovery-share", "Reuse dual DP buffers for extra recovery",
+      cxxopts::value<bool>()->default_value("true"))
+    ("dd-recovery-every", "Extra feasible recovery every N iterations and before stopping (0: off)",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("dd-recovery-target", "Polyak target for extra recovery: baseline or best (experimental)",
+      cxxopts::value<std::string>()->default_value("baseline"))
+    ("dd-recovery-mode", "Primal proposals: original, mean, lookahead or all",
+      cxxopts::value<std::string>()->default_value("all"), "MODE")
+    ("dd-schedule", "DD step schedule: polyak or diminishing (exponent 0.75)",
+      cxxopts::value<std::string>()->default_value("polyak"), "SCHEDULE")
+    ("dd-trace", "Write per-solve DD convergence diagnostics as JSONL (overwrites FILE)",
+      cxxopts::value<std::string>(), "FILE")
+    ("dd-trace-state", "Include graph and oracle states for offline exact diagnostics",
+      cxxopts::value<bool>()->default_value("false"))
     ("r,refinement", "The number of the iterative refinement",
       cxxopts::value<int>()->default_value("1"), "N")
 #if 0
@@ -678,6 +783,8 @@ main(int argc, char* argv[])
       cxxopts::value<bool>()->default_value("false"))
     ("coaxial-stacking", "Allow NMR stacking constraints to match flush coaxial stacking in multibranch loops",
       cxxopts::value<bool>()->default_value("false"))
+    ("nmr-coaxial-no-adjacent-bulge", "Experimental: require a directly paired stem step behind each observed coaxial terminus (may change predictions)",
+      cxxopts::value<bool>()->default_value("false"))
     ("without-nmr-bulge", "Require directly adjacent base pairs for NMR stack constraints (disable one-nucleotide bulges)",
       cxxopts::value<bool>()->default_value("false"))
     ("nmr-bulge-mode", "NMR stack matching mode: none, fallback (use bulges only when no direct instance exists), or all",
@@ -688,8 +795,92 @@ main(int argc, char* argv[])
       cxxopts::value<double>()->default_value("1.0"), "WEIGHT")
     ("nmr-stack-penalty", "Penalty per unsatisfied stacking observation in soft NMR mode",
       cxxopts::value<double>()->default_value("1.0"), "WEIGHT")
+    ("nmr-threshold-penalty-scale", "Scale NMR penalties during automatic threshold selection only (0: model accuracy only; default: 1)",
+      cxxopts::value<std::string>()->default_value("1.0"), "SCALE")
     ("nmr-count-mode", "Interpret NMR base-pair counts as exact totals or observed lower bounds: exact or lower-bound",
       cxxopts::value<std::string>()->default_value("exact"), "MODE")
+    ("pk-level-penalty", "Experimental penalty per selected pair above level 0 (decomposition dependent)",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-h-intercept", "Experimental score per complete simple H-type pseudoknot",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-h-weight", "Scale the H feature score or imported table (zero disables H scoring)",
+      cxxopts::value<double>()->default_value("1"), "WEIGHT")
+    ("pk-h-loop-penalty", "H-motif penalty times sum(log(1+loop length))",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-h-stem-reward", "H-motif reward times the shorter stem length",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-h-coax-bonus", "H-motif bonus for a zero-length middle loop (potential flush junction)",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-h-table", "Override H-motif scores from rows: stem1 stem2 loop1 loop2 loop3 score",
+      cxxopts::value<std::string>(), "FILE")
+    ("pk-energy-model", "PK-specific loop energy prior: none, dp, or cc (CC uses DP for missing parameters)",
+      cxxopts::value<std::string>()->default_value("none"), "MODEL")
+    ("pk-energy-scale", "Weight of the dimensionless PK loop energy; zero disables the energy term",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-energy-intercept", "Baseline score per candidate stem pair for the PK energy prior",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-energy-temperature", "Temperature in Celsius for converting PK loop energy to G/(RT)",
+      cxxopts::value<double>()->default_value("37"), "C")
+    ("pk-energy-table", "Optional Cao-Chen 2009 joint entropy and long-loop fit table",
+      cxxopts::value<std::string>(), "FILE")
+    ("pk-learned-model", "PK model: IPKNOT_PK_LINEAR_V1, IPKNOT_PK_LINEAR_AB_V1, or IPKNOT_PK_BOUNDED_V1",
+      cxxopts::value<std::string>(), "FILE")
+    ("pk-learned-scale", "Scale the learned per-pair crossing correction; zero disables the learned term",
+      cxxopts::value<double>()->default_value("1"), "WEIGHT")
+    ("pk-core-width", "Split maximal candidate stems into disjoint short cores: 0, 2 or 3",
+      cxxopts::value<int>()->default_value("0"), "N")
+    ("pk-best-partner", "DD crossing: score only the best actually selected partner core per support row",
+      cxxopts::value<bool>()->default_value("false"))
+    ("pk-rank-model", "Sequence-free linear ranking of existing automatic-threshold candidates",
+      cxxopts::value<std::string>(), "FILE")
+    ("pk-rank-scale", "Residual candidate-ranking scale; zero preserves the original selection",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-rank-output", "Append numeric candidate features and physical pair sets as JSONL",
+      cxxopts::value<std::string>(), "FILE")
+    ("pk-hybrid-shape", "Add the H geometry score to the learned crossing correction using the same auxiliaries",
+      cxxopts::value<bool>()->default_value("false"))
+    ("pk-crossing-simplify", "Replace constant-weight mutually exclusive crossing witnesses by exact direct terms",
+      cxxopts::value<bool>()->default_value("false"))
+    ("pk-crossing-normalize", "Rescale crossing auxiliaries without changing the PK score",
+      cxxopts::value<bool>()->default_value("false"))
+    ("pk-crossing-tight-bounds", "Use same-level noncrossing chains to tighten crossing-score bounds",
+      cxxopts::value<bool>()->default_value("false"))
+    ("pk-crossing-hypograph", "Use only upper product bounds; preserves the maximized crossing score",
+      cxxopts::value<bool>()->default_value("false"))
+    ("pk-feature-output", "Append candidate crossing features and selected occupancies for offline training",
+      cxxopts::value<std::string>(), "FILE")
+    ("pk-h-max-stem", "Maximum stem length in the H-score domain (does not forbid longer stems)",
+      cxxopts::value<int>()->default_value("12"), "N")
+    ("pk-h-max-loop", "Maximum length of each loop in the H-score domain",
+      cxxopts::value<int>()->default_value("30"), "N")
+    ("pk-h-max-motifs", "Fail if the H-score domain exceeds this motif budget; no silent pruning",
+      cxxopts::value<int>()->default_value("10000"), "N")
+    ("pk-h-loop-mode", "Score unpaired H loops or gap spans allowing nested pairs: unpaired or span",
+      cxxopts::value<std::string>()->default_value("unpaired"), "MODE")
+    ("pk-h-formulation", "H-score decoder: exact, projected, supported, crossing, or rerank (energy/learned models default to crossing)",
+      cxxopts::value<std::string>()->default_value("exact"), "MODE")
+    ("pk-h-allocation", "Crossing allocation: substems or blocks (energy/learned models default to blocks)",
+      cxxopts::value<std::string>()->default_value("substems"), "MODE")
+    ("pk-support-tolerance", "Allowed per-pair shape score gap in supported crossing constraints",
+      cxxopts::value<double>()->default_value("0"), "GAP")
+    ("pk-support-complete-stems", "Require complete candidate stems in the two levels of a supported crossing edge",
+      cxxopts::value<bool>()->default_value("false"))
+    ("pk-candidate-threshold", "Retain BPP candidates below the objective threshold (-1 preserves the original cut)",
+      cxxopts::value<double>()->default_value("-1"), "P")
+    ("pk-ensemble", "Experimental original-DP loop component Gibbs/MEA over existing auto-threshold candidates",
+      cxxopts::value<bool>()->default_value("false"))
+    ("pk-ensemble-scale", "Scale of component loop energy G/(RT) in finite ensemble",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-ensemble-intercept", "Log-weight prior per crossing component in finite ensemble",
+      cxxopts::value<double>()->default_value("0"), "WEIGHT")
+    ("pk-ensemble-temperature", "Statistical temperature for common BPP utility (not physical RNA temperature)",
+      cxxopts::value<double>()->default_value("1"), "VALUE")
+    ("pk-ensemble-threshold", "Restricted MEA pair inclusion threshold",
+      cxxopts::value<double>()->default_value("0.5"), "VALUE")
+    ("pk-ensemble-output", "Append sequence-free candidate diagnostics as JSONL",
+      cxxopts::value<std::string>(), "FILE")
+    ("pk-selection-weight", "Weight of the PK score during automatic threshold selection (learned models default to zero)",
+      cxxopts::value<double>()->default_value("1"), "WEIGHT")
     ("nmr-allow-shared-stack-pairs", "Allow different NMR stack observations to use witnesses that share base pairs",
       cxxopts::value<bool>()->default_value("false"))
 #ifdef WITH_MXFOLD2
@@ -733,6 +924,11 @@ main(int argc, char* argv[])
   verbose = res["verbose"].as<bool>();
   require_canonical_neighbor = !res["without-canonical-neighbor"].as<bool>();
   allow_coaxial_stacking = res["coaxial-stacking"].as<bool>();
+  nmr_options.coaxial_no_adjacent_bulge = res["nmr-coaxial-no-adjacent-bulge"].as<bool>();
+  if (nmr_options.coaxial_no_adjacent_bulge && !allow_coaxial_stacking) {
+    spdlog::error("--nmr-coaxial-no-adjacent-bulge requires --coaxial-stacking");
+    return 1;
+  }
   const auto nmr_bulge_mode_arg = res["nmr-bulge-mode"].as<std::string>();
   if (nmr_bulge_mode_arg == "none") {
     nmr_bulge_mode = NMRBulgeMode::NONE;
@@ -752,6 +948,15 @@ main(int argc, char* argv[])
   nmr_options.soft = res["nmr-soft"].as<bool>();
   nmr_options.count_penalty = res["nmr-count-penalty"].as<double>();
   nmr_options.stack_penalty = res["nmr-stack-penalty"].as<double>();
+  try {
+    const auto scale_arg = res["nmr-threshold-penalty-scale"].as<std::string>();
+    size_t consumed = 0;
+    nmr_options.threshold_penalty_scale = std::stod(scale_arg, &consumed);
+    if (consumed != scale_arg.size()) throw std::invalid_argument("trailing input");
+  } catch (const std::exception&) {
+    spdlog::error("NMR threshold penalty scale must be finite and nonnegative");
+    return 1;
+  }
   const auto nmr_count_mode_arg = res["nmr-count-mode"].as<std::string>();
   if (nmr_count_mode_arg == "exact") {
     nmr_options.count_mode = NMRCountMode::EXACT;
@@ -770,6 +975,102 @@ main(int argc, char* argv[])
       !std::isfinite(nmr_options.stack_penalty) ||
       nmr_options.stack_penalty <= 0.0) {
     spdlog::error("NMR soft-constraint penalties must be finite and positive");
+    return 1;
+  }
+  if (!std::isfinite(nmr_options.threshold_penalty_scale) ||
+      nmr_options.threshold_penalty_scale < 0.0) {
+    spdlog::error("NMR threshold penalty scale must be finite and nonnegative");
+    return 1;
+  }
+  try {
+    pk_score_options.level_penalty = res["pk-level-penalty"].as<double>();
+    pk_score_options.intercept = res["pk-h-intercept"].as<double>();
+    pk_score_options.h_weight = res["pk-h-weight"].as<double>();
+    pk_score_options.loop_penalty = res["pk-h-loop-penalty"].as<double>();
+    pk_score_options.stem_reward = res["pk-h-stem-reward"].as<double>();
+    pk_score_options.coax_bonus = res["pk-h-coax-bonus"].as<double>();
+    pk_score_options.ensemble = res["pk-ensemble"].as<bool>();
+    pk_score_options.ensemble_scale = res["pk-ensemble-scale"].as<double>();
+    pk_score_options.ensemble_intercept = res["pk-ensemble-intercept"].as<double>();
+    pk_score_options.ensemble_temperature = res["pk-ensemble-temperature"].as<double>();
+    pk_score_options.ensemble_threshold = res["pk-ensemble-threshold"].as<double>();
+    if (res.count("pk-ensemble-output"))
+      pk_score_options.ensemble_output = res["pk-ensemble-output"].as<std::string>();
+    const auto pk_energy_model = res["pk-energy-model"].as<std::string>();
+    if (pk_energy_model == "none")
+      pk_score_options.energy.model = PKLoopEnergyModel::None;
+    else if (pk_energy_model == "dp")
+      pk_score_options.energy.model = PKLoopEnergyModel::DP;
+    else if (pk_energy_model == "cc")
+      pk_score_options.energy.model = PKLoopEnergyModel::CC;
+    else
+      throw std::invalid_argument("PK energy model must be 'none', 'dp', or 'cc'");
+    pk_score_options.energy_scale = res["pk-energy-scale"].as<double>();
+    pk_score_options.energy_intercept = res["pk-energy-intercept"].as<double>();
+    pk_score_options.energy.temperature_celsius = res["pk-energy-temperature"].as<double>();
+    pk_score_options.learned_scale = res["pk-learned-scale"].as<double>();
+    pk_score_options.core_width = res["pk-core-width"].as<int>();
+    pk_score_options.best_partner = res["pk-best-partner"].as<bool>();
+    pk_score_options.rank_scale = res["pk-rank-scale"].as<double>();
+    if(res.count("pk-rank-model")) pk_score_options.ranker.load(res["pk-rank-model"].as<std::string>());
+    if(res.count("pk-rank-output")) pk_score_options.rank_output=res["pk-rank-output"].as<std::string>();
+    pk_score_options.hybrid_shape = res["pk-hybrid-shape"].as<bool>();
+    pk_score_options.simplify_crossing = res["pk-crossing-simplify"].as<bool>();
+    pk_score_options.normalize_crossing = res["pk-crossing-normalize"].as<bool>();
+    pk_score_options.tight_crossing_bounds = res["pk-crossing-tight-bounds"].as<bool>();
+    pk_score_options.crossing_hypograph = res["pk-crossing-hypograph"].as<bool>();
+    if (res.count("pk-learned-model"))
+      pk_score_options.learned.load(res["pk-learned-model"].as<std::string>());
+    if (res.count("pk-feature-output"))
+      pk_score_options.feature_output = res["pk-feature-output"].as<std::string>();
+    pk_score_options.max_stem = res["pk-h-max-stem"].as<int>();
+    pk_score_options.max_loop = res["pk-h-max-loop"].as<int>();
+    pk_score_options.max_motifs = res["pk-h-max-motifs"].as<int>();
+    const auto pk_loop_mode = res["pk-h-loop-mode"].as<std::string>();
+    if (pk_loop_mode != "unpaired" && pk_loop_mode != "span")
+      throw std::invalid_argument("PK H loop mode must be 'unpaired' or 'span'");
+    pk_score_options.unpaired_loops = pk_loop_mode == "unpaired";
+    const bool using_dd = res["decoder"].as<std::string>() == "dd"
+#if !defined(WITH_GLPK) && !defined(WITH_CPLEX) && !defined(WITH_GUROBI) && !defined(WITH_SCIP) && !defined(WITH_HIGHS)
+        || res["decoder"].as<std::string>() == "auto"
+#endif
+        ;
+    const auto pk_formulation = !res.count("pk-h-formulation") &&
+        (using_dd || pk_score_options.energy.model != PKLoopEnergyModel::None ||
+         pk_score_options.learned.loaded() || !pk_score_options.feature_output.empty())
+        ? std::string("crossing") : res["pk-h-formulation"].as<std::string>();
+    if (pk_formulation != "exact" && pk_formulation != "projected" &&
+        pk_formulation != "supported" && pk_formulation != "crossing" && pk_formulation != "rerank")
+      throw std::invalid_argument("PK H formulation must be 'exact', 'projected', 'supported', 'crossing' or 'rerank'");
+    pk_score_options.projected = pk_formulation == "projected";
+    pk_score_options.supported = pk_formulation == "supported";
+    pk_score_options.crossing = pk_formulation == "crossing";
+    pk_score_options.rerank = pk_formulation == "rerank";
+    const auto pk_allocation = !res.count("pk-h-allocation") &&
+        (using_dd || pk_score_options.energy.model != PKLoopEnergyModel::None ||
+         pk_score_options.learned.loaded() || !pk_score_options.feature_output.empty()) &&
+        (pk_score_options.crossing || pk_score_options.projected)
+        ? std::string("blocks") : res["pk-h-allocation"].as<std::string>();
+    if (pk_allocation != "substems" && pk_allocation != "blocks")
+      throw std::invalid_argument("PK H allocation must be 'substems' or 'blocks'");
+    pk_score_options.fixed_blocks = pk_allocation == "blocks";
+    pk_score_options.support_tolerance = res["pk-support-tolerance"].as<double>();
+    pk_score_options.support_complete_stems = res["pk-support-complete-stems"].as<bool>();
+    pk_score_options.candidate_threshold = res["pk-candidate-threshold"].as<double>();
+    pk_score_options.selection_weight = pk_score_options.learned.loaded() &&
+        !res.count("pk-selection-weight") ? 0.0 : res["pk-selection-weight"].as<double>();
+    if (res.count("pk-h-table"))
+      pk_score_options.load_table(res["pk-h-table"].as<std::string>());
+    if (res.count("pk-energy-table")) {
+      if (pk_score_options.energy.model != PKLoopEnergyModel::CC)
+        throw std::invalid_argument("--pk-energy-table requires --pk-energy-model cc");
+      spdlog::stopwatch pk_energy_table_timer;
+      pk_score_options.energy.load_cc09_table(res["pk-energy-table"].as<std::string>());
+      pk_energy_table_seconds = pk_energy_table_timer.elapsed().count();
+    }
+    pk_score_options.validate();
+  } catch (const std::exception& e) {
+    spdlog::error("{}", e.what());
     return 1;
   }
   spdlog::set_level(spdlog::level::warn); // Default log level
@@ -791,12 +1092,30 @@ main(int argc, char* argv[])
       spdlog::set_level(spdlog::level::critical);
     }
   }
+  if (res.count("pk-energy-table"))
+    spdlog::info("PK energy table: {} entries; loaded in {:.6f}s",
+                 pk_score_options.energy.cc09_table_size(), pk_energy_table_seconds);
+  if (pk_score_options.energy.model != PKLoopEnergyModel::None)
+    spdlog::info("PK energy prior: model={}, scale={}, intercept={}, temperature={}C",
+                 res["pk-energy-model"].as<std::string>(), pk_score_options.energy_scale,
+                 pk_score_options.energy_intercept, pk_score_options.energy.temperature_celsius);
+  if (pk_score_options.learned.loaded())
+    spdlog::info("PK learned {} score: 12 features, scale={}, selection weight={}",
+                 pk_score_options.projected ? "projected" : "crossing",
+                 pk_score_options.learned_scale, pk_score_options.selection_weight);
+  if (pk_score_options.hybrid_shape)
+    spdlog::info("PK hybrid shape: weight={}, intercept={}, stem reward={}, loop penalty={}, coax bonus={}",
+                 pk_score_options.h_weight, pk_score_options.intercept,
+                 pk_score_options.stem_reward, pk_score_options.loop_penalty, pk_score_options.coax_bonus);
   if (nmr_options.soft) {
     spdlog::info(
         "NMR soft-constraint mode: count penalty={}, stack penalty={}",
         nmr_options.count_penalty, nmr_options.stack_penalty);
   } else {
     spdlog::info("NMR hard-constraint mode");
+  }
+  if (nmr_options.coaxial_no_adjacent_bulge) {
+    spdlog::info("Experimental NMR coaxial no-adjacent-bulge prior enabled");
   }
   input = res["input"].as<std::string>();
 #ifdef WITH_MXFOLD2
@@ -931,6 +1250,11 @@ main(int argc, char* argv[])
     }
   }
 
+  if ((pk_score_options.ranker.loaded() || !pk_score_options.rank_output.empty()) && !max_pfval) {
+    spdlog::error("PK candidate ranking requires automatic or multiple thresholds");
+    return 1;
+  }
+
 #if 0
   else // default
   {
@@ -966,9 +1290,99 @@ main(int argc, char* argv[])
   int exit_code = 0;
   try
   {
+    DDOptions dd_options;
+    const auto decoder = res["decoder"].as<std::string>();
+    if (decoder != "auto" && decoder != "ilp" && decoder != "dd")
+      throw std::invalid_argument("Decoder must be auto, ilp, or dd");
+    dd_options.enabled = decoder == "dd";
+#if !defined(WITH_GLPK) && !defined(WITH_CPLEX) && !defined(WITH_GUROBI) && !defined(WITH_SCIP) && !defined(WITH_HIGHS)
+    if (decoder == "ilp") throw std::invalid_argument("No ILP solver is linked; use --decoder dd");
+    dd_options.enabled = true;
+#endif
+    const auto constraint_model = res["dd-constraints"].as<std::string>();
+    if (constraint_model != "linear" && constraint_model != "full")
+      throw std::invalid_argument("DD constraints must be linear or full");
+    dd_options.linear_constraints = constraint_model == "linear";
+    const auto noe_solver = res["dd-noe-solver"].as<std::string>();
+    if (noe_solver != "relaxed" && noe_solver != "ilp")
+      throw std::invalid_argument("DD NOE solver must be relaxed or ilp");
+    dd_options.noe_ilp = noe_solver == "ilp";
+    if (dd_options.noe_ilp && !dd_options.enabled)
+      throw std::invalid_argument("--dd-noe-solver ilp requires --decoder dd");
+    if (dd_options.noe_ilp && !IP::available())
+      throw std::invalid_argument("--dd-noe-solver ilp needs a linked ILP solver");
+    dd_options.constraint_passes = res["dd-constraint-passes"].as<int>();
+    dd_options.nmr_pair_beam = res["dd-nmr-pair-beam"].as<int>();
+    dd_options.nmr_witnesses = res["dd-nmr-witnesses"].as<int>();
+    dd_options.nmr_pattern_beam = res["dd-nmr-pattern-beam"].as<int>();
+    dd_options.nmr_bulge_mode = nmr_bulge_mode == NMRBulgeMode::NONE ? 0 : nmr_bulge_mode == NMRBulgeMode::FALLBACK ? 1 : 2;
+    const int constraint_states = res["dd-constraint-states"].as<int>();
+    if (constraint_states < 0) throw std::invalid_argument("DD constraint state budget must be nonnegative");
+    dd_options.constraint_states = constraint_states;
+    dd_options.constraint_recovery_every = res["dd-constraint-recovery-every"].as<int>();
+    dd_options.max_iterations = res["dd-max-iter"].as<int>();
+    dd_options.beam = res["dd-beam"].as<int>();
+    const auto dd_dp = res["dd-dp"].as<std::string>();
+    if (dd_dp != "beam" && dd_dp != "improved-beam" && dd_dp != "nussinov")
+      throw std::invalid_argument("DD DP must be beam, improved-beam or nussinov");
+    dd_options.nussinov_dp = dd_dp == "nussinov";
+    dd_options.improved_beam = dd_dp == "improved-beam";
+    dd_options.crossing_beam = res["dd-crossing-beam"].as<int>();
+    dd_options.witnesses = res["dd-witnesses"].as<int>();
+    dd_options.step = res["dd-step"].as<double>();
+    dd_options.patience = res["dd-patience"].as<int>();
+    dd_options.projected_norm = res["dd-projected-norm"].as<bool>();
+    dd_options.unpruned_bound = res["dd-unpruned-bound"].as<bool>();
+    dd_options.bound_block = res["dd-bound-block"].as<int>();
+    dd_options.bound_every = res["dd-bound-every"].as<int>();
+    dd_options.global_bound = res["dd-global-bound"].as<bool>();
+    dd_options.bound_shift = res["dd-bound-shift"].as<bool>();
+    dd_options.bound_strict_stack = res["dd-bound-strict-stack"].as<bool>();
+    dd_options.joint_bound_width = res["dd-joint-bound"].as<int>();
+    dd_options.joint_bound_clusters = res["dd-joint-clusters"].as<bool>();
+    dd_options.joint_bound_shift = res["dd-joint-shift"].as<bool>();
+    dd_options.joint_bound_matching = res["dd-joint-matching"].as<bool>();
+    dd_options.exchange_width = res["dd-exchange"].as<int>();
+    dd_options.exchange_passes = res["dd-exchange-passes"].as<int>();
+    dd_options.exchange_every = res["dd-exchange-every"].as<int>();
+    const int joint_states = res["dd-joint-states"].as<int>();
+    const int exchange_states = res["dd-exchange-states"].as<int>();
+    if (joint_states < 0 || exchange_states < 0)
+      throw std::invalid_argument("DD window state budgets must be nonnegative");
+    dd_options.joint_bound_states = joint_states;
+    dd_options.exchange_states = exchange_states;
+    dd_options.recovery_cache = res["dd-recovery-cache"].as<bool>();
+    dd_options.recovery_share = res["dd-recovery-share"].as<bool>();
+    dd_options.recovery_every = res["dd-recovery-every"].as<int>();
+    const auto recovery_target = res["dd-recovery-target"].as<std::string>();
+    if (recovery_target != "baseline" && recovery_target != "best")
+      throw std::runtime_error("Invalid --dd-recovery-target: " + recovery_target);
+    dd_options.recovery_target_best = recovery_target == "best";
+    const auto recovery_mode = res["dd-recovery-mode"].as<std::string>();
+    if (recovery_mode == "original") dd_options.recovery_mode = 1;
+    else if (recovery_mode == "mean") dd_options.recovery_mode = 2;
+    else if (recovery_mode == "lookahead") dd_options.recovery_mode = 4;
+    else if (recovery_mode == "all") dd_options.recovery_mode = 7;
+    else throw std::invalid_argument("DD recovery mode must be original, mean, lookahead or all");
+    const auto dd_schedule = res["dd-schedule"].as<std::string>();
+    if (dd_schedule != "polyak" && dd_schedule != "diminishing")
+      throw std::invalid_argument("DD schedule must be polyak or diminishing");
+    dd_options.diminishing_step = dd_schedule == "diminishing";
+    if (res.count("dd-trace")) dd_options.trace_file = res["dd-trace"].as<std::string>();
+    dd_options.trace_state = res["dd-trace-state"].as<bool>();
+    dd_options.validate();
+    if (!dd_options.trace_file.empty()) {
+      if (!dd_options.enabled) throw std::invalid_argument("DD tracing requires --decoder dd");
+      std::ofstream trace(dd_options.trace_file);
+      if (!trace) throw std::runtime_error("Cannot create DD trace: " + dd_options.trace_file);
+    }
+    spdlog::info("Decoder: {}", dd_options.enabled ? "dd" : "ilp");
+    if (dd_options.enabled)
+      spdlog::info("DD DP: {}, beam={}, max iterations={}", res["dd-dp"].as<std::string>(),
+                   dd_options.dp_beam(), dd_options.max_iterations);
     IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th,
                   require_canonical_neighbor, allow_coaxial_stacking,
-                  nmr_options);
+                  nmr_options, pk_score_options, dd_options);
     std::vector<int> bpseq;
     std::vector<int> plevel;
 
@@ -985,10 +1399,15 @@ main(int argc, char* argv[])
       std::string seq;
       float fval, fval_pk;
       auto sbp = aux.calculate_posterior(input.c_str(), seq);
+      if (!constraint.empty()) {
+        bpseq.assign(seq.size(), BPSEQ::DOT);
+        read_constraints(constraint.c_str(), bpseq);
+      }
+      if (stack_constraints.has_constraints() && !(dd_options.enabled && dd_options.linear_constraints)) find_stack_instances(seq, stack_constraints, nmr_bulge_mode);
       if (max_pfval)
-        std::tie(fval, fval_pk) = ipknot.solve(seq, sbp, ep, bpseq, plevel, false, bp_constraints);
+        std::tie(fval, fval_pk) = ipknot.solve(seq, sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints, stack_constraints);
       else
-        ipknot.solve(seq, sbp, t, bpseq, plevel, false, bp_constraints);
+        ipknot.solve(seq, sbp, t, bpseq, plevel, !constraint.empty(), bp_constraints, stack_constraints);
       if (os_bpseq)
         output_bpseq(*os_bpseq, input.c_str(), seq, bpseq, plevel, max_pfval, fval, fval_pk);
       if (os_bpseq!=&std::cout)
@@ -1026,7 +1445,7 @@ main(int argc, char* argv[])
         std::list<Fasta>::iterator fa = f.begin();
 
         // Find stack constraint instances in the sequence
-        if (stack_constraints.has_constraints()) {
+        if (stack_constraints.has_constraints() && !(dd_options.enabled && dd_options.linear_constraints)) {
           find_stack_instances(fa->seq(), stack_constraints, nmr_bulge_mode);
         }
 
@@ -1042,6 +1461,7 @@ main(int argc, char* argv[])
           sbp = en->calculate_posterior(fa->seq());
         }
 
+        const auto input_constraints = constraint.empty() ? VI{} : bpseq;
         if (max_pfval)
           std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints, stack_constraints);
         else
@@ -1050,6 +1470,7 @@ main(int argc, char* argv[])
         for (int i=0; i!=n_refinement; ++i) // iterative refinement
         {
           en->update_bpm(pk_level, fa->seq(), bpseq, plevel, sbp);
+          if (!constraint.empty()) bpseq = input_constraints;
           if (max_pfval)
             std::tie(fval, fval_pk) = ipknot.solve(fa->seq(), sbp, ep, bpseq, plevel, !constraint.empty(), bp_constraints, stack_constraints);
           else
@@ -1077,7 +1498,7 @@ main(int argc, char* argv[])
         }
 
         // Check stack constraints
-        if (stack_constraints.has_constraints() && spdlog::get_level() <= spdlog::level::info) {
+        if (stack_constraints.has_constraints() && !(dd_options.enabled && dd_options.linear_constraints) && spdlog::get_level() <= spdlog::level::info) {
           if (satisfies_stack_constraints(fa->seq(), bpseq, stack_constraints,
                                           allow_coaxial_stacking)) {
             spdlog::info("All stack constraints are satisfied.");
@@ -1138,6 +1559,7 @@ main(int argc, char* argv[])
           sbp = en->calculate_posterior(aln->seq());
         }
         
+        const auto input_constraints = constraint.empty() ? VI{} : bpseq;
         // For alignments, ignore bp_constraints (use empty constraints)
         BPConstraints empty_constraints;
         if (bp_constraints.has_constraints()) {
@@ -1151,6 +1573,7 @@ main(int argc, char* argv[])
         for (int i=0; i!=n_refinement; ++i)
         {
           en->update_bpm(pk_level, aln->seq(), bpseq, plevel, sbp);
+          if (!constraint.empty()) bpseq = input_constraints;
           if (max_pfval)
             std::tie(fval, fval_pk) = ipknot.solve(aln->consensus(), sbp, ep, bpseq, plevel, !constraint.empty(), empty_constraints);
           else

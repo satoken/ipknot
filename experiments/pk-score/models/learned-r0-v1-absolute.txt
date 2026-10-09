@@ -1,0 +1,13 @@
+IPKNOT_PK_LINEAR_V1
+bias -0.7460819555882634
+anchor_support 0.76765031371713732
+weak_support 0.092536030552840112
+weak_min_support 0.076664094400666211
+support_product 0.093274073224881238
+support_gap 0.67511428316429412
+weak_specificity 0
+anchor_specificity_product 0
+min_length 0.71219107826826544
+weak_length 0.52824630083115576
+outer_loop 0.054618881108996341
+middle_loop -0.57723786372827002

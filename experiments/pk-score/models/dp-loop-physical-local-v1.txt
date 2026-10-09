@@ -1,0 +1,4 @@
+IPKNOT_PK_DP_LOCAL_V1
+intercept 0
+energy_scale 1
+temperature 37

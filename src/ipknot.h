@@ -27,6 +27,8 @@
 #include <string>
 #include <list>
 #include <map>
+#include "pk_score.h"
+#include "dual_decomposition.h"
 
 class IP;
 
@@ -171,8 +173,13 @@ struct NMRConstraintOptions {
   bool soft = false;
   double count_penalty = 1.0;  // per missing/excess base pair
   double stack_penalty = 1.0;  // per unsatisfied stacking observation
+  // Separate calibration for automatic threshold selection, not the ILP.
+  double threshold_penalty_scale = 1.0;
   NMRCountMode count_mode = NMRCountMode::EXACT;
   bool allow_shared_stack_pairs = false;
+  // Experimental approximation: both observed coaxial termini must continue
+  // by one directly adjacent selected pair on their stem-facing side.
+  bool coaxial_no_adjacent_bulge = false;
 };
 
 class IPknot
@@ -185,7 +192,9 @@ public:
          bool levelwise, bool stacking_constraints, int n_th,
          bool require_canonical_neighbor = false,
          bool allow_coaxial_stacking = false,
-         NMRConstraintOptions nmr_options = NMRConstraintOptions());
+         NMRConstraintOptions nmr_options = NMRConstraintOptions(),
+         PKScoreOptions pk_score_options = PKScoreOptions(),
+         DDOptions dd_options = DDOptions());
 
 public:
   void solve(const std::string& seq, const VF& bp, const VI& offset,
@@ -215,12 +224,16 @@ private:
                             const VF& th, VI& bpseq, VI& plevel,
                             bool constraint,
                             const BPConstraints& bp_constraints,
-                            const StackConstraints& stack_constraints) const;
+                            const StackConstraints& stack_constraints,
+                            double* pk_score = nullptr,
+                            const PKPosteriorContext* posterior = nullptr) const;
 
   double solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
                const VF& th, VI& bpseq, VI& plevel, bool constraint,
                const BPConstraints& bp_constraints,
-               const StackConstraints& stack_constraints) const;
+               const StackConstraints& stack_constraints,
+               double* pk_score,
+               const PKPosteriorContext* posterior) const;
 
   static auto compute_expected_accuracy(float etp, float etn, float efp, float efn) -> std::tuple<float,float,float,float>;
   static auto compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>;
@@ -239,6 +252,8 @@ private:
   bool require_canonical_neighbor_;  // require canonical base pair above or below for non-canonical pairs
   bool allow_coaxial_stacking_;      // consider flush coaxial stacks in multibranch loops
   NMRConstraintOptions nmr_options_;
+  PKScoreOptions pk_score_options_;
+  DDOptions dd_options_;
 };
 
 template < class T >

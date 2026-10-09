@@ -1,0 +1,4 @@
+IPKNOT_PK_DP_LINEAR_V1
+intercept 1.8523222707481422
+energy_scale 0.043312241784810926
+temperature 37

@@ -20,7 +20,17 @@
 #ifndef __INC_IP_H__
 #define __INC_IP_H__
 
+#include <functional>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
 class IPimpl;
+struct IPModel;
+class IPInfeasible : public std::runtime_error {
+public:
+  explicit IPInfeasible(const std::string& message) : std::runtime_error(message) {}
+};
 
 class IP
 {
@@ -29,10 +39,17 @@ public:
   typedef enum {FR, LO, UP, DB, FX} BoundType;
 
 public:
-  IP(DirType dir, int n_th);
+  IP(DirType dir, int n_th, bool exact = false);
+  static bool available();
+  // Record the shared formulation without constructing a MIP backend.
+  explicit IP(IPModel& model);
   ~IP();
   int make_variable(double coef);
   int make_variable(double coef, int lo, int hi);
+  int make_continuous_variable(double coef, double lo = 0.0, double hi = 1.0);
+  void add_objective_coefficient(int col, double coefficient);
+  // Tag only NOE explanation/context/violation columns in a recorded model.
+  void mark_noe_variable(int col);
   int make_constraint(BoundType bnd, double l, double u);
   void add_constraint(int row, int col, double val);
   void update();
@@ -41,6 +58,22 @@ public:
 
 private:
   IPimpl* impl_;
+  IPModel* model_ = nullptr;
+};
+
+// A solver-independent formulation, used by constrained dual decomposition.
+struct IPModel {
+  struct Variable { double coefficient, lower, upper; bool integer; };
+  struct Row {
+    IP::BoundType bound;
+    double lower, upper;
+    std::vector<std::pair<int, double>> terms;
+  };
+  std::vector<Variable> variables;
+  std::vector<int> noe_columns;
+  std::vector<Row> rows;
+  std::vector<double> solution;
+  std::function<double()> optimize;
 };
 
 #endif  // __INC_IP_H__

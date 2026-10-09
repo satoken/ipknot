@@ -23,6 +23,7 @@
 #include "config.h"
 #endif
 #include "fold.h"
+#include "sparse_posterior.h"
 
 #include <cstring>
 #include <iostream>
@@ -826,6 +827,7 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
   uint N=aln.size();
   uint L=aln.front().size();
   std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  SparsePosteriorAccumulator accumulator(bp);
 
   for (const auto& s: aln)
   {
@@ -843,12 +845,7 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
     for (auto i=1; i!=lbp.size(); ++i)
       for (const auto [j, p]: lbp[i])
       {
-        auto res = std::find_if(std::begin(bp[idx[i-1]+1]), std::end(bp[idx[i-1]+1]),
-                        [&, &j=j](const auto& x) { return x.first==idx[j-1]+1; });
-        if (res != std::end(bp[idx[i-1]+1]))
-          res->second += p/N;
-        else
-          bp[idx[i-1]+1].emplace_back(idx[j-1]+1, p/N);
+        accumulator.add(idx[i-1]+1, idx[j-1]+1, p/N);
       }
   }
 
@@ -932,6 +929,7 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
   uint N=aln.size();
   uint L=aln.front().size();
   std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  SparsePosteriorAccumulator accumulator(bp);
 
   std::vector<int> p = bpseq(paren);
   for (const auto& s: aln)
@@ -964,12 +962,7 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
     for (auto i=1; i!=lbp.size(); ++i)
       for (const auto [j, p]: lbp[i])
       {
-        auto res = std::find_if(std::begin(bp[idx[i-1]+1]), std::end(bp[idx[i-1]+1]),
-                        [&, &j=j](const auto& x) { return x.first==idx[j-1]+1; });
-        if (res != std::end(bp[idx[i-1]+1]))
-          res->second += p/N;
-        else
-          bp[idx[i-1]+1].emplace_back(idx[j-1]+1, p/N);
+        accumulator.add(idx[i-1]+1, idx[j-1]+1, p/N);
       }
   }
 
@@ -1006,6 +999,7 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
 {
   uint L=aln.front().size();
   std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  SparsePosteriorAccumulator accumulator(bp);
   assert(en_.size()==w_.size());
   for (uint k=0; k!=en_.size(); ++k)
   {
@@ -1014,12 +1008,7 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
     {
       for (const auto [j, p]: lbp[i])
       {
-        auto res = std::find_if(std::begin(bp[i]), std::end(bp[i]),
-                          [&, &j=j](const auto& x) { return x.first==j; });
-        if (res != std::end(bp[i]))
-          res->second += p * w_[k];
-        else
-          bp[i].emplace_back(j, p * w_[k]);
+        accumulator.add(i, j, p * w_[k]);
       }
     }
   }
@@ -1056,6 +1045,7 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
 {
   uint L=aln.front().size();
   std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  SparsePosteriorAccumulator accumulator(bp);
   assert(en_.size()==w_.size());
   for (uint k=0; k!=en_.size(); ++k)
   {
@@ -1064,12 +1054,7 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
     {
       for (const auto [j, p]: lbp[i])
       {
-        auto res = std::find_if(std::begin(bp[i]), std::end(bp[i]),
-                          [&, &j=j](const auto& x) { return x.first==j; });
-        if (res != std::end(bp[i]))
-          res->second += p * w_[k];
-        else
-          bp[i].emplace_back(j, p * w_[k]);
+        accumulator.add(i, j, p * w_[k]);
       }
     }
   }
@@ -1154,6 +1139,7 @@ void BPEngineSeq::update_bpm(uint pk_level, const std::string& seq, const VI& bp
   // update the base-pairing probability matrix by the previous result
   uint L = bpseq.size();
   sbp.resize(L+1);
+  SparsePosteriorAccumulator accumulator(sbp);
   
   for (uint l=0; l!=pk_level; ++l)
   {
@@ -1194,12 +1180,7 @@ void BPEngineSeq::update_bpm(uint pk_level, const std::string& seq, const VI& bp
       for (const auto [jl, vl]: sbpl[i]) 
       {
         auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
-        auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
-                            [&, &jl=jl](const auto& x) { return x.first == jl; });
-        if (re != std::end(sbp[i]))
-          re->second += v;
-        else
-          sbp[i].emplace_back(jl, v);
+        accumulator.add(i, jl, v);
       }
     }
   }
@@ -1276,6 +1257,7 @@ void BPEngineAln::update_bpm(uint pk_level, const std::list<std::string>& seq, c
   // update the base-pairing probability matrix by the previous result
   uint L = bpseq.size();
   sbp.resize(L+1);
+  SparsePosteriorAccumulator accumulator(sbp);
   
   for (uint l=0; l!=pk_level; ++l)
   {
@@ -1316,12 +1298,7 @@ void BPEngineAln::update_bpm(uint pk_level, const std::list<std::string>& seq, c
       for (const auto [jl, vl]: sbpl[i]) 
       {
         auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
-        auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
-                            [&, &jl=jl](const auto& x) { return x.first == jl; });
-        if (re != std::end(sbp[i]))
-          re->second += v;
-        else
-          sbp[i].emplace_back(jl, v);
+        accumulator.add(i, jl, v);
       }
     }
   }

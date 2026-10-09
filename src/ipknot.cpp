@@ -31,14 +31,25 @@
 #include <iterator>
 #include <list>
 #include <limits>
+#include <memory>
 #include <set>
 #include <sstream>
+#include <unordered_set>
+#include <unordered_map>
+#include <cstdint>
 
 #include "ipknot.h"
 #include "ip.h"
+#include "dd_constrained.h"
+#include "dd_constraint_builder.h"
 #include "bpseq.h"
+#include "nmr_pair_index.h"
+#include "nmr_sequence_index.h"
+#include "nmr_candidate_filter.h"
+#include "pk_ensemble.h"
 
 #include "spdlog/spdlog.h"
+#include "spdlog/stopwatch.h"
 //#include "spdlog/sinks/basic_file_sink.h"
 
 // Utility functions for base pair type normalization
@@ -85,6 +96,12 @@ bool BPConstraints::has_noncanonical_constraints() const {
 }
 
 using Pair = std::pair<int, int>;
+struct NMRPairHash {
+  size_t operator()(const Pair& pair) const {
+    const auto key = (uint64_t(uint32_t(pair.first)) << 32) | uint32_t(pair.second);
+    return std::hash<uint64_t>{}(key);
+  }
+};
 
 static bool pair_encloses(const Pair& outer, const Pair& inner) {
   return outer.first < inner.first && inner.second < outer.second;
@@ -117,20 +134,43 @@ collect_candidate_pairs(const VVSVI& v_l) {
 static void
 find_coaxial_instances(const std::string& seq, const VVSVI& v_l,
                        StackConstraints& stack_constraints) {
-  const auto ordinary_pairs = collect_candidate_pairs(v_l);
-  std::map<std::string, std::vector<Pair>> observed_by_type;
   std::set<std::string> observed_types;
   for (const auto& constraint : stack_constraints.constraints) {
     if (constraint.size() == 2) {
       observed_types.insert(constraint.bp_types.begin(), constraint.bp_types.end());
     }
   }
+  if (observed_types.empty()) {
+    spdlog::info("Found 0 flush coaxial-stacking instances");
+    return;
+  }
+  const auto ordinary_pairs = collect_candidate_pairs(v_l);
+  const NMRPairRangeIndex support_index(ordinary_pairs);
+  auto find_supports = [&](int left_low, int left_high, int right_low, int right_high) {
+    std::vector<size_t> indices;
+    support_index.append(left_low, left_high, right_low, right_high, indices);
+    std::vector<Pair> supports;
+    supports.reserve(indices.size());
+    for (size_t index : indices) supports.push_back(ordinary_pairs[index]);
+    return supports;
+  };
 
-  for (int i = 0; i < static_cast<int>(seq.size()); ++i) {
-    for (int j = i + 4; j < static_cast<int>(seq.size()); ++j) {
-      const auto type = normalize_base_pair_type(seq[i], seq[j]);
-      if (observed_types.count(type)) observed_by_type[type].emplace_back(i, j);
-    }
+  const NMRSequenceIndex sequence_index(seq, normalize_base,
+      [](char a, char b) { return normalize_base_pair_type(a, b); });
+  struct ObservedPairs {
+    std::vector<Pair> pairs;
+    std::map<int, std::vector<Pair>> by_left, by_right;
+  };
+  std::map<std::string, ObservedPairs> observed;
+  for (const auto& type : observed_types) {
+    auto& index = observed[type];
+    sequence_index.for_each_pair({NMRSequenceIndex::type_code(type)}, 4,
+        [&](size_t i, size_t j) {
+          const Pair pair{static_cast<int>(i), static_cast<int>(j)};
+          index.pairs.push_back(pair);
+          index.by_left[pair.first].push_back(pair);
+          index.by_right[pair.second].push_back(pair);
+        });
   }
 
   using InstanceKey = std::tuple<int, int, int, int, int, int>;
@@ -160,14 +200,9 @@ find_coaxial_instances(const std::string& seq, const VVSVI& v_l,
       const auto& type1 = constraint.bp_types[direction == 0 ? 0 : 1];
       const auto& type2 = constraint.bp_types[direction == 0 ? 1 : 0];
       if (direction == 1 && type1 == type2) continue;
-      const auto& pairs1 = observed_by_type[type1];
-      const auto& pairs2 = observed_by_type[type2];
-      std::map<int, std::vector<Pair>> pairs2_by_left;
-      std::map<int, std::vector<Pair>> pairs2_by_right;
-      for (const auto& p : pairs2) {
-        pairs2_by_left[p.first].push_back(p);
-        pairs2_by_right[p.second].push_back(p);
-      }
+      const auto& pairs1 = observed.at(type1).pairs;
+      const auto& pairs2_by_left = observed.at(type2).by_left;
+      const auto& pairs2_by_right = observed.at(type2).by_right;
 
       // Closing helix coaxially stacked with its first direct child.
       for (const auto& closing : pairs1) {
@@ -175,11 +210,8 @@ find_coaxial_instances(const std::string& seq, const VVSVI& v_l,
         if (children == pairs2_by_left.end()) continue;
         for (const auto& child : children->second) {
           if (!pair_encloses(closing, child)) continue;
-          std::vector<Pair> supports;
-          for (const auto& p : ordinary_pairs) {
-            if (child.second < p.first && p.second < closing.second)
-              supports.push_back(p);
-          }
+          auto supports = find_supports(child.second, closing.second,
+                                       NMRPairRangeIndex::low, closing.second);
           add_instance(constraint_id, CoaxialKind::CLOSING_FIRST_CHILD,
                        closing, HelixFace::INNER, child, HelixFace::OUTER,
                        std::move(supports));
@@ -191,11 +223,8 @@ find_coaxial_instances(const std::string& seq, const VVSVI& v_l,
         const auto children = pairs2_by_left.find(child1.second + 1);
         if (children == pairs2_by_left.end()) continue;
         for (const auto& child2 : children->second) {
-          std::vector<Pair> supports;
-          for (const auto& p : ordinary_pairs) {
-            if (pair_encloses(p, child1) && pair_encloses(p, child2))
-              supports.push_back(p);
-          }
+          auto supports = find_supports(NMRPairRangeIndex::low, child1.first,
+                                       child2.second, NMRPairRangeIndex::high);
           add_instance(constraint_id, CoaxialKind::ADJACENT_CHILDREN,
                        child1, HelixFace::OUTER, child2, HelixFace::OUTER,
                        std::move(supports));
@@ -208,11 +237,8 @@ find_coaxial_instances(const std::string& seq, const VVSVI& v_l,
         if (closings == pairs2_by_right.end()) continue;
         for (const auto& closing : closings->second) {
           if (!pair_encloses(closing, child)) continue;
-          std::vector<Pair> supports;
-          for (const auto& p : ordinary_pairs) {
-            if (closing.first < p.first && p.second < child.first)
-              supports.push_back(p);
-          }
+          auto supports = find_supports(closing.first, child.first,
+                                       NMRPairRangeIndex::low, child.first);
           add_instance(constraint_id, CoaxialKind::LAST_CHILD_CLOSING,
                        child, HelixFace::OUTER, closing, HelixFace::INNER,
                        std::move(supports));
@@ -229,7 +255,8 @@ IPknot::IPknot(uint pk_level, const float* alpha,
          bool levelwise, bool stacking_constraints, int n_th,
          bool require_canonical_neighbor,
          bool allow_coaxial_stacking,
-         NMRConstraintOptions nmr_options)
+         NMRConstraintOptions nmr_options,
+         PKScoreOptions pk_score_options, DDOptions dd_options)
     : pk_level_(pk_level),
       alpha_(alpha, alpha+pk_level_),
       levelwise_(levelwise),
@@ -237,8 +264,20 @@ IPknot::IPknot(uint pk_level, const float* alpha,
       n_th_(n_th),
       require_canonical_neighbor_(require_canonical_neighbor),
       allow_coaxial_stacking_(allow_coaxial_stacking),
-      nmr_options_(nmr_options)
+      nmr_options_(nmr_options),
+      pk_score_options_(std::move(pk_score_options)),
+      dd_options_(dd_options)
 {
+    pk_score_options_.validate();
+    dd_options_.validate();
+    if (pk_score_options_.ensemble && !dd_options_.enabled)
+      throw std::invalid_argument("Experimental PK ensemble requires DD");
+    if (pk_score_options_.best_partner && !dd_options_.enabled)
+      throw std::invalid_argument("Experimental PK best-partner factor requires DD");
+    if (dd_options_.enabled && !levelwise_)
+      throw std::invalid_argument("DD requires levelwise prediction; remove --no-levelwise or use --decoder ilp");
+    if ((pk_score_options_.projected || pk_score_options_.supported || pk_score_options_.crossing) && !levelwise_)
+      throw std::invalid_argument("Projected, supported and crossing PK scoring require levelwise prediction");
 }
 
 #if 0
@@ -289,19 +328,86 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
              const BPConstraints& bp_constraints,
              const StackConstraints& stack_constraints) const
 {
+    std::unique_ptr<PKPosteriorContext> posterior;
+    if (pk_score_options_.needs_posterior_context())
+      posterior = std::make_unique<PKPosteriorContext>(bp);
     solve_with_penalty(seq, bp, th, bpseq, plevel, constraint,
-                       bp_constraints, stack_constraints);
+                       bp_constraints, stack_constraints, nullptr, posterior.get());
 }
 
 double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
              const BPConstraints& bp_constraints,
-             const StackConstraints& stack_constraints) const
+             const StackConstraints& stack_constraints,
+             double* pk_score,
+             const PKPosteriorContext* posterior) const
 {
+    if(pk_score_options_.best_partner && (constraint || bp_constraints.has_constraints() || stack_constraints.has_constraints()))
+      throw std::invalid_argument("Experimental PK best-partner factor requires unconstrained DD");
+    if (pk_score) *pk_score = 0.0;
+    if (dd_options_.enabled && !constraint && !bp_constraints.has_constraints() && !stack_constraints.has_constraints()) {
+      if (th.size() != pk_level_ || bp.size() != seq.size() + 1)
+        throw std::invalid_argument("Invalid sparse posterior or threshold dimensions for DD");
+      std::vector<DDPair> pairs;
+      for (unsigned i = 1; i < bp.size(); ++i)
+        for (const auto& [j, p] : bp[i]) {
+          if (j == 0 || j >= bp.size() || j == i || !std::isfinite(p) || p < 0)
+            throw std::invalid_argument("Invalid sparse posterior pair for DD");
+          if (i >= j) continue;
+          for (unsigned level = 0; level < pk_level_; ++level) {
+            const double cut = pk_score_options_.candidate_threshold < 0 ? th[level]
+                : std::min<double>(th[level], pk_score_options_.candidate_threshold);
+            if (p > cut) pairs.push_back({static_cast<int>(i - 1), static_cast<int>(j - 1),
+                static_cast<int>(level), (p - th[level]) * alpha_[level]
+                    - (level > 0 ? pk_score_options_.level_penalty : 0)});
+          }
+        }
+      const auto result = solve_dual_decomposition(seq.size(), pairs, pk_level_,
+          stacking_constraints_, dd_options_, pk_score_options_, posterior);
+      bpseq = result.bpseq; plevel = result.levels;
+      if (pk_score) *pk_score = result.pk_score;
+      spdlog::info("DD: iterations={}, pairs={}, support_rows={}, contacts={}, scored_contacts={}, "
+                   "crossing_beam_drops={}, witness_drops={}, objective={:.12g}, "
+                   "graph_upper_bound={:.12g}, PK_score={:.12g}, stop={}",
+                   result.iterations, result.pairs, result.support_rows, result.contacts,
+                   result.scored_contacts, result.crossing_beam_drops, result.witness_drops,
+                   result.objective, result.upper_bound, result.pk_score, result.stop_reason);
+      if (pk_score_options_.projected)
+        spdlog::info("DD PK projection: {} sampled scored block pairs, {} unary coefficients; "
+                     "no additional variables or support rows",
+                     result.projected_blocks, result.projected_pairs);
+      return 0.0;
+    }
+    if (dd_options_.enabled && dd_options_.linear_constraints)
+      return decode_linear_constraints(seq, bp, th, alpha_, pk_level_, stacking_constraints_,
+          require_canonical_neighbor_, allow_coaxial_stacking_, nmr_options_, pk_score_options_,
+          dd_options_, bpseq, plevel, constraint, bp_constraints, stack_constraints, pk_score, posterior);
     uint L = seq.size();
     StackConstraints effective_stack_constraints = stack_constraints;
     effective_stack_constraints.coaxial_instances.clear();
-    IP ip(IP::MAX, n_th_);
+    IPModel dd_model;
+    auto ip_owner = dd_options_.enabled ? std::make_unique<IP>(dd_model)
+                                       : std::make_unique<IP>(IP::MAX, n_th_);
+    IP& ip = *ip_owner;
+    if (dd_options_.enabled) {
+      if (th.size() != pk_level_ || bp.size() != seq.size() + 1 ||
+          (constraint && bpseq.size() != seq.size()))
+        throw std::invalid_argument("Invalid constrained DD input dimensions");
+      if (pk_score_options_.has_h_score() &&
+          ((!pk_score_options_.crossing && !pk_score_options_.projected) || !pk_score_options_.fixed_blocks))
+        throw std::invalid_argument("DD PK scoring requires crossing or projected with blocks");
+      if (!pk_score_options_.feature_output.empty() || pk_score_options_.rerank ||
+          pk_score_options_.supported)
+        throw std::invalid_argument("DD does not support PK feature export, rerank or supported scoring");
+      for (unsigned i = 1; i < bp.size(); ++i) for (const auto& [j, p] : bp[i])
+        if (j == 0 || j >= bp.size() || j == i || !std::isfinite(p) || p < 0)
+          throw std::invalid_argument("Invalid sparse posterior pair for DD");
+      if (constraint) for (int i = 0; i < static_cast<int>(seq.size()); ++i) {
+        if (bpseq[i] >= static_cast<int>(seq.size()) || bpseq[i] == i || bpseq[i] < BPSEQ::LR ||
+            (bpseq[i] >= 0 && bpseq[bpseq[i]] != i))
+          throw std::invalid_argument("Invalid fixed structure for DD");
+      }
+    }
     VVSVI v_l(pk_level_, VSVI(L));
     VVSVI v_r(pk_level_, VSVI(L));
     VI c_l(L, 0), c_r(L, 0);
@@ -329,6 +435,11 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
     }
 
     // make objective variables with their weights (canonical base pairs first)
+    // Allocate a sparse membership index only for the NMR path. No dense L*L
+    // table is introduced into LinearPartition's ordinary sparse path.
+    const bool need_pair_membership = !required_noncanonical_bp_types.empty() ||
+                                     effective_stack_constraints.has_constraints();
+    std::vector<std::unordered_set<uint>> pair_membership(need_pair_membership ? L : 0);
     for (auto i=1; i<=L; ++i)
     {
       bool found_constraint_j = false;
@@ -336,28 +447,34 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
         if (i<j)
         {
           for (auto lv=0; lv!=pk_level_; ++lv)
-            if (p>th[lv] || (constraint && bpseq[i-1]==j-1))
+            if (p > (pk_score_options_.candidate_threshold < 0
+                         ? th[lv] : std::min<double>(th[lv], pk_score_options_.candidate_threshold))
+                || (constraint && bpseq[i-1]==j-1))
             {
-              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]
+                  - (lv > 0 ? pk_score_options_.level_penalty : 0.0));
               v_l[lv][i-1].emplace_back(j-1, v_ij);
               v_r[lv][j-1].emplace_back(i-1, v_ij);
               c_l[i-1]++; c_r[j-1]++;
               n++;
+              if (need_pair_membership && lv == 0) pair_membership[i-1].insert(j-1);
             }
           if (constraint && bpseq[i-1]==j-1) found_constraint_j = true;
         }
 
-      if (constraint && !found_constraint_j && bpseq[i-1]>=0)
+      if (constraint && !found_constraint_j && bpseq[i-1]>=0 && i-1<bpseq[i-1])
       {
         const auto j = bpseq[i-1]+1;
         const auto p = 0.0;
         for (auto lv=0; lv!=pk_level_; ++lv)
         {
-          const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+          const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]
+                  - (lv > 0 ? pk_score_options_.level_penalty : 0.0));
           v_l[lv][i-1].emplace_back(j-1, v_ij);
           v_r[lv][j-1].emplace_back(i-1, v_ij);
           c_l[i-1]++; c_r[j-1]++;
           n++;
+          if (need_pair_membership && lv == 0) pair_membership[i-1].insert(j-1);
         }
       }
     }
@@ -367,27 +484,26 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
     }
 
     // Helper function to check if a variable exists for position (i, j) at level 0
-    auto has_variable_at = [&v_l](uint i_0idx, uint j_0idx) -> bool {
-      for (const auto [jj, v_ij]: v_l[0][i_0idx]) {
-        if (jj == j_0idx) {
-          return true;
-        }
-      }
-      return false;
+    auto has_variable_at = [&pair_membership](uint i_0idx, uint j_0idx) -> bool {
+      return pair_membership[i_0idx].count(j_0idx) != 0;
     };
 
     // Add non-canonical base pairs that are required by constraints
     // This is done after canonical base pairs so we can check for canonical neighbors
     if (!required_noncanonical_bp_types.empty()) {
-      for (auto i=1; i<=L; ++i) {
-        for (auto j=i+4; j<=L; ++j) {  // j >= i+4 to avoid sharp hairpin (at least 3 bases between i and j)
-          std::string bp_type = normalize_base_pair_type(seq[i-1], seq[j-1]);
-
-          // Only add if this type is required by constraints
-          if (required_noncanonical_bp_types.count(bp_type) > 0) {
+      const NMRSequenceIndex sequence_index(seq, normalize_base,
+          [](char a, char b) { return normalize_base_pair_type(a, b); });
+      std::vector<uint16_t> required_types;
+      for (const auto& type : required_noncanonical_bp_types)
+        required_types.push_back(NMRSequenceIndex::type_code(type));
+      // Preserve i/j insertion order, including mutable neighbor checks, but
+      // never visit the unrequested pair types or allocate a dense type table.
+      sequence_index.for_each_pair(required_types, 4, [&](size_t left, size_t right) {
+          const auto i = left + 1, j = right + 1;
+          const std::string bp_type = normalize_base_pair_type(seq[left], seq[right]);
             // Check if this non-canonical pair is already added
             if (has_variable_at(i-1, j-1)) {
-              continue;
+              return;
             }
 
             // If require_canonical_neighbor_ is set, check if canonical neighbor variable exists
@@ -407,23 +523,23 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
               }
               if (!has_canonical_neighbor) {
                 spdlog::debug("Skipping non-canonical base pair ({},{}) type {}: no canonical neighbor variable", i, j, bp_type);
-                continue;
+                return;
               }
             }
 
             // Add with zero weight (will only be selected if constraint requires it)
             const auto p = 0.0;
             for (auto lv=0; lv!=pk_level_; ++lv) {
-              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]
+                  - (lv > 0 ? pk_score_options_.level_penalty : 0.0));
               v_l[lv][i-1].emplace_back(j-1, v_ij);
               v_r[lv][j-1].emplace_back(i-1, v_ij);
               c_l[i-1]++; c_r[j-1]++;
               n++;
+              if (lv == 0) pair_membership[i-1].insert(j-1);
             }
             spdlog::debug("Added non-canonical base pair ({},{}) type {} for constraint", i, j, bp_type);
-          }
-        }
-      }
+      });
     }
 
     // Every pair belonging to a concrete stack/bulge instance must be an IP
@@ -445,26 +561,52 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
           continue;
         }
         for (auto lv=0; lv!=pk_level_; ++lv) {
-          const auto v_ij = ip.make_variable((0.0-th[lv])*alpha_[lv]);
+          const auto v_ij = ip.make_variable((0.0-th[lv])*alpha_[lv]
+              - (lv > 0 ? pk_score_options_.level_penalty : 0.0));
           v_l[lv][i].emplace_back(j, v_ij);
           v_r[lv][j].emplace_back(i, v_ij);
           c_l[i]++; c_r[j]++;
           n++;
+          if (lv == 0) pair_membership[i].insert(j);
         }
         spdlog::debug("Added base pair ({},{}) required by stack/bulge/coaxial constraint", i+1, j+1);
       }
+    }
+    if (dd_options_.enabled) {
+      dd_model.optimize = [&]() {
+        std::vector<DDPair> pairs;
+        std::vector<int> columns;
+        for (unsigned level = 0; level < pk_level_; ++level)
+          for (int i = 0; i < static_cast<int>(L); ++i)
+            for (const auto& [j, col] : v_l[level][i]) {
+              pairs.push_back({i, static_cast<int>(j), static_cast<int>(level), dd_model.variables[col].coefficient});
+              columns.push_back(col);
+            }
+        const auto result = solve_constrained_dd(L, pairs, columns, pk_level_, dd_model, dd_options_);
+        if (dd_options_.noe_ilp)
+          spdlog::info("DD NOE ILP: variables={}, rows={}, calls={}, cache_hits={}, time={:.6f}s, "
+                       "primal_calls={}, primal_feasible={}, primal_time={:.6f}s",
+                       result.noe_ilp_variables, result.noe_ilp_rows, result.noe_ilp_calls,
+                       result.noe_ilp_cache_hits, result.noe_ilp_seconds,
+                       result.noe_primal_calls, result.noe_primal_feasible, result.noe_primal_seconds);
+        spdlog::info("DD: iterations={}, pairs={}, constraint_rows={}, objective={:.12g}, "
+                     "model_upper_bound={:.12g}, repair_states={}, repair_budget_exhausted={}, stop={}",
+                     result.iterations, pairs.size(), dd_model.rows.size(), result.objective,
+                     result.upper_bound, result.repair_states, result.repair_budget_exhausted, result.stop_reason);
+        return result.objective;
+      };
     }
     ip.update();
 
     // Constraints must still be processed when the posterior threshold leaves
     // no ordinary candidate pairs.  Soft constraints then pay a violation
     // penalty; hard constraints correctly report infeasibility/no instances.
-    if (n>0 || bp_constraints.has_constraints() ||
+    if (n>0 || constraint || bp_constraints.has_constraints() ||
         effective_stack_constraints.has_constraints())
     {
       const double penalty = solve(seq, ip, v_l, v_r, c_l, c_r, th,
                                    bpseq, plevel, constraint, bp_constraints,
-                                   effective_stack_constraints);
+                                   effective_stack_constraints, pk_score, posterior);
       return penalty;
     }
     else
@@ -473,6 +615,8 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
       std::fill(std::begin(bpseq), std::end(bpseq), -1);
       plevel.resize(L);
       std::fill(std::begin(plevel), std::end(plevel), -1);
+      if (!pk_score_options_.feature_output.empty())
+        PKScoreModel().write_features(pk_score_options_.feature_output, seq, th, ip);
       return 0.0;
     }
   }
@@ -480,7 +624,9 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
 double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
              const BPConstraints& bp_constraints,
-             const StackConstraints& stack_constraints) const
+             const StackConstraints& stack_constraints,
+             double* pk_score,
+             const PKPosteriorContext* posterior) const
 {
     uint L = seq.size();
     struct CountViolationVars {
@@ -533,6 +679,8 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       }
       if (row_l<0 || row_r<0)
       {
+        if (dd_options_.enabled)
+          throw DDInfeasible("Fixed paired-base constraint has no candidate partner");
         spdlog::warn("invalid constraint for the base {}, ignored.", i+1);
         row_l = row_r = ip.make_constraint(IP::UP, 0, 1); // fallback to no constraint
       }
@@ -572,6 +720,14 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       }
     }
 
+    PKScoreModel pk_model;
+    double pk_formulation_seconds = 0;
+    if (pk_score_options_.has_h_score() && !pk_score_options_.rerank) {
+      spdlog::stopwatch pk_timer;
+      pk_model = add_pk_h_score(ip, v_l, pk_score_options_, posterior);
+      pk_formulation_seconds = pk_timer.elapsed().count();
+    }
+
     if (levelwise_)
     {
       // constraint 2: disallow pseudoknots in x[lv]
@@ -587,26 +743,18 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
                   ip.add_constraint(row, v_kl, 1);
                 }
 
-      // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
-      for (auto lv=1; lv!=pk_level_; ++lv)
-        for (auto k=0; k<v_l[lv].size(); ++k)
-          for (auto [l, v_kl]: v_l[lv][k])
-            for (auto plv=0; plv!=lv; ++plv)
-            {
-              int row = ip.make_constraint(IP::LO, 0, 0);
-              ip.add_constraint(row, v_kl, -1);
-              for (auto i=0; i<k; ++i)
-                for (auto [j, v_ij]: v_l[plv][i])
-                  if (k<j && j<l)
-                    ip.add_constraint(row, v_ij, 1);
-
-              for (auto i=k+1; i<l; ++i)
-                for (auto [j, v_ij]: v_l[plv][i])
-                  if (l<j)
-                    ip.add_constraint(row, v_ij, 1);
-            }
+      // A crossing partner is required in every lower level. Supported
+      // projection reuses these rows and retains only compatible partners.
+      spdlog::stopwatch crossing_timer;
+      add_pk_crossing_constraints(ip, v_l, pk_score_options_, pk_model);
+      if (pk_score_options_.supported || pk_score_options_.crossing)
+        pk_formulation_seconds += crossing_timer.elapsed().count();
     }
 
+    const bool has_bulged_instance = std::any_of(
+        stack_constraints.instances.begin(), stack_constraints.instances.end(),
+        [](const StackInstance& instance) { return instance.has_bulge; });
+    const int max_neighbor_distance = has_bulged_instance ? 2 : 1;
     if (stacking_constraints_)
     {
       // Relax ordinary stacking support only when the effective NMR witness
@@ -614,11 +762,6 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       // --nmr-bulge-mode none must retain IPknot's original adjacent-pair
       // rule instead of broadening the feasible structure set merely because
       // an NMR stack constraint is present.
-      const bool has_bulged_instance = std::any_of(
-          stack_constraints.instances.begin(),
-          stack_constraints.instances.end(),
-          [](const StackInstance& instance) { return instance.has_bulge; });
-      const int max_neighbor_distance = has_bulged_instance ? 2 : 1;
       spdlog::debug("Stacking neighbor distance: {}", max_neighbor_distance);
       for (auto lv=0; lv!=pk_level_; ++lv)
       {
@@ -654,6 +797,53 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
           }
         }
       }
+    }
+
+    if (pk_score_options_.has_h_score() && !pk_score_options_.rerank) {
+      if (pk_score_options_.crossing) {
+        spdlog::info("PK crossing scores: {} H candidates, {} continuous variables, "
+                     "0 additional integer variables, {} additional rows, {} weighted crossing edges; "
+                     "built in {:.6f}s",
+                     pk_model.motifs, pk_model.continuous_variables, pk_model.rows,
+                     pk_model.weighted_crossings, pk_formulation_seconds);
+        if (pk_score_options_.simplify_crossing)
+          spdlog::info("PK crossing simplification: {} direct rows, {} direct edges; no extra variables or rows",
+                       pk_model.direct_crossing_rows, pk_model.direct_crossing_edges);
+        if (pk_score_options_.tight_crossing_bounds)
+          spdlog::info("PK crossing bounds: {} tightened rows, width {:.12g} -> {:.12g}; no extra variables or rows",
+                       pk_model.tightened_bound_rows, pk_model.crossing_bound_width_before,
+                       pk_model.crossing_bound_width_after);
+      } else if (pk_score_options_.supported) {
+        spdlog::info("PK supported projection: {} H candidates, {} level-pair coefficients, "
+                     "{} tightened existing rows, {} removed crossing coefficients; "
+                     "0 additional variables, 0 additional rows; built in {:.6f}s",
+                     pk_model.motifs, pk_model.terms.size(), pk_model.tightened_rows,
+                     pk_model.removed_crossings, pk_formulation_seconds);
+      } else if (pk_score_options_.projected) {
+        spdlog::info("PK projection: {} H candidates, {} level-pair coefficients, "
+                     "0 additional variables, 0 additional rows; built in {:.6f}s",
+                     pk_model.motifs, pk_model.terms.size(), pk_formulation_seconds);
+      } else {
+        spdlog::info(
+            "PK formulation: {} H motifs, {} shared stems, {} shared intervals, "
+            "{} continuous variables, 0 additional integer variables, {} rows, "
+            "{} nonzeros; built in {:.6f}s",
+            pk_model.motifs, pk_model.stems, pk_model.intervals,
+            pk_model.continuous_variables, pk_model.rows, pk_model.nonzeros,
+            pk_formulation_seconds);
+      }
+      if (pk_score_options_.fixed_blocks)
+        spdlog::info("PK blocks: candidates={}, outside_domain={}, eligible={}, skipped={}, "
+                     "scored={}, covered_crossings={}, DP={}, CC06={}, CC09={}, DP_fallback={}",
+                     pk_model.candidate_blocks, pk_model.out_of_domain_blocks,
+                     pk_model.eligible_block_pairs, pk_model.skipped_block_pairs,
+                     pk_model.scored_block_pairs, pk_model.covered_crossing_pairs,
+                     pk_model.energy_dp_motifs, pk_model.energy_cc06_motifs,
+                     pk_model.energy_cc09_motifs, pk_model.energy_fallback_motifs);
+      if (pk_score_options_.needs_posterior_context())
+        spdlog::info("PK learned blocks: exported={}, missing_posterior={}, unsupported={}",
+                     pk_model.block_features.size(), pk_model.missing_posterior_block_pairs,
+                     pk_model.unsupported_block_pairs);
     }
 
     // Add base pair type constraints if specified
@@ -731,7 +921,36 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       // Create level-independent base pair variables for stack constraints
       // bp_pair[i][j] = 1 if positions i and j form a base pair at any level
       // Only create variables for base pairs used in stack constraint instances
-      std::map<std::pair<int,int>, int> bp_pair_vars;
+      std::unordered_map<Pair, int, NMRPairHash> bp_pair_vars;
+      spdlog::stopwatch nmr_build_timer;
+
+      // Index once instead of searching sparse rows again for every witness
+      // and every topology blocker. Retain the first variable at each level,
+      // as the former sparse-row lookup did.
+      std::map<Pair, std::vector<int>> pair_level_vars;
+      for (auto lv = 0; lv != pk_level_; ++lv) {
+        for (int i = 0; i < static_cast<int>(L); ++i) {
+          for (const auto& [j, var] : v_l[lv][i]) {
+            auto& vars = pair_level_vars[{i, static_cast<int>(j)}];
+            if (vars.empty()) vars.resize(pk_level_, -1);
+            if (vars[lv] < 0) vars[lv] = var;
+          }
+        }
+      }
+      std::vector<Pair> pair_keys;
+      pair_keys.reserve(pair_level_vars.size());
+      for (const auto& [pair, vars] : pair_level_vars) pair_keys.push_back(pair);
+      const NMRCandidateFilter candidate_filter(
+          L, pair_keys, stacking_constraints_ ? max_neighbor_distance : 0);
+      std::unique_ptr<NMRPairRangeIndex> topology_index;
+      if (!stack_constraints.coaxial_instances.empty())
+        topology_index = std::make_unique<NMRPairRangeIndex>(pair_keys);
+      std::vector<std::vector<const StackInstance*>> stacks_by_observation(stack_constraints.constraints.size());
+      std::vector<std::vector<const CoaxialInstance*>> coaxials_by_observation(stack_constraints.constraints.size());
+      for (const auto& instance : stack_constraints.instances)
+        stacks_by_observation.at(instance.constraint_id).push_back(&instance);
+      for (const auto& instance : stack_constraints.coaxial_instances)
+        coaxials_by_observation.at(instance.constraint_id).push_back(&instance);
 
       // First pass: identify all base pairs needed by stack constraint instances
       std::set<std::pair<int,int>> required_pairs;
@@ -750,18 +969,10 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
 
       // Second pass: create bp_pair_var only for required pairs
       for (const auto& [i, j] : required_pairs) {
-        bool has_level_variable = false;
-        for (auto lv = 0; lv != pk_level_ && !has_level_variable; ++lv) {
-          for (const auto [j2, v_ij] : v_l[lv][i]) {
-            if (j2 == j) {
-              has_level_variable = true;
-              break;
-            }
-          }
-        }
+        const auto level_it = pair_level_vars.find({i, j});
         // A textual pattern match is not necessarily a feasible RNA base-pair
         // candidate (for example, it may violate the minimum hairpin length).
-        if (!has_level_variable) {
+        if (level_it == pair_level_vars.end()) {
           continue;
         }
 
@@ -775,50 +986,64 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
         ip.add_constraint(row, bp_pair_var, 1);
 
         // Add all level-specific variables for this position
-        for (auto lv = 0; lv != pk_level_; ++lv) {
-          for (const auto [j2, v_ij] : v_l[lv][i]) {
-            if (j2 == j) {
-              ip.add_constraint(row, v_ij, -1);
-              break;
-            }
-          }
+        for (int var : level_it->second) {
+          if (var >= 0) ip.add_constraint(row, var, -1);
         }
       }
 
       spdlog::info("Created {} level-independent base pair variables for stack constraints", bp_pair_vars.size());
 
-      // Store all witness variables and their base pairs for the compact
-      // per-base-pair capacity constraints below.
+      // Exact-one per observation lets implications be aggregated: at integer
+      // points sum(witnesses using pair) <= selected_pair is equivalent to
+      // separate implications plus the no-sharing capacity. Its LP relaxation
+      // is stronger, and it needs one row per pair rather than per incidence.
+      // With sharing enabled the aggregation must be per observation.
       std::vector<int> all_instance_vars;
-      std::vector<std::vector<int>> all_instance_bp_vars;
       std::vector<int> instance_to_constraint_id;
+      std::map<int, std::vector<int>> global_pair_witnesses;
       std::map<std::tuple<int,int,int>, std::vector<int>> coaxial_face_vars;
-      const auto all_candidate_pairs = collect_candidate_pairs(v_l);
+      size_t unaggregated_pair_rows = 0;
+      size_t pair_link_rows = 0;
+      size_t unaggregated_topology_rows = 0;
+      size_t topology_rows = 0;
+      size_t coaxial_context_vars = 0;
+      size_t pruned_stack_infeasible = 0;
+      size_t pruned_coaxial_infeasible = 0;
+      size_t pruned_coaxial_adjacent_bulge = 0;
 
       auto add_pair_sum = [&](int row, const Pair& pair, double coefficient) {
-        int count = 0;
-        for (auto lv = 0; lv != pk_level_; ++lv) {
-          for (const auto& [j2, v_ij] : v_l[lv][pair.first]) {
-            if (static_cast<int>(j2) == pair.second) {
-              ip.add_constraint(row, v_ij, coefficient);
-              ++count;
-              break;
-            }
-          }
+        for (int var : pair_level_vars.at(pair)) {
+          if (var >= 0) ip.add_constraint(row, var, coefficient);
         }
-        return count;
+      };
+      auto add_pair_links = [&](const std::map<int, std::vector<int>>& groups) {
+        for (const auto& [bp_var, witnesses] : groups) {
+          int row = ip.make_constraint(IP::UP, 0, 0);
+          for (int witness : witnesses) ip.add_constraint(row, witness, 1);
+          ip.add_constraint(row, bp_var, -1);
+          ++pair_link_rows;
+        }
       };
 
       // For each stack constraint, at least one instance must be selected
       for (size_t constraint_id = 0; constraint_id < stack_constraints.constraints.size(); ++constraint_id)
       {
         std::vector<int> instance_vars;  // Variables representing each instance
+        std::map<int, std::vector<int>> observation_pair_witnesses;
+        std::vector<std::vector<int>> blocker_witnesses(pair_keys.size());
+        auto register_pairs = [&](int witness, const std::vector<int>& bp_vars) {
+          auto& groups = nmr_options_.allow_shared_stack_pairs
+              ? observation_pair_witnesses : global_pair_witnesses;
+          for (int bp_var : bp_vars) {
+            groups[bp_var].push_back(witness);
+            ++unaggregated_pair_rows;
+          }
+        };
 
         // For each instance of this constraint (now level-independent)
-        for (size_t inst_idx = 0; inst_idx < stack_constraints.instances.size(); ++inst_idx)
+        for (const auto* instance_pointer : stacks_by_observation[constraint_id])
         {
-          const auto& instance = stack_constraints.instances[inst_idx];
-          if (instance.constraint_id != (int)constraint_id) continue;
+          const auto& instance = *instance_pointer;
 
           // Find the level-independent bp_pair variables for this instance
           std::vector<int> bp_vars;
@@ -843,47 +1068,104 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
           {
             continue;
           }
+          if (!candidate_filter.has_endpoint_support(instance.pairs)) {
+            ++pruned_stack_infeasible;
+            continue;
+          }
 
           // Create a binary variable for this instance (level-independent)
           // This variable is 1 if all base pairs in the stack are selected
           int instance_var = ip.make_variable(0.0, 0, 1);  // Binary variable with no weight
+          ip.mark_noe_variable(instance_var);
           instance_vars.push_back(instance_var);
 
-          // Store for non-overlap constraints
           all_instance_vars.push_back(instance_var);
-          all_instance_bp_vars.push_back(bp_vars);
+          register_pairs(instance_var, bp_vars);
           instance_to_constraint_id.push_back(constraint_id);
 
           // Debug: log the positions for this instance
-          std::ostringstream pos_str;
-          for (const auto& [i, j] : instance.pairs) {
-            pos_str << "(" << (i+1) << "," << (j+1) << ") ";
-          }
-          spdlog::info("Constraint {} instance: {}", constraint_id + 1, pos_str.str());
-
-          // Add constraint: instance_var can only be 1 if all bp_vars are 1
-          // This is implemented as: instance_var <= bp_var_k for all k
-          // If any bp_var is 0, instance_var must be 0
-          // Combined with "at least one instance" constraint, this ensures correct behavior
-          const int n_pairs = bp_vars.size();
-          if (n_pairs > 0)
-          {
-            for (int bp_var : bp_vars)
-            {
-              int row = ip.make_constraint(IP::UP, 0, 0);  // instance_var - bp_var <= 0
-              ip.add_constraint(row, instance_var, 1);
-              ip.add_constraint(row, bp_var, -1);
+          if (spdlog::default_logger()->should_log(spdlog::level::debug)) {
+            std::ostringstream pos_str;
+            for (const auto& [i, j] : instance.pairs) {
+              pos_str << "(" << (i+1) << "," << (j+1) << ") ";
             }
+            spdlog::debug("Constraint {} instance: {}", constraint_id + 1, pos_str.str());
           }
         }  // end inst_idx loop
 
         // Flush coaxial-stacking alternatives for this NMR constraint.
-        for (const auto& instance : stack_constraints.coaxial_instances)
+        for (const auto* instance_pointer : coaxials_by_observation[constraint_id])
         {
-          if (instance.constraint_id != static_cast<int>(constraint_id)) continue;
+          const auto& instance = *instance_pointer;
           const auto it1 = bp_pair_vars.find(instance.pair1);
           const auto it2 = bp_pair_vars.find(instance.pair2);
           if (it1 == bp_pair_vars.end() || it2 == bp_pair_vars.end()) continue;
+
+          // This optional prior is local to the two observed helices, not a
+          // ban on bulges elsewhere or in the third (supporting) helix.
+          auto stem_continuation = [](const Pair& pair, HelixFace loop_face) {
+            return loop_face == HelixFace::INNER
+                ? Pair{pair.first - 1, pair.second + 1}
+                : Pair{pair.first + 1, pair.second - 1};
+          };
+          const Pair continuation1 = stem_continuation(instance.pair1, instance.face1);
+          const Pair continuation2 = stem_continuation(instance.pair2, instance.face2);
+          const bool straight_stems = nmr_options_.coaxial_no_adjacent_bulge;
+          if (straight_stems && (!candidate_filter.contains(continuation1) ||
+                                 !candidate_filter.contains(continuation2))) {
+            pruned_coaxial_adjacent_bulge += instance.support_pairs.size();
+            continue;
+          }
+
+          // Terminal-pair blockers are identical for every support choice.
+          // Factor that common implication through one context variable,
+          // rather than repeating its coefficient for each third helix.
+          auto shares_base = [](const Pair& a, const Pair& b) {
+            return a.first == b.first || a.first == b.second ||
+                   a.second == b.first || a.second == b.second;
+          };
+          using Index = NMRPairRangeIndex;
+          const auto crossing_left = [](const Pair& pair) {
+            return Index::Rectangle{Index::low, pair.first, pair.first, pair.second};
+          };
+          const auto crossing_right = [](const Pair& pair) {
+            return Index::Rectangle{pair.first, pair.second, pair.second, Index::high};
+          };
+          const auto between = [](const Pair& outer, const Pair& inner) {
+            return Index::Rectangle{outer.first, inner.first, inner.second, outer.second};
+          };
+          std::vector<size_t> common_blockers;
+          Index::Rectangle common_between{0, 0, 0, 0};
+          if (instance.kind == CoaxialKind::CLOSING_FIRST_CHILD)
+            common_between = between(instance.pair1, instance.pair2);
+          else if (instance.kind == CoaxialKind::LAST_CHILD_CLOSING)
+            common_between = between(instance.pair2, instance.pair1);
+          topology_index->append_union({crossing_left(instance.pair1), crossing_right(instance.pair1),
+              crossing_left(instance.pair2), crossing_right(instance.pair2), common_between}, common_blockers);
+          common_blockers.erase(std::remove_if(common_blockers.begin(), common_blockers.end(),
+              [&](size_t index) { return shares_base(pair_keys[index], instance.pair1) ||
+                                        shares_base(pair_keys[index], instance.pair2); }), common_blockers.end());
+          // Exclude common blockers before support queries, not after emitting
+          // and sorting them for every witness. Dense contexts often leave only
+          // a small sparse remainder. Keep its indices in the global pair order.
+          std::vector<Pair> support_candidates;
+          std::vector<size_t> support_candidate_indices;
+          support_candidates.reserve(pair_keys.size() - common_blockers.size());
+          support_candidate_indices.reserve(support_candidates.capacity());
+          size_t common_offset = 0;
+          for (size_t index = 0; index < pair_keys.size(); ++index) {
+            if (common_offset < common_blockers.size() && common_blockers[common_offset] == index) {
+              ++common_offset;
+              continue;
+            }
+            if (shares_base(pair_keys[index], instance.pair1) ||
+                shares_base(pair_keys[index], instance.pair2)) continue;
+            support_candidates.push_back(pair_keys[index]);
+            support_candidate_indices.push_back(index);
+          }
+          const Index support_index(support_candidates);
+          std::vector<int> context_witnesses;
+          std::vector<size_t> support_blockers;
 
           // Make a separate witness for every possible third helix/closing
           // pair.  This lets the topology blockers refer to the exact
@@ -892,64 +1174,92 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
             const auto support_it = bp_pair_vars.find(support);
             if (support_it == bp_pair_vars.end()) continue;
 
+            using Topology = NMRCandidateFilter::CoaxialTopology;
+            const Topology topology = instance.kind == CoaxialKind::CLOSING_FIRST_CHILD
+                ? Topology{instance.pair1, instance.pair2, support}
+                : instance.kind == CoaxialKind::ADJACENT_CHILDREN
+                    ? Topology{support, instance.pair1, instance.pair2}
+                    : Topology{instance.pair2, support, instance.pair1};
+            const std::vector<Pair> required{instance.pair1, instance.pair2, support};
+            if (!candidate_filter.has_endpoint_support(required, &topology)) {
+              ++pruned_coaxial_infeasible;
+              continue;
+            }
+            if (straight_stems &&
+                (!NMRCandidateFilter::compatible(continuation1, required, &topology) ||
+                 !NMRCandidateFilter::compatible(continuation2, required, &topology))) {
+              ++pruned_coaxial_adjacent_bulge;
+              continue;
+            }
+
             int instance_var = ip.make_variable(0.0, 0, 1);
+            ip.mark_noe_variable(instance_var);
             instance_vars.push_back(instance_var);
             all_instance_vars.push_back(instance_var);
-            all_instance_bp_vars.push_back(
+            context_witnesses.push_back(instance_var);
+            register_pairs(instance_var,
                 {it1->second, it2->second, support_it->second});
             instance_to_constraint_id.push_back(constraint_id);
-
-            for (int bp_var : {it1->second, it2->second}) {
-              int row = ip.make_constraint(IP::UP, 0, 0);
-              ip.add_constraint(row, instance_var, 1);
-              ip.add_constraint(row, bp_var, -1);
-            }
-            int support_row = ip.make_constraint(IP::UP, 0, 0);
-            ip.add_constraint(support_row, instance_var, 1);
-            ip.add_constraint(support_row, support_it->second, -1);
 
             // If this witness is selected, its three helix-terminal pairs
             // form one planar context.  Reject any intervening pair that
             // would make an observed/supporting child indirect to the
             // selected multibranch-loop closing pair.
-            for (const auto& blocker : all_candidate_pairs) {
-              if (blocker == instance.pair1 || blocker == instance.pair2 ||
-                  blocker == support) continue;
-              bool blocks = pair_crosses(blocker, instance.pair1) ||
-                            pair_crosses(blocker, instance.pair2) ||
-                            pair_crosses(blocker, support);
-              if (instance.kind == CoaxialKind::CLOSING_FIRST_CHILD) {
-                blocks = blocks ||
-                         (pair_encloses(instance.pair1, blocker) &&
-                          (pair_encloses(blocker, instance.pair2) ||
-                           pair_encloses(blocker, support)));
-              } else if (instance.kind == CoaxialKind::ADJACENT_CHILDREN) {
-                blocks = blocks ||
-                         (pair_encloses(support, blocker) &&
-                          (pair_encloses(blocker, instance.pair1) ||
-                           pair_encloses(blocker, instance.pair2)));
-              } else {
-                blocks = blocks ||
-                         (pair_encloses(instance.pair2, blocker) &&
-                          (pair_encloses(blocker, instance.pair1) ||
-                           pair_encloses(blocker, support)));
-              }
-              if (blocks) {
-                int row = ip.make_constraint(IP::UP, 0, 1);
-                ip.add_constraint(row, instance_var, 1);
-                add_pair_sum(row, blocker, 1);
-              }
+            support_blockers.clear();
+            Index::Rectangle support_between1{0, 0, 0, 0};
+            Index::Rectangle support_between2{0, 0, 0, 0};
+            if (instance.kind == CoaxialKind::CLOSING_FIRST_CHILD)
+              support_between1 = between(instance.pair1, support);
+            else if (instance.kind == CoaxialKind::ADJACENT_CHILDREN) {
+              support_between1 = between(support, instance.pair1);
+              support_between2 = between(support, instance.pair2);
+            } else
+              support_between1 = between(instance.pair2, support);
+            support_index.append_union({crossing_left(support), crossing_right(support),
+                support_between1, support_between2}, support_blockers);
+            for (size_t candidate_index : support_blockers) {
+              const auto& blocker = support_candidates[candidate_index];
+              // Base uniqueness already excludes any pair sharing a base
+              // with a required terminal/support pair.
+              if (shares_base(blocker, support)) continue;
+              blocker_witnesses[support_candidate_indices[candidate_index]].push_back(instance_var);
+              ++unaggregated_topology_rows;
             }
 
-            coaxial_face_vars[{instance.pair1.first, instance.pair1.second,
-                               static_cast<int>(instance.face1)}].push_back(instance_var);
-            coaxial_face_vars[{instance.pair2.first, instance.pair2.second,
-                               static_cast<int>(instance.face2)}].push_back(instance_var);
+            if (nmr_options_.allow_shared_stack_pairs) {
+              coaxial_face_vars[{instance.pair1.first, instance.pair1.second,
+                                 static_cast<int>(instance.face1)}].push_back(instance_var);
+              coaxial_face_vars[{instance.pair2.first, instance.pair2.second,
+                                 static_cast<int>(instance.face2)}].push_back(instance_var);
+            }
             spdlog::debug("Constraint {} coaxial witness: ({},{}) ({},{}) support ({},{})",
                           constraint_id + 1,
                           instance.pair1.first + 1, instance.pair1.second + 1,
                           instance.pair2.first + 1, instance.pair2.second + 1,
                           support.first + 1, support.second + 1);
+          }
+          if (!context_witnesses.empty() && (!common_blockers.empty() || straight_stems)) {
+            const int context_var = ip.make_variable(0.0, 0, 1);
+            ip.mark_noe_variable(context_var);
+            int context_row = ip.make_constraint(IP::FX, 0, 0);
+            ip.add_constraint(context_row, context_var, -1);
+            for (int witness : context_witnesses) {
+              ip.add_constraint(context_row, witness, 1);
+            }
+            ++coaxial_context_vars;
+            if (straight_stems) {
+              // A presence-only filter is not enough: the selected RNA must
+              // actually contain the two unbulged continuation pairs.
+              for (const Pair& continuation : {continuation1, continuation2}) {
+                const int stem_row = ip.make_constraint(IP::UP, 0, 0);
+                ip.add_constraint(stem_row, context_var, 1);
+                add_pair_sum(stem_row, continuation, -1);
+              }
+            }
+            for (size_t blocker_index : common_blockers) {
+              blocker_witnesses[blocker_index].push_back(context_var);
+              unaggregated_topology_rows += context_witnesses.size();
+            }
           }
         }
 
@@ -962,6 +1272,8 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
         if (instance_vars.empty() && !nmr_options_.soft) {
           spdlog::error("Stack constraint {} has no valid instances - cannot satisfy constraint",
                       constraint_id + 1);
+          if (dd_options_.enabled)
+            throw DDInfeasible("Stack constraint cannot be satisfied: no valid instances found");
           throw std::runtime_error("Stack constraint cannot be satisfied: no valid instances found");
         }
 
@@ -970,8 +1282,23 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
         if (nmr_options_.soft) {
           const int violation_var = ip.make_variable(
               -nmr_options_.stack_penalty, 0, 1);
+          ip.mark_noe_variable(violation_var);
           ip.add_constraint(row, violation_var, 1);
           stack_violation_vars.emplace_back(constraint_id, violation_var);
+        }
+        if (nmr_options_.allow_shared_stack_pairs) {
+          add_pair_links(observation_pair_witnesses);
+        }
+        // One observation selects at most one witness, so the individual
+        // w + selected_blocker <= 1 rows can be summed over its blocked
+        // alternatives without changing any integer-feasible assignment.
+        for (size_t blocker_index = 0; blocker_index < blocker_witnesses.size(); ++blocker_index) {
+          const auto& witnesses = blocker_witnesses[blocker_index];
+          if (witnesses.empty()) continue;
+          int blocker_row = ip.make_constraint(IP::UP, 0, 1);
+          for (int witness : witnesses) ip.add_constraint(blocker_row, witness, 1);
+          add_pair_sum(blocker_row, pair_keys[blocker_index], 1);
+          ++topology_rows;
         }
         spdlog::info(
             "Added {} stack constraint {} with {} possible instances "
@@ -980,65 +1307,39 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
             instance_vars.size(), all_instance_vars.size());
       }
 
+      if (!nmr_options_.allow_shared_stack_pairs) {
+        add_pair_links(global_pair_witnesses);
+      }
+
       // One loop-facing end of a helix can have at most one coaxial partner.
+      // With sharing disabled, the pair-link rows already imply this rule.
       for (const auto& [face, vars] : coaxial_face_vars) {
         if (vars.size() < 2) continue;
         int row = ip.make_constraint(IP::UP, 0, 1);
         for (int var : vars) ip.add_constraint(row, var, 1);
       }
 
-      // Different observations cannot be assigned to witnesses that share a
-      // base pair.  Previously this was encoded by one constraint for every
-      // conflicting witness pair, which grows quadratically in the number of
-      // instances.  Since each observation now selects at most one witness,
-      // one capacity constraint per shared base pair is exactly equivalent:
-      //   sum(instance_var using bp_var) <= 1.
-      if (stack_constraints.constraints.size() > 1 &&
-          !nmr_options_.allow_shared_stack_pairs)
-      {
-        std::map<int, std::vector<size_t>> bp_var_to_instances;
-        for (size_t instance_index = 0;
-             instance_index < all_instance_bp_vars.size(); ++instance_index) {
-          for (int bp_var : all_instance_bp_vars[instance_index]) {
-            bp_var_to_instances[bp_var].push_back(instance_index);
-          }
-        }
-
-        int num_capacity_constraints = 0;
-        for (const auto& [bp_var, instance_indices] : bp_var_to_instances) {
-          std::set<int> constraint_ids;
-          for (size_t instance_index : instance_indices) {
-            constraint_ids.insert(instance_to_constraint_id[instance_index]);
-          }
-          // Exact-one already prevents multiple witnesses from the same
-          // observation, so a capacity row is needed only when this base pair
-          // occurs in candidates for two or more observations.
-          if (constraint_ids.size() < 2) continue;
-
-          int row = ip.make_constraint(IP::UP, 0, 1);
-          for (size_t instance_index : instance_indices) {
-            ip.add_constraint(row, all_instance_vars[instance_index], 1);
-          }
-          ++num_capacity_constraints;
-          spdlog::debug(
-              "Added witness capacity constraint for bp_var {} across {} "
-              "instances from {} observations",
-              bp_var, instance_indices.size(), constraint_ids.size());
-        }
-        if (num_capacity_constraints > 0) {
-          spdlog::info(
-              "Added {} base-pair witness capacity constraints for {} "
-              "instances from {} stack constraints",
-              num_capacity_constraints, all_instance_vars.size(),
-              stack_constraints.constraints.size());
-        }
-      }
+      spdlog::info(
+          "NMR candidate pruning: {} stack/bulge and {} coaxial proven infeasible; "
+          "{} coaxial removed by experimental no-adjacent-bulge assumption",
+          pruned_stack_infeasible, pruned_coaxial_infeasible,
+          pruned_coaxial_adjacent_bulge);
+      spdlog::info(
+          "NMR formulation: {} witnesses, {} pair-link rows ({} separate), "
+          "{} topology rows ({} separate), {} factored coaxial contexts; "
+          "built in {:.6f}s",
+          all_instance_vars.size(), pair_link_rows, unaggregated_pair_rows,
+          topology_rows, unaggregated_topology_rows, coaxial_context_vars,
+          nmr_build_timer.elapsed().count());
 
       // Update IP solver
       ip.update();
 
       // execute optimization
-      ip.solve();
+      spdlog::stopwatch solver_timer;
+      const double objective = ip.solve();
+      spdlog::debug("{} objective: {:.12g}", dd_options_.enabled ? "DD" : "IP", objective);
+      spdlog::info("{} optimization finished in {:.6f}s", dd_options_.enabled ? "DD" : "IP", solver_timer.elapsed().count());
 
       // Log which stack constraint instances were selected
       for (size_t i = 0; i < all_instance_vars.size(); ++i)
@@ -1053,8 +1354,12 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
     }
     else
     {
-      // execute optimization without stack constraints
-      ip.solve();
+      // All backends must see auxiliary columns before optimization.
+      ip.update();
+      spdlog::stopwatch solver_timer;
+      const double objective = ip.solve();
+      spdlog::debug("{} objective: {:.12g}", dd_options_.enabled ? "DD" : "IP", objective);
+      spdlog::info("{} optimization finished in {:.6f}s", dd_options_.enabled ? "DD" : "IP", solver_timer.elapsed().count());
     }
 
     double nmr_violation_penalty = 0.0;
@@ -1105,6 +1410,21 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
             plevel[i]=plevel[j]=lv;
           }
 
+    double pk_value = pk_model.value(ip);
+    if (!pk_score_options_.feature_output.empty())
+      pk_model.write_features(pk_score_options_.feature_output, seq, th, ip);
+    if (pk_score_options_.rerank)
+      pk_value += score_pk_h_structure(bpseq, pk_score_options_);
+    if (pk_score_options_.level_penalty != 0) {
+      for (auto lv = 1u; lv < pk_level_; ++lv)
+        for (const auto& left : v_l[lv])
+          for (const auto& [j, var] : left)
+            pk_value -= pk_score_options_.level_penalty * ip.get_value(var);
+    }
+    if (pk_score) *pk_score = pk_value;
+    if (pk_score_options_.enabled())
+      spdlog::info("PK score: {:.12g}", pk_value);
+
     if (!levelwise_)
       decompose_plevel(bpseq, plevel);
 
@@ -1117,14 +1437,33 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
              const StackConstraints& stack_constraints) const -> std::pair<float,float>
 {
     uint L = seq.size();
+    // The posterior context is independent of the threshold-specific graph.
+    // Refinement calls solve() again with its new BPP matrix, so each matrix
+    // receives one context without retaining stale probabilities.
+    std::unique_ptr<PKPosteriorContext> posterior;
+    if (pk_score_options_.needs_posterior_context())
+      posterior = std::make_unique<PKPosteriorContext>(bp);
     std::vector<float> th(ep.size());
     VI bpseq_temp, plevel_temp;
     VI max_bpseq, max_plevel;
     float max_fval=-100.0, max_fval_pk=-100.0;
     double max_nmr_penalty = 0.0;
+    double max_pk_score = 0.0;
     double max_selection_score = -std::numeric_limits<double>::infinity();
+    std::vector<PKEnsembleCandidate> ensemble_pool;
+    std::vector<PKRankCandidate> rank_pool;
+    std::size_t rank_selected=0;
+    const bool ranking=pk_score_options_.rank_scale!=0 || !pk_score_options_.rank_output.empty();
+    std::unique_ptr<PKPosteriorContext> ensemble_posterior;
+    if (pk_score_options_.ensemble || ranking) ensemble_posterior = std::make_unique<PKPosteriorContext>(bp);
     spdlog::info("Search for the best thresholds by pseudo expected F-value:");
-    const auto sump = compute_sump_pk(bp);
+    spdlog::info("NMR automatic-threshold penalty scale: {}",
+                 nmr_options_.threshold_penalty_scale);
+    std::vector<DDCrossingEvidence> dd_evidence;
+    if (dd_options_.enabled) dd_evidence = dd_crossing_evidence(bp, dd_options_.crossing_beam);
+    double dd_sump = 0;
+    for (const auto& contact : dd_evidence) dd_sump += contact.product;
+    const auto sump = dd_options_.enabled ? static_cast<float>(dd_sump) : compute_sump_pk(bp);
     do {
       ep.get(th);
       uint i;
@@ -1133,11 +1472,29 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
       if (i!=th.size()) continue;
       bpseq_temp = bpseq;
       plevel_temp = plevel;
-      const double nmr_penalty = solve_with_penalty(
-          seq, bp, th, bpseq_temp, plevel_temp, constraint,
-          bp_constraints, stack_constraints);
+      double pk_score = 0.0;
+      double nmr_penalty;
+      try {
+        nmr_penalty = solve_with_penalty(seq, bp, th, bpseq_temp, plevel_temp, constraint,
+            bp_constraints, stack_constraints, &pk_score, posterior.get());
+      } catch (const DDInfeasible& error) {
+        spdlog::info("Skipping infeasible DD thresholds: {}", error.what());
+        continue;
+      }
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
-      const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
+      const auto pk_accuracy = [&]() {
+        if (!dd_options_.enabled) return compute_expected_accuracy_pk(bpseq_temp, bp, sump);
+        double etp = 0;
+        int selected_contacts = 0;
+        for (const auto& c : dd_evidence)
+          if (bpseq_temp[c.left1] == c.right1 && bpseq_temp[c.left2] == c.right2) {
+            etp += c.product; ++selected_contacts;
+          }
+        const double total = static_cast<double>(bpseq_temp.size()) * (bpseq_temp.size() - 1) / 2;
+        return compute_expected_accuracy(etp, total - selected_contacts - sump + etp,
+                                         selected_contacts - etp, sump - etp);
+      };
+      const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = pk_accuracy();
       if (spdlog::get_level() <= spdlog::level::info)
       {
         std::ostringstream th_ss;
@@ -1145,23 +1502,76 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
         spdlog::info("th={} pF={}, pF_pk={}, NMR penalty={}",
                      th_ss.str(), fval, fval_pk, nmr_penalty);
       }
-      const double selection_score = fval + fval_pk - nmr_penalty;
+      double selection_score = fval + fval_pk -
+          nmr_options_.threshold_penalty_scale * nmr_penalty
+          + pk_score_options_.selection_weight * pk_score;
+      if(ranking) {
+        const auto features=pk_rank_features(bpseq_temp,*ensemble_posterior,fval,fval_pk,pk_score);
+        rank_pool.push_back({bpseq_temp,selection_score,features});
+        selection_score+=pk_score_options_.rank_scale*pk_score_options_.ranker.score(features);
+      }
+      if (pk_score_options_.ensemble) {
+        double utility = 0;
+        for (std::size_t i = 0; i < bpseq_temp.size(); ++i) {
+          const int j = bpseq_temp[i];
+          if (j <= static_cast<int>(i)) continue;
+          const int level = plevel_temp[i];
+          if (level < 0 || level >= static_cast<int>(alpha_.size()))
+            throw std::runtime_error("Invalid ensemble candidate level");
+          const double p = ensemble_posterior->contains(i, j) ? ensemble_posterior->evidence(i, j) : 0;
+          // One common reference cut, independent of the generating thresholds.
+          utility += alpha_[level] * (p - .25);
+        }
+        ensemble_pool.push_back({bpseq_temp, plevel_temp, utility, nmr_penalty, {}});
+      }
       if (selection_score > max_selection_score)
       {
         max_selection_score = selection_score;
         max_fval = fval;
         max_fval_pk = fval_pk;
         max_nmr_penalty = nmr_penalty;
+        max_pk_score = pk_score;
         max_bpseq = bpseq_temp;
         max_plevel = plevel_temp;
+        if(ranking) rank_selected=rank_pool.size()-1;
       }
     } while (!ep.succ());
+    if (dd_options_.enabled && !std::isfinite(max_selection_score))
+      throw DDInfeasible("No feasible structure for any DD threshold combination");
     bpseq = max_bpseq;
     plevel = max_plevel;
+    if(!pk_score_options_.rank_output.empty())
+      write_pk_rank_pool(pk_score_options_.rank_output,rank_pool,rank_selected);
+    if (pk_score_options_.ensemble) {
+      const double rt = .00198720425864083 * (273.15 + pk_score_options_.energy.temperature_celsius);
+      const auto result = pk_finite_ensemble(ensemble_pool, pk_score_options_.ensemble_temperature,
+          pk_score_options_.ensemble_scale, pk_score_options_.ensemble_intercept, rt,
+          pk_score_options_.ensemble_threshold);
+      bpseq = result.candidates[result.selected].pairs;
+      plevel = result.candidates[result.selected].levels;
+      const auto accuracy = compute_expected_accuracy(bpseq, bp);
+      max_fval = std::get<3>(accuracy);
+      double etp = 0; int selected_contacts = 0;
+      for (const auto& c : dd_evidence)
+        if (bpseq[c.left1] == c.right1 && bpseq[c.left2] == c.right2) {
+          etp += c.product; ++selected_contacts;
+        }
+      const double total = static_cast<double>(L) * (L - 1) / 2;
+      max_fval_pk = std::get<3>(compute_expected_accuracy(etp, total-selected_contacts-sump+etp,
+          selected_contacts-etp, sump-etp));
+      max_nmr_penalty = result.candidates[result.selected].penalty;
+      max_selection_score = result.expected_gain[result.selected];
+      spdlog::info("PK ensemble: visits={}, unique={}, selected={}, extra solves=0",
+          result.visits, result.candidates.size(), result.selected);
+      if (!pk_score_options_.ensemble_output.empty()) write_pk_ensemble(pk_score_options_.ensemble_output, result);
+    }
     spdlog::info("max pF={}, pF_pk={}, NMR penalty={}, selection score={}",
                  max_fval, max_fval_pk, max_nmr_penalty,
                  max_selection_score);
 
+    if (pk_score_options_.enabled())
+      spdlog::info("Selected PK score={}, selection weight={}",
+                   max_pk_score, pk_score_options_.selection_weight);
     return {max_fval, max_fval_pk};
   }
 
