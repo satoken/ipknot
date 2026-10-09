@@ -643,8 +643,6 @@ main(int argc, char* argv[])
   bool allow_coaxial_stacking = false;
   NMRBulgeMode nmr_bulge_mode = NMRBulgeMode::ALL;
   NMRConstraintOptions nmr_options;
-  PKScoreOptions pk_score_options;
-  double pk_energy_table_seconds = 0;
   BPConstraints bp_constraints;
   StackConstraints stack_constraints;
 
@@ -799,88 +797,6 @@ main(int argc, char* argv[])
       cxxopts::value<std::string>()->default_value("1.0"), "SCALE")
     ("nmr-count-mode", "Interpret NMR base-pair counts as exact totals or observed lower bounds: exact or lower-bound",
       cxxopts::value<std::string>()->default_value("exact"), "MODE")
-    ("pk-level-penalty", "Experimental penalty per selected pair above level 0 (decomposition dependent)",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-h-intercept", "Experimental score per complete simple H-type pseudoknot",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-h-weight", "Scale the H feature score or imported table (zero disables H scoring)",
-      cxxopts::value<double>()->default_value("1"), "WEIGHT")
-    ("pk-h-loop-penalty", "H-motif penalty times sum(log(1+loop length))",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-h-stem-reward", "H-motif reward times the shorter stem length",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-h-coax-bonus", "H-motif bonus for a zero-length middle loop (potential flush junction)",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-h-table", "Override H-motif scores from rows: stem1 stem2 loop1 loop2 loop3 score",
-      cxxopts::value<std::string>(), "FILE")
-    ("pk-energy-model", "PK-specific loop energy prior: none, dp, or cc (CC uses DP for missing parameters)",
-      cxxopts::value<std::string>()->default_value("none"), "MODEL")
-    ("pk-energy-scale", "Weight of the dimensionless PK loop energy; zero disables the energy term",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-energy-intercept", "Baseline score per candidate stem pair for the PK energy prior",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-energy-temperature", "Temperature in Celsius for converting PK loop energy to G/(RT)",
-      cxxopts::value<double>()->default_value("37"), "C")
-    ("pk-energy-table", "Optional Cao-Chen 2009 joint entropy and long-loop fit table",
-      cxxopts::value<std::string>(), "FILE")
-    ("pk-learned-model", "PK model: IPKNOT_PK_LINEAR_V1, IPKNOT_PK_LINEAR_AB_V1, or IPKNOT_PK_BOUNDED_V1",
-      cxxopts::value<std::string>(), "FILE")
-    ("pk-learned-scale", "Scale the learned per-pair crossing correction; zero disables the learned term",
-      cxxopts::value<double>()->default_value("1"), "WEIGHT")
-    ("pk-core-width", "Split maximal candidate stems into disjoint short cores: 0, 2 or 3",
-      cxxopts::value<int>()->default_value("0"), "N")
-    ("pk-best-partner", "DD crossing: score only the best actually selected partner core per support row",
-      cxxopts::value<bool>()->default_value("false"))
-    ("pk-rank-model", "Sequence-free linear ranking of existing automatic-threshold candidates",
-      cxxopts::value<std::string>(), "FILE")
-    ("pk-rank-scale", "Residual candidate-ranking scale; zero preserves the original selection",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-rank-output", "Append numeric candidate features and physical pair sets as JSONL",
-      cxxopts::value<std::string>(), "FILE")
-    ("pk-hybrid-shape", "Add the H geometry score to the learned crossing correction using the same auxiliaries",
-      cxxopts::value<bool>()->default_value("false"))
-    ("pk-crossing-simplify", "Replace constant-weight mutually exclusive crossing witnesses by exact direct terms",
-      cxxopts::value<bool>()->default_value("false"))
-    ("pk-crossing-normalize", "Rescale crossing auxiliaries without changing the PK score",
-      cxxopts::value<bool>()->default_value("false"))
-    ("pk-crossing-tight-bounds", "Use same-level noncrossing chains to tighten crossing-score bounds",
-      cxxopts::value<bool>()->default_value("false"))
-    ("pk-crossing-hypograph", "Use only upper product bounds; preserves the maximized crossing score",
-      cxxopts::value<bool>()->default_value("false"))
-    ("pk-feature-output", "Append candidate crossing features and selected occupancies for offline training",
-      cxxopts::value<std::string>(), "FILE")
-    ("pk-h-max-stem", "Maximum stem length in the H-score domain (does not forbid longer stems)",
-      cxxopts::value<int>()->default_value("12"), "N")
-    ("pk-h-max-loop", "Maximum length of each loop in the H-score domain",
-      cxxopts::value<int>()->default_value("30"), "N")
-    ("pk-h-max-motifs", "Fail if the H-score domain exceeds this motif budget; no silent pruning",
-      cxxopts::value<int>()->default_value("10000"), "N")
-    ("pk-h-loop-mode", "Score unpaired H loops or gap spans allowing nested pairs: unpaired or span",
-      cxxopts::value<std::string>()->default_value("unpaired"), "MODE")
-    ("pk-h-formulation", "H-score decoder: exact, projected, supported, crossing, or rerank (energy/learned models default to crossing)",
-      cxxopts::value<std::string>()->default_value("exact"), "MODE")
-    ("pk-h-allocation", "Crossing allocation: substems or blocks (energy/learned models default to blocks)",
-      cxxopts::value<std::string>()->default_value("substems"), "MODE")
-    ("pk-support-tolerance", "Allowed per-pair shape score gap in supported crossing constraints",
-      cxxopts::value<double>()->default_value("0"), "GAP")
-    ("pk-support-complete-stems", "Require complete candidate stems in the two levels of a supported crossing edge",
-      cxxopts::value<bool>()->default_value("false"))
-    ("pk-candidate-threshold", "Retain BPP candidates below the objective threshold (-1 preserves the original cut)",
-      cxxopts::value<double>()->default_value("-1"), "P")
-    ("pk-ensemble", "Experimental original-DP loop component Gibbs/MEA over existing auto-threshold candidates",
-      cxxopts::value<bool>()->default_value("false"))
-    ("pk-ensemble-scale", "Scale of component loop energy G/(RT) in finite ensemble",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-ensemble-intercept", "Log-weight prior per crossing component in finite ensemble",
-      cxxopts::value<double>()->default_value("0"), "WEIGHT")
-    ("pk-ensemble-temperature", "Statistical temperature for common BPP utility (not physical RNA temperature)",
-      cxxopts::value<double>()->default_value("1"), "VALUE")
-    ("pk-ensemble-threshold", "Restricted MEA pair inclusion threshold",
-      cxxopts::value<double>()->default_value("0.5"), "VALUE")
-    ("pk-ensemble-output", "Append sequence-free candidate diagnostics as JSONL",
-      cxxopts::value<std::string>(), "FILE")
-    ("pk-selection-weight", "Weight of the PK score during automatic threshold selection (learned models default to zero)",
-      cxxopts::value<double>()->default_value("1"), "WEIGHT")
     ("nmr-allow-shared-stack-pairs", "Allow different NMR stack observations to use witnesses that share base pairs",
       cxxopts::value<bool>()->default_value("false"))
 #ifdef WITH_MXFOLD2
@@ -982,97 +898,6 @@ main(int argc, char* argv[])
     spdlog::error("NMR threshold penalty scale must be finite and nonnegative");
     return 1;
   }
-  try {
-    pk_score_options.level_penalty = res["pk-level-penalty"].as<double>();
-    pk_score_options.intercept = res["pk-h-intercept"].as<double>();
-    pk_score_options.h_weight = res["pk-h-weight"].as<double>();
-    pk_score_options.loop_penalty = res["pk-h-loop-penalty"].as<double>();
-    pk_score_options.stem_reward = res["pk-h-stem-reward"].as<double>();
-    pk_score_options.coax_bonus = res["pk-h-coax-bonus"].as<double>();
-    pk_score_options.ensemble = res["pk-ensemble"].as<bool>();
-    pk_score_options.ensemble_scale = res["pk-ensemble-scale"].as<double>();
-    pk_score_options.ensemble_intercept = res["pk-ensemble-intercept"].as<double>();
-    pk_score_options.ensemble_temperature = res["pk-ensemble-temperature"].as<double>();
-    pk_score_options.ensemble_threshold = res["pk-ensemble-threshold"].as<double>();
-    if (res.count("pk-ensemble-output"))
-      pk_score_options.ensemble_output = res["pk-ensemble-output"].as<std::string>();
-    const auto pk_energy_model = res["pk-energy-model"].as<std::string>();
-    if (pk_energy_model == "none")
-      pk_score_options.energy.model = PKLoopEnergyModel::None;
-    else if (pk_energy_model == "dp")
-      pk_score_options.energy.model = PKLoopEnergyModel::DP;
-    else if (pk_energy_model == "cc")
-      pk_score_options.energy.model = PKLoopEnergyModel::CC;
-    else
-      throw std::invalid_argument("PK energy model must be 'none', 'dp', or 'cc'");
-    pk_score_options.energy_scale = res["pk-energy-scale"].as<double>();
-    pk_score_options.energy_intercept = res["pk-energy-intercept"].as<double>();
-    pk_score_options.energy.temperature_celsius = res["pk-energy-temperature"].as<double>();
-    pk_score_options.learned_scale = res["pk-learned-scale"].as<double>();
-    pk_score_options.core_width = res["pk-core-width"].as<int>();
-    pk_score_options.best_partner = res["pk-best-partner"].as<bool>();
-    pk_score_options.rank_scale = res["pk-rank-scale"].as<double>();
-    if(res.count("pk-rank-model")) pk_score_options.ranker.load(res["pk-rank-model"].as<std::string>());
-    if(res.count("pk-rank-output")) pk_score_options.rank_output=res["pk-rank-output"].as<std::string>();
-    pk_score_options.hybrid_shape = res["pk-hybrid-shape"].as<bool>();
-    pk_score_options.simplify_crossing = res["pk-crossing-simplify"].as<bool>();
-    pk_score_options.normalize_crossing = res["pk-crossing-normalize"].as<bool>();
-    pk_score_options.tight_crossing_bounds = res["pk-crossing-tight-bounds"].as<bool>();
-    pk_score_options.crossing_hypograph = res["pk-crossing-hypograph"].as<bool>();
-    if (res.count("pk-learned-model"))
-      pk_score_options.learned.load(res["pk-learned-model"].as<std::string>());
-    if (res.count("pk-feature-output"))
-      pk_score_options.feature_output = res["pk-feature-output"].as<std::string>();
-    pk_score_options.max_stem = res["pk-h-max-stem"].as<int>();
-    pk_score_options.max_loop = res["pk-h-max-loop"].as<int>();
-    pk_score_options.max_motifs = res["pk-h-max-motifs"].as<int>();
-    const auto pk_loop_mode = res["pk-h-loop-mode"].as<std::string>();
-    if (pk_loop_mode != "unpaired" && pk_loop_mode != "span")
-      throw std::invalid_argument("PK H loop mode must be 'unpaired' or 'span'");
-    pk_score_options.unpaired_loops = pk_loop_mode == "unpaired";
-    const bool using_dd = res["decoder"].as<std::string>() == "dd"
-#if !defined(WITH_GLPK) && !defined(WITH_CPLEX) && !defined(WITH_GUROBI) && !defined(WITH_SCIP) && !defined(WITH_HIGHS)
-        || res["decoder"].as<std::string>() == "auto"
-#endif
-        ;
-    const auto pk_formulation = !res.count("pk-h-formulation") &&
-        (using_dd || pk_score_options.energy.model != PKLoopEnergyModel::None ||
-         pk_score_options.learned.loaded() || !pk_score_options.feature_output.empty())
-        ? std::string("crossing") : res["pk-h-formulation"].as<std::string>();
-    if (pk_formulation != "exact" && pk_formulation != "projected" &&
-        pk_formulation != "supported" && pk_formulation != "crossing" && pk_formulation != "rerank")
-      throw std::invalid_argument("PK H formulation must be 'exact', 'projected', 'supported', 'crossing' or 'rerank'");
-    pk_score_options.projected = pk_formulation == "projected";
-    pk_score_options.supported = pk_formulation == "supported";
-    pk_score_options.crossing = pk_formulation == "crossing";
-    pk_score_options.rerank = pk_formulation == "rerank";
-    const auto pk_allocation = !res.count("pk-h-allocation") &&
-        (using_dd || pk_score_options.energy.model != PKLoopEnergyModel::None ||
-         pk_score_options.learned.loaded() || !pk_score_options.feature_output.empty()) &&
-        (pk_score_options.crossing || pk_score_options.projected)
-        ? std::string("blocks") : res["pk-h-allocation"].as<std::string>();
-    if (pk_allocation != "substems" && pk_allocation != "blocks")
-      throw std::invalid_argument("PK H allocation must be 'substems' or 'blocks'");
-    pk_score_options.fixed_blocks = pk_allocation == "blocks";
-    pk_score_options.support_tolerance = res["pk-support-tolerance"].as<double>();
-    pk_score_options.support_complete_stems = res["pk-support-complete-stems"].as<bool>();
-    pk_score_options.candidate_threshold = res["pk-candidate-threshold"].as<double>();
-    pk_score_options.selection_weight = pk_score_options.learned.loaded() &&
-        !res.count("pk-selection-weight") ? 0.0 : res["pk-selection-weight"].as<double>();
-    if (res.count("pk-h-table"))
-      pk_score_options.load_table(res["pk-h-table"].as<std::string>());
-    if (res.count("pk-energy-table")) {
-      if (pk_score_options.energy.model != PKLoopEnergyModel::CC)
-        throw std::invalid_argument("--pk-energy-table requires --pk-energy-model cc");
-      spdlog::stopwatch pk_energy_table_timer;
-      pk_score_options.energy.load_cc09_table(res["pk-energy-table"].as<std::string>());
-      pk_energy_table_seconds = pk_energy_table_timer.elapsed().count();
-    }
-    pk_score_options.validate();
-  } catch (const std::exception& e) {
-    spdlog::error("{}", e.what());
-    return 1;
-  }
   spdlog::set_level(spdlog::level::warn); // Default log level
   if (verbose) 
     spdlog::set_level(spdlog::level::info);
@@ -1092,21 +917,6 @@ main(int argc, char* argv[])
       spdlog::set_level(spdlog::level::critical);
     }
   }
-  if (res.count("pk-energy-table"))
-    spdlog::info("PK energy table: {} entries; loaded in {:.6f}s",
-                 pk_score_options.energy.cc09_table_size(), pk_energy_table_seconds);
-  if (pk_score_options.energy.model != PKLoopEnergyModel::None)
-    spdlog::info("PK energy prior: model={}, scale={}, intercept={}, temperature={}C",
-                 res["pk-energy-model"].as<std::string>(), pk_score_options.energy_scale,
-                 pk_score_options.energy_intercept, pk_score_options.energy.temperature_celsius);
-  if (pk_score_options.learned.loaded())
-    spdlog::info("PK learned {} score: 12 features, scale={}, selection weight={}",
-                 pk_score_options.projected ? "projected" : "crossing",
-                 pk_score_options.learned_scale, pk_score_options.selection_weight);
-  if (pk_score_options.hybrid_shape)
-    spdlog::info("PK hybrid shape: weight={}, intercept={}, stem reward={}, loop penalty={}, coax bonus={}",
-                 pk_score_options.h_weight, pk_score_options.intercept,
-                 pk_score_options.stem_reward, pk_score_options.loop_penalty, pk_score_options.coax_bonus);
   if (nmr_options.soft) {
     spdlog::info(
         "NMR soft-constraint mode: count penalty={}, stack penalty={}",
@@ -1250,10 +1060,6 @@ main(int argc, char* argv[])
     }
   }
 
-  if ((pk_score_options.ranker.loaded() || !pk_score_options.rank_output.empty()) && !max_pfval) {
-    spdlog::error("PK candidate ranking requires automatic or multiple thresholds");
-    return 1;
-  }
 
 #if 0
   else // default
@@ -1382,7 +1188,7 @@ main(int argc, char* argv[])
                    dd_options.dp_beam(), dd_options.max_iterations);
     IPknot ipknot(pk_level, &alpha[0], levelwise, !isolated_bp, n_th,
                   require_canonical_neighbor, allow_coaxial_stacking,
-                  nmr_options, pk_score_options, dd_options);
+                  nmr_options, dd_options);
     std::vector<int> bpseq;
     std::vector<int> plevel;
 

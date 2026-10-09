@@ -46,7 +46,6 @@
 #include "nmr_pair_index.h"
 #include "nmr_sequence_index.h"
 #include "nmr_candidate_filter.h"
-#include "pk_ensemble.h"
 
 #include "spdlog/spdlog.h"
 #include "spdlog/stopwatch.h"
@@ -256,7 +255,7 @@ IPknot::IPknot(uint pk_level, const float* alpha,
          bool require_canonical_neighbor,
          bool allow_coaxial_stacking,
          NMRConstraintOptions nmr_options,
-         PKScoreOptions pk_score_options, DDOptions dd_options)
+         DDOptions dd_options)
     : pk_level_(pk_level),
       alpha_(alpha, alpha+pk_level_),
       levelwise_(levelwise),
@@ -265,19 +264,11 @@ IPknot::IPknot(uint pk_level, const float* alpha,
       require_canonical_neighbor_(require_canonical_neighbor),
       allow_coaxial_stacking_(allow_coaxial_stacking),
       nmr_options_(nmr_options),
-      pk_score_options_(std::move(pk_score_options)),
       dd_options_(dd_options)
 {
-    pk_score_options_.validate();
     dd_options_.validate();
-    if (pk_score_options_.ensemble && !dd_options_.enabled)
-      throw std::invalid_argument("Experimental PK ensemble requires DD");
-    if (pk_score_options_.best_partner && !dd_options_.enabled)
-      throw std::invalid_argument("Experimental PK best-partner factor requires DD");
     if (dd_options_.enabled && !levelwise_)
       throw std::invalid_argument("DD requires levelwise prediction; remove --no-levelwise or use --decoder ilp");
-    if ((pk_score_options_.projected || pk_score_options_.supported || pk_score_options_.crossing) && !levelwise_)
-      throw std::invalid_argument("Projected, supported and crossing PK scoring require levelwise prediction");
 }
 
 #if 0
@@ -328,23 +319,15 @@ void IPknot::solve(const std::string& seq, const VSVF& bp,
              const BPConstraints& bp_constraints,
              const StackConstraints& stack_constraints) const
 {
-    std::unique_ptr<PKPosteriorContext> posterior;
-    if (pk_score_options_.needs_posterior_context())
-      posterior = std::make_unique<PKPosteriorContext>(bp);
     solve_with_penalty(seq, bp, th, bpseq, plevel, constraint,
-                       bp_constraints, stack_constraints, nullptr, posterior.get());
+                       bp_constraints, stack_constraints);
 }
 
 double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
              const BPConstraints& bp_constraints,
-             const StackConstraints& stack_constraints,
-             double* pk_score,
-             const PKPosteriorContext* posterior) const
+             const StackConstraints& stack_constraints) const
 {
-    if(pk_score_options_.best_partner && (constraint || bp_constraints.has_constraints() || stack_constraints.has_constraints()))
-      throw std::invalid_argument("Experimental PK best-partner factor requires unconstrained DD");
-    if (pk_score) *pk_score = 0.0;
     if (dd_options_.enabled && !constraint && !bp_constraints.has_constraints() && !stack_constraints.has_constraints()) {
       if (th.size() != pk_level_ || bp.size() != seq.size() + 1)
         throw std::invalid_argument("Invalid sparse posterior or threshold dimensions for DD");
@@ -355,33 +338,25 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
             throw std::invalid_argument("Invalid sparse posterior pair for DD");
           if (i >= j) continue;
           for (unsigned level = 0; level < pk_level_; ++level) {
-            const double cut = pk_score_options_.candidate_threshold < 0 ? th[level]
-                : std::min<double>(th[level], pk_score_options_.candidate_threshold);
-            if (p > cut) pairs.push_back({static_cast<int>(i - 1), static_cast<int>(j - 1),
-                static_cast<int>(level), (p - th[level]) * alpha_[level]
-                    - (level > 0 ? pk_score_options_.level_penalty : 0)});
+            if (p > th[level]) pairs.push_back({static_cast<int>(i - 1), static_cast<int>(j - 1),
+                static_cast<int>(level), (p - th[level]) * alpha_[level]});
           }
         }
       const auto result = solve_dual_decomposition(seq.size(), pairs, pk_level_,
-          stacking_constraints_, dd_options_, pk_score_options_, posterior);
+          stacking_constraints_, dd_options_);
       bpseq = result.bpseq; plevel = result.levels;
-      if (pk_score) *pk_score = result.pk_score;
-      spdlog::info("DD: iterations={}, pairs={}, support_rows={}, contacts={}, scored_contacts={}, "
+      spdlog::info("DD: iterations={}, pairs={}, support_rows={}, contacts={}, "
                    "crossing_beam_drops={}, witness_drops={}, objective={:.12g}, "
-                   "graph_upper_bound={:.12g}, PK_score={:.12g}, stop={}",
+                   "graph_upper_bound={:.12g}, stop={}",
                    result.iterations, result.pairs, result.support_rows, result.contacts,
-                   result.scored_contacts, result.crossing_beam_drops, result.witness_drops,
-                   result.objective, result.upper_bound, result.pk_score, result.stop_reason);
-      if (pk_score_options_.projected)
-        spdlog::info("DD PK projection: {} sampled scored block pairs, {} unary coefficients; "
-                     "no additional variables or support rows",
-                     result.projected_blocks, result.projected_pairs);
+                   result.crossing_beam_drops, result.witness_drops,
+                   result.objective, result.upper_bound, result.stop_reason);
       return 0.0;
     }
     if (dd_options_.enabled && dd_options_.linear_constraints)
       return decode_linear_constraints(seq, bp, th, alpha_, pk_level_, stacking_constraints_,
-          require_canonical_neighbor_, allow_coaxial_stacking_, nmr_options_, pk_score_options_,
-          dd_options_, bpseq, plevel, constraint, bp_constraints, stack_constraints, pk_score, posterior);
+          require_canonical_neighbor_, allow_coaxial_stacking_, nmr_options_,
+          dd_options_, bpseq, plevel, constraint, bp_constraints, stack_constraints);
     uint L = seq.size();
     StackConstraints effective_stack_constraints = stack_constraints;
     effective_stack_constraints.coaxial_instances.clear();
@@ -393,12 +368,6 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
       if (th.size() != pk_level_ || bp.size() != seq.size() + 1 ||
           (constraint && bpseq.size() != seq.size()))
         throw std::invalid_argument("Invalid constrained DD input dimensions");
-      if (pk_score_options_.has_h_score() &&
-          ((!pk_score_options_.crossing && !pk_score_options_.projected) || !pk_score_options_.fixed_blocks))
-        throw std::invalid_argument("DD PK scoring requires crossing or projected with blocks");
-      if (!pk_score_options_.feature_output.empty() || pk_score_options_.rerank ||
-          pk_score_options_.supported)
-        throw std::invalid_argument("DD does not support PK feature export, rerank or supported scoring");
       for (unsigned i = 1; i < bp.size(); ++i) for (const auto& [j, p] : bp[i])
         if (j == 0 || j >= bp.size() || j == i || !std::isfinite(p) || p < 0)
           throw std::invalid_argument("Invalid sparse posterior pair for DD");
@@ -447,12 +416,10 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
         if (i<j)
         {
           for (auto lv=0; lv!=pk_level_; ++lv)
-            if (p > (pk_score_options_.candidate_threshold < 0
-                         ? th[lv] : std::min<double>(th[lv], pk_score_options_.candidate_threshold))
+            if (p > th[lv]
                 || (constraint && bpseq[i-1]==j-1))
             {
-              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]
-                  - (lv > 0 ? pk_score_options_.level_penalty : 0.0));
+              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
               v_l[lv][i-1].emplace_back(j-1, v_ij);
               v_r[lv][j-1].emplace_back(i-1, v_ij);
               c_l[i-1]++; c_r[j-1]++;
@@ -468,8 +435,7 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
         const auto p = 0.0;
         for (auto lv=0; lv!=pk_level_; ++lv)
         {
-          const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]
-                  - (lv > 0 ? pk_score_options_.level_penalty : 0.0));
+          const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
           v_l[lv][i-1].emplace_back(j-1, v_ij);
           v_r[lv][j-1].emplace_back(i-1, v_ij);
           c_l[i-1]++; c_r[j-1]++;
@@ -530,8 +496,7 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
             // Add with zero weight (will only be selected if constraint requires it)
             const auto p = 0.0;
             for (auto lv=0; lv!=pk_level_; ++lv) {
-              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]
-                  - (lv > 0 ? pk_score_options_.level_penalty : 0.0));
+              const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
               v_l[lv][i-1].emplace_back(j-1, v_ij);
               v_r[lv][j-1].emplace_back(i-1, v_ij);
               c_l[i-1]++; c_r[j-1]++;
@@ -561,8 +526,7 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
           continue;
         }
         for (auto lv=0; lv!=pk_level_; ++lv) {
-          const auto v_ij = ip.make_variable((0.0-th[lv])*alpha_[lv]
-              - (lv > 0 ? pk_score_options_.level_penalty : 0.0));
+          const auto v_ij = ip.make_variable((0.0-th[lv])*alpha_[lv]);
           v_l[lv][i].emplace_back(j, v_ij);
           v_r[lv][j].emplace_back(i, v_ij);
           c_l[i]++; c_r[j]++;
@@ -606,7 +570,7 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
     {
       const double penalty = solve(seq, ip, v_l, v_r, c_l, c_r, th,
                                    bpseq, plevel, constraint, bp_constraints,
-                                   effective_stack_constraints, pk_score, posterior);
+                                   effective_stack_constraints);
       return penalty;
     }
     else
@@ -615,8 +579,6 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
       std::fill(std::begin(bpseq), std::end(bpseq), -1);
       plevel.resize(L);
       std::fill(std::begin(plevel), std::end(plevel), -1);
-      if (!pk_score_options_.feature_output.empty())
-        PKScoreModel().write_features(pk_score_options_.feature_output, seq, th, ip);
       return 0.0;
     }
   }
@@ -624,9 +586,7 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
 double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
              const VF& th, VI& bpseq, VI& plevel, bool constraint,
              const BPConstraints& bp_constraints,
-             const StackConstraints& stack_constraints,
-             double* pk_score,
-             const PKPosteriorContext* posterior) const
+             const StackConstraints& stack_constraints) const
 {
     uint L = seq.size();
     struct CountViolationVars {
@@ -720,14 +680,6 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       }
     }
 
-    PKScoreModel pk_model;
-    double pk_formulation_seconds = 0;
-    if (pk_score_options_.has_h_score() && !pk_score_options_.rerank) {
-      spdlog::stopwatch pk_timer;
-      pk_model = add_pk_h_score(ip, v_l, pk_score_options_, posterior);
-      pk_formulation_seconds = pk_timer.elapsed().count();
-    }
-
     if (levelwise_)
     {
       // constraint 2: disallow pseudoknots in x[lv]
@@ -743,12 +695,24 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
                   ip.add_constraint(row, v_kl, 1);
                 }
 
-      // A crossing partner is required in every lower level. Supported
-      // projection reuses these rows and retains only compatible partners.
-      spdlog::stopwatch crossing_timer;
-      add_pk_crossing_constraints(ip, v_l, pk_score_options_, pk_model);
-      if (pk_score_options_.supported || pk_score_options_.crossing)
-        pk_formulation_seconds += crossing_timer.elapsed().count();
+      // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
+      for (auto lv=1; lv!=pk_level_; ++lv)
+        for (auto k=0; k<v_l[lv].size(); ++k)
+          for (auto [l, v_kl]: v_l[lv][k])
+            for (auto plv=0; plv!=lv; ++plv)
+            {
+              int row = ip.make_constraint(IP::LO, 0, 0);
+              ip.add_constraint(row, v_kl, -1);
+              for (auto i=0; i<k; ++i)
+                for (auto [j, v_ij]: v_l[plv][i])
+                  if (k<j && j<l)
+                    ip.add_constraint(row, v_ij, 1);
+
+              for (auto i=k+1; i<l; ++i)
+                for (auto [j, v_ij]: v_l[plv][i])
+                  if (l<j)
+                    ip.add_constraint(row, v_ij, 1);
+            }
     }
 
     const bool has_bulged_instance = std::any_of(
@@ -797,53 +761,6 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
           }
         }
       }
-    }
-
-    if (pk_score_options_.has_h_score() && !pk_score_options_.rerank) {
-      if (pk_score_options_.crossing) {
-        spdlog::info("PK crossing scores: {} H candidates, {} continuous variables, "
-                     "0 additional integer variables, {} additional rows, {} weighted crossing edges; "
-                     "built in {:.6f}s",
-                     pk_model.motifs, pk_model.continuous_variables, pk_model.rows,
-                     pk_model.weighted_crossings, pk_formulation_seconds);
-        if (pk_score_options_.simplify_crossing)
-          spdlog::info("PK crossing simplification: {} direct rows, {} direct edges; no extra variables or rows",
-                       pk_model.direct_crossing_rows, pk_model.direct_crossing_edges);
-        if (pk_score_options_.tight_crossing_bounds)
-          spdlog::info("PK crossing bounds: {} tightened rows, width {:.12g} -> {:.12g}; no extra variables or rows",
-                       pk_model.tightened_bound_rows, pk_model.crossing_bound_width_before,
-                       pk_model.crossing_bound_width_after);
-      } else if (pk_score_options_.supported) {
-        spdlog::info("PK supported projection: {} H candidates, {} level-pair coefficients, "
-                     "{} tightened existing rows, {} removed crossing coefficients; "
-                     "0 additional variables, 0 additional rows; built in {:.6f}s",
-                     pk_model.motifs, pk_model.terms.size(), pk_model.tightened_rows,
-                     pk_model.removed_crossings, pk_formulation_seconds);
-      } else if (pk_score_options_.projected) {
-        spdlog::info("PK projection: {} H candidates, {} level-pair coefficients, "
-                     "0 additional variables, 0 additional rows; built in {:.6f}s",
-                     pk_model.motifs, pk_model.terms.size(), pk_formulation_seconds);
-      } else {
-        spdlog::info(
-            "PK formulation: {} H motifs, {} shared stems, {} shared intervals, "
-            "{} continuous variables, 0 additional integer variables, {} rows, "
-            "{} nonzeros; built in {:.6f}s",
-            pk_model.motifs, pk_model.stems, pk_model.intervals,
-            pk_model.continuous_variables, pk_model.rows, pk_model.nonzeros,
-            pk_formulation_seconds);
-      }
-      if (pk_score_options_.fixed_blocks)
-        spdlog::info("PK blocks: candidates={}, outside_domain={}, eligible={}, skipped={}, "
-                     "scored={}, covered_crossings={}, DP={}, CC06={}, CC09={}, DP_fallback={}",
-                     pk_model.candidate_blocks, pk_model.out_of_domain_blocks,
-                     pk_model.eligible_block_pairs, pk_model.skipped_block_pairs,
-                     pk_model.scored_block_pairs, pk_model.covered_crossing_pairs,
-                     pk_model.energy_dp_motifs, pk_model.energy_cc06_motifs,
-                     pk_model.energy_cc09_motifs, pk_model.energy_fallback_motifs);
-      if (pk_score_options_.needs_posterior_context())
-        spdlog::info("PK learned blocks: exported={}, missing_posterior={}, unsupported={}",
-                     pk_model.block_features.size(), pk_model.missing_posterior_block_pairs,
-                     pk_model.unsupported_block_pairs);
     }
 
     // Add base pair type constraints if specified
@@ -1410,21 +1327,6 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
             plevel[i]=plevel[j]=lv;
           }
 
-    double pk_value = pk_model.value(ip);
-    if (!pk_score_options_.feature_output.empty())
-      pk_model.write_features(pk_score_options_.feature_output, seq, th, ip);
-    if (pk_score_options_.rerank)
-      pk_value += score_pk_h_structure(bpseq, pk_score_options_);
-    if (pk_score_options_.level_penalty != 0) {
-      for (auto lv = 1u; lv < pk_level_; ++lv)
-        for (const auto& left : v_l[lv])
-          for (const auto& [j, var] : left)
-            pk_value -= pk_score_options_.level_penalty * ip.get_value(var);
-    }
-    if (pk_score) *pk_score = pk_value;
-    if (pk_score_options_.enabled())
-      spdlog::info("PK score: {:.12g}", pk_value);
-
     if (!levelwise_)
       decompose_plevel(bpseq, plevel);
 
@@ -1437,25 +1339,12 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
              const StackConstraints& stack_constraints) const -> std::pair<float,float>
 {
     uint L = seq.size();
-    // The posterior context is independent of the threshold-specific graph.
-    // Refinement calls solve() again with its new BPP matrix, so each matrix
-    // receives one context without retaining stale probabilities.
-    std::unique_ptr<PKPosteriorContext> posterior;
-    if (pk_score_options_.needs_posterior_context())
-      posterior = std::make_unique<PKPosteriorContext>(bp);
     std::vector<float> th(ep.size());
     VI bpseq_temp, plevel_temp;
     VI max_bpseq, max_plevel;
     float max_fval=-100.0, max_fval_pk=-100.0;
     double max_nmr_penalty = 0.0;
-    double max_pk_score = 0.0;
     double max_selection_score = -std::numeric_limits<double>::infinity();
-    std::vector<PKEnsembleCandidate> ensemble_pool;
-    std::vector<PKRankCandidate> rank_pool;
-    std::size_t rank_selected=0;
-    const bool ranking=pk_score_options_.rank_scale!=0 || !pk_score_options_.rank_output.empty();
-    std::unique_ptr<PKPosteriorContext> ensemble_posterior;
-    if (pk_score_options_.ensemble || ranking) ensemble_posterior = std::make_unique<PKPosteriorContext>(bp);
     spdlog::info("Search for the best thresholds by pseudo expected F-value:");
     spdlog::info("NMR automatic-threshold penalty scale: {}",
                  nmr_options_.threshold_penalty_scale);
@@ -1472,11 +1361,10 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
       if (i!=th.size()) continue;
       bpseq_temp = bpseq;
       plevel_temp = plevel;
-      double pk_score = 0.0;
       double nmr_penalty;
       try {
         nmr_penalty = solve_with_penalty(seq, bp, th, bpseq_temp, plevel_temp, constraint,
-            bp_constraints, stack_constraints, &pk_score, posterior.get());
+            bp_constraints, stack_constraints);
       } catch (const DDInfeasible& error) {
         spdlog::info("Skipping infeasible DD thresholds: {}", error.what());
         continue;
@@ -1502,76 +1390,26 @@ auto IPknot::solve(const std::string& seq, const VSVF& bp,
         spdlog::info("th={} pF={}, pF_pk={}, NMR penalty={}",
                      th_ss.str(), fval, fval_pk, nmr_penalty);
       }
-      double selection_score = fval + fval_pk -
-          nmr_options_.threshold_penalty_scale * nmr_penalty
-          + pk_score_options_.selection_weight * pk_score;
-      if(ranking) {
-        const auto features=pk_rank_features(bpseq_temp,*ensemble_posterior,fval,fval_pk,pk_score);
-        rank_pool.push_back({bpseq_temp,selection_score,features});
-        selection_score+=pk_score_options_.rank_scale*pk_score_options_.ranker.score(features);
-      }
-      if (pk_score_options_.ensemble) {
-        double utility = 0;
-        for (std::size_t i = 0; i < bpseq_temp.size(); ++i) {
-          const int j = bpseq_temp[i];
-          if (j <= static_cast<int>(i)) continue;
-          const int level = plevel_temp[i];
-          if (level < 0 || level >= static_cast<int>(alpha_.size()))
-            throw std::runtime_error("Invalid ensemble candidate level");
-          const double p = ensemble_posterior->contains(i, j) ? ensemble_posterior->evidence(i, j) : 0;
-          // One common reference cut, independent of the generating thresholds.
-          utility += alpha_[level] * (p - .25);
-        }
-        ensemble_pool.push_back({bpseq_temp, plevel_temp, utility, nmr_penalty, {}});
-      }
+      const double selection_score = fval + fval_pk -
+          nmr_options_.threshold_penalty_scale * nmr_penalty;
       if (selection_score > max_selection_score)
       {
         max_selection_score = selection_score;
         max_fval = fval;
         max_fval_pk = fval_pk;
         max_nmr_penalty = nmr_penalty;
-        max_pk_score = pk_score;
         max_bpseq = bpseq_temp;
         max_plevel = plevel_temp;
-        if(ranking) rank_selected=rank_pool.size()-1;
       }
     } while (!ep.succ());
     if (dd_options_.enabled && !std::isfinite(max_selection_score))
       throw DDInfeasible("No feasible structure for any DD threshold combination");
     bpseq = max_bpseq;
     plevel = max_plevel;
-    if(!pk_score_options_.rank_output.empty())
-      write_pk_rank_pool(pk_score_options_.rank_output,rank_pool,rank_selected);
-    if (pk_score_options_.ensemble) {
-      const double rt = .00198720425864083 * (273.15 + pk_score_options_.energy.temperature_celsius);
-      const auto result = pk_finite_ensemble(ensemble_pool, pk_score_options_.ensemble_temperature,
-          pk_score_options_.ensemble_scale, pk_score_options_.ensemble_intercept, rt,
-          pk_score_options_.ensemble_threshold);
-      bpseq = result.candidates[result.selected].pairs;
-      plevel = result.candidates[result.selected].levels;
-      const auto accuracy = compute_expected_accuracy(bpseq, bp);
-      max_fval = std::get<3>(accuracy);
-      double etp = 0; int selected_contacts = 0;
-      for (const auto& c : dd_evidence)
-        if (bpseq[c.left1] == c.right1 && bpseq[c.left2] == c.right2) {
-          etp += c.product; ++selected_contacts;
-        }
-      const double total = static_cast<double>(L) * (L - 1) / 2;
-      max_fval_pk = std::get<3>(compute_expected_accuracy(etp, total-selected_contacts-sump+etp,
-          selected_contacts-etp, sump-etp));
-      max_nmr_penalty = result.candidates[result.selected].penalty;
-      max_selection_score = result.expected_gain[result.selected];
-      spdlog::info("PK ensemble: visits={}, unique={}, selected={}, extra solves=0",
-          result.visits, result.candidates.size(), result.selected);
-      if (!pk_score_options_.ensemble_output.empty()) write_pk_ensemble(pk_score_options_.ensemble_output, result);
-    }
     spdlog::info("max pF={}, pF_pk={}, NMR penalty={}, selection score={}",
                  max_fval, max_fval_pk, max_nmr_penalty,
                  max_selection_score);
 
-    if (pk_score_options_.enabled())
-      spdlog::info("Selected PK score={}, selection weight={}",
-                   max_pk_score, pk_score_options_.selection_weight);
     return {max_fval, max_fval_pk};
   }
 

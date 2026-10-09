@@ -68,31 +68,14 @@ state budget by the number of DD iterations. `--dd-recovery-target baseline`
 (default) preserves the original Polyak target; `best` also uses checkpoint
 incumbents in that target. Recovery is opt-in because accuracy effects vary
 with the input and state budget.
-See [constraint decoding details](docs/dual-decomposition-constraints.md) for
-supported options, bound interpretation and repair-budget diagnostics.
-Learned/energy PK scores support `crossing/blocks` and `projected/blocks` in DD.
-Projected scoring adds signed unary pair coefficients while retaining the
-original crossing witness constraints, without adding contact product factors.
-Its partner pool is sampled with the DD crossing beam before witness trimming.
-See [DD projected measurements](experiments/pk-score/dd_projected.md) for the
-coefficient definition and the comparison with crossing scoring.
-See [PK score integration measurements](experiments/pk-score/dd_integration.md)
-for the frozen shape/BPP, Dirks–Pierce and Cao–Chen comparisons with
-improved beam 100 and at most 50 DD iterations.
-The [sequence-free score evaluation](experiments/pk-score/sequence_free_evaluation.md)
-implements a four-coefficient bounded model (`IPKNOT_PK_BOUNDED_V1`) for both
-formulations. Its refinement-off evaluation on 900 RNAs does not establish an
-accuracy gain; the model remains opt-in.
-See [the design and validation notes](docs/dual-decomposition.md) for equations,
-budget controls, exact diagnostic settings and benchmark results.
 
 Optional joint integer certificates group distant PK endpoints into bounded
 clusters. Add `--dd-unpruned-bound --dd-global-bound --dd-joint-bound 12
 --dd-joint-clusters` for stronger stopping certificates. For additional feasible
 structure recovery, use `--dd-exchange 12 --dd-exchange-passes 2` and optionally
 `--dd-recovery-every 1000000` (first and before stopping). These options keep
-fixed-budget sparse decoding linear. See [integer-gap analysis and measured
-tradeoffs](docs/dual-decomposition-integer-gap.md) before enabling extra recovery.
+fixed-budget sparse decoding linear. These additional recovery options are
+opt-in and may change predictions under a finite iteration budget.
 
 For GLPK,
 
@@ -118,7 +101,7 @@ For HiGHS, add ``-DENABLE_HIGHS`` to the configure step:
 
 	cmake -DENABLE_HIGHS -DCMAKE_BUILD_TYPE=Release ..  # configure
 
-To use the optional MXfold2 integration (disabled by default), configure with ``-DMXFOLD2=ON`` and ensure that Python (interpreter and development headers), [pybind11](https://github.com/pybind/pybind11), and the MXfold2 Python package are available in your environment.
+To use the optional MXfold2 integration (disabled by default), configure with ``-DWITH_MXFOLD2=ON`` and ensure that Python (interpreter and development headers), [pybind11](https://github.com/pybind/pybind11), and the MXfold2 Python package are available in your environment.
 
 
 Usage
@@ -305,47 +288,12 @@ fingerprinting overhead, not prediction accuracy or full solver runtime.
 The archived-data modes (`models`, `predictions`, and `formulations`) require
 the local experiment archives, which are not distributed in this repository.
 The `random` and `fixtures` modes can instead use the included test inputs.
-See [the integration validation record](docs/pk-score-merge-20261009.md) for
-the latest model and prediction comparisons.
+### Pseudoknot prediction
 
-### Experimental pseudoknot scores
-
-Opt-in H-type scores can evaluate crossing stems during optimization,
-project motif scores onto existing upper-level pair coefficients, restrict
-their existing crossing constraints to compatible witnesses, or rerank the
-solutions from automatic threshold search. All feature weights are zero
-by default. The current presets are experimental decoder scores rather than
-validated thermodynamic parameters. See
-[the scoring experiment](experiments/pk-score/README.md) for the formulation,
-runtime comparisons, limitations, and reproducible commands.
-The [crossing-constraint experiment](experiments/pk-score/supported.md)
-describes `--pk-h-formulation supported`: it adds no variables or constraint
-rows, but narrows the feasible structure set to match projected bonuses.
-The [aggregate crossing-score experiment](experiments/pk-score/crossing.md)
-uses `--pk-h-formulation crossing` to score actual selected crossing edges
-with at most one continuous auxiliary per existing support row, retaining
-the original feasible pair assignments and adding no integer variables.
-The [weight calibration experiment](experiments/pk-score/calibration.md)
-uses the same H-shape features, tuning on bpRNA references and evaluating
-separately on Rfam14.5 references with the ordinary automatic-threshold and
-refinement workflow.
-The [learned crossing-score experiment](experiments/pk-score/learned_implementation.md)
-fits a small signed compatibility model using posterior support, competing
-partners, stem lengths and loop spans. `--pk-learned-model FILE` applies its
-per-pair correction through the same crossing auxiliaries. It is opt-in and
-adds no integer variables, BPP calculations or decoder calls; the report
-records separate tuning and held-out accuracy and runtime measurements.
-The [refinement-off re-evaluation](experiments/pk-score/refinement_off.md)
-compares the previous scores on identical initial BPP matrices with `-r 0`,
-including newly fitted models and a separate held-out dataset.
-The [shape/posterior integration and auxiliary reduction experiment](experiments/pk-score/hybrid_r0.md)
-combines geometry and posterior corrections with `--pk-hybrid-shape` and
-tests `--pk-crossing-simplify`, which removes auxiliaries only when the
-original crossing support and base uniqueness imply an exact direct term.
-The [crossing-score speed experiment](experiments/pk-score/crossing_speed.md)
-profiles solver work and tests `--pk-crossing-hypograph`, which removes
-lower product links while preserving the maximized score for every integer
-structure.
+Ordinary pseudoknot prediction and automatic threshold selection remain
+available in both ILP and DD. Experimental PK-specific geometry, learned,
+energy, ranking and ensemble scores have been removed; the former
+`--pk-*` options are no longer accepted.
 
 ### Run with Docker
 

@@ -6,8 +6,8 @@ int main(int argc, char** argv) {
   try {
     if (argc != 18 && argc != 19) throw std::runtime_error("instance trace iterations beam crossing witnesses step projected patience state unpruned diminishing block bound_every global recovery_every recovery_mask [recovery_target_best]");
     std::ifstream input(argv[1]);
-    int n, levels, lonely; double contact_score;
-    if (!(input >> n >> levels >> lonely >> contact_score)) throw std::runtime_error("Invalid instance header");
+    int n, levels, lonely; double obsolete_score;
+    if (!(input >> n >> levels >> lonely >> obsolete_score)) throw std::runtime_error("Invalid instance header");
     std::vector<DDPair> pairs; DDPair p;
     while (input >> p.left >> p.right >> p.level >> p.weight) pairs.push_back(p);
     DDOptions o; o.trace_file=argv[2]; o.max_iterations=std::stoi(argv[3]); o.beam=std::stoi(argv[4]);
@@ -18,8 +18,8 @@ int main(int argc, char** argv) {
     o.recovery_every=std::stoi(argv[16]);o.recovery_mode=std::stoi(argv[17]);
     if (argc==19) o.recovery_target_best=std::stoi(argv[18]);
     std::ofstream(o.trace_file).close();
-    PKScoreOptions pk; pk.crossing=pk.fixed_blocks=true; pk.intercept=contact_score;
-    auto result=solve_dual_decomposition(n,pairs,levels,lonely,o,pk);
+    if (obsolete_score != 0) throw std::runtime_error("PK-specific scores are no longer supported");
+    auto result=solve_dual_decomposition(n,pairs,levels,lonely,o);
     std::cout << result.objective << ' ' << result.upper_bound << ' ' << result.stop_reason << '\n';
   } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

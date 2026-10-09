@@ -69,32 +69,14 @@ with tempfile.TemporaryDirectory() as temporary:
             audit(event['selected'], summary['lower_bound'])
     run('-x', '-c', constraints, '--dd-exchange', '4', bpp, success=False,
         message='extra unconstrained bound/recovery options are unsupported')
-    # Crossing/blocks positive and negative PK terms, including normalized
-    # continuous score columns, preserve fixed pseudoknot structure.
-    for intercept in ('8', '-8'):
-        run('-x', '-c', constraints, '-B', output, '--pk-h-intercept', intercept,
-            '--pk-crossing-normalize', bpp)
-        assert read_pairs(output) == pairs
-        for mode in ('linear','full'):
-            text=run('-x','-c',constraints,'-B',output,'--dd-dp','improved-beam',
-                     '--dd-constraints',mode,'--pk-h-formulation','projected',
-                     '--pk-h-intercept',intercept,bpp)
-            assert read_pairs(output) == pairs
-    # Learned projection abstains from confidence for a block containing a
-    # forced pair absent from BPP; its optional shape term remains defined.
-    missing = tmp/'missing.bpp'
+    # Improved beam preserves fixed pseudoknots in both constraint modes,
+    # including when a forced pair is missing from the posterior matrix.
+    missing = tmp / 'missing.bpp'
     missing.write_text(bpp.read_text().replace('1 G 8:0.9', '1 G'))
-    learned = tmp/'model.txt'
-    names = ('bias anchor_support weak_support weak_min_support support_product '
-             'support_gap weak_specificity anchor_specificity_product min_length '
-             'weak_length outer_loop middle_loop').split()
-    learned.write_text('IPKNOT_PK_LINEAR_V1\n' + ''.join(
-        f'{name} {1 if name == "bias" else 0}\n' for name in names))
-    for mode in ('linear','full'):
-        for shape in ([], ['--pk-hybrid-shape','--pk-h-intercept','-8']):
-            run('-x','-c',constraints,'-B',output,'--dd-constraints',mode,
-                '--pk-h-formulation','projected','--pk-learned-model',learned,
-                '--pk-learned-scale','.05',*shape,missing)
+    for mode in ('linear', 'full'):
+        for evidence in (bpp, missing):
+            run('-x', '-c', constraints, '-B', output,
+                '--dd-dp', 'improved-beam', '--dd-constraints', mode, evidence)
             assert read_pairs(output) == pairs
     # Force one below-threshold pair with no stacking requirement. Other
     # candidates must stay free; a negative feasible objective remains valid.

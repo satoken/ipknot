@@ -94,7 +94,7 @@ struct Builder {
     auto it = probabilities.find(key(p));
     return it == probabilities.end() ? 0 : it->second;
   }
-  int add(Pair p, double probability, bool all, const PKScoreOptions &pk) {
+  int add(Pair p, double probability, bool all) {
     if (!compatible(p))
       return -1;
     auto inserted = lookup.emplace(key(p), physical.size());
@@ -104,12 +104,8 @@ struct Builder {
                           probability, std::vector<int>(levels, -1)});
     auto &pair = physical[inserted.first->second];
     for (int lv = 0; lv < levels; ++lv) {
-      const double cut = pk.candidate_threshold < 0
-                             ? th[lv]
-                             : std::min<double>(th[lv], pk.candidate_threshold);
-      if (pair.columns[lv] < 0 && (all || probability > cut))
-        pair.columns[lv] = ip.make_variable((probability - th[lv]) * alpha[lv] -
-                                            (lv ? pk.level_penalty : 0));
+      if (pair.columns[lv] < 0 && (all || probability > th[lv]))
+        pair.columns[lv] = ip.make_variable((probability - th[lv]) * alpha[lv]);
     }
     return inserted.first->second;
   }
@@ -419,23 +415,16 @@ void coaxial_witnesses(Builder &b, const StackConstraints &stacks,
 double decode_linear_constraints(
     const std::string &sequence, const VSVF &posterior, const VF &thresholds,
     const VF &alpha, int levels, bool stacking, bool canonical_neighbor,
-    bool coaxial, const NMRConstraintOptions &nmr, const PKScoreOptions &pk,
+    bool coaxial, const NMRConstraintOptions &nmr,
     const DDOptions &options, VI &bpseq, VI &plevel, bool fixed,
-    const BPConstraints &counts, const StackConstraints &stacks,
-    double *pk_value, const PKPosteriorContext *context) {
+    const BPConstraints &counts, const StackConstraints &stacks) {
   options.validate();
-  pk.validate();
   const int length = sequence.size();
   if (posterior.size() != sequence.size() + 1 ||
       thresholds.size() != static_cast<std::size_t>(levels) ||
       alpha.size() != thresholds.size() ||
       (fixed && bpseq.size() != sequence.size()))
     throw std::invalid_argument("Invalid constrained DD input dimensions");
-  if (pk.has_h_score() && ((!pk.crossing && !pk.projected) || !pk.fixed_blocks))
-    throw std::invalid_argument("DD PK scoring requires crossing or projected with blocks");
-  if (!pk.feature_output.empty() || pk.rerank || pk.supported)
-    throw std::invalid_argument("DD does not support PK feature export, "
-                                "rerank or supported scoring");
   if (options.crossing_beam == 0 ||
       options.witnesses == 0 || options.constraint_states == 0)
     throw std::invalid_argument(
@@ -454,19 +443,15 @@ double decode_linear_constraints(
       if (i < static_cast<int>(j)) {
         bool eligible = false;
         for (int lv = 0; lv < levels; ++lv)
-          eligible |= p > (pk.candidate_threshold < 0
-                               ? thresholds[lv]
-                               : std::min<double>(thresholds[lv],
-                                                  pk.candidate_threshold));
+          eligible |= p > thresholds[lv];
         const Pair pair{i - 1, int(j) - 1};
         if (eligible || (fixed && specification[i - 1] == int(j) - 1))
-          b.add(pair, p, fixed && specification[i - 1] == int(j) - 1, pk);
+          b.add(pair, p, fixed && specification[i - 1] == int(j) - 1);
       }
   if (fixed)
     for (int i = 0; i < length; ++i)
       if (specification[i] > i)
-        b.add({i, specification[i]}, b.probability({i, specification[i]}), true,
-              pk);
+        b.add({i, specification[i]}, b.probability({i, specification[i]}), true);
   std::vector<int> ordinary;
   for (int id = 0; id < static_cast<int>(b.physical.size()); ++id)
     ordinary.push_back(id);
@@ -490,11 +475,11 @@ double decode_linear_constraints(
             neighbor.second - neighbor.first >= 4 &&
             noncanonical.count(normalize_base_pair_type(
                 sequence[neighbor.first], sequence[neighbor.second])))
-          b.add(neighbor, 0, true, pk);
+          b.add(neighbor, 0, true);
     }
   } else
     for (const auto &type : noncanonical)
-      b.sampled_pairs(type, [&](Pair p) { b.add(p, 0, true, pk); });
+      b.sampled_pairs(type, [&](Pair p) { b.add(p, 0, true); });
   std::vector<std::vector<Witness>> witnesses(stacks.constraints.size());
   for (int observation = 0;
        observation < static_cast<int>(stacks.constraints.size()); ++observation)
@@ -507,7 +492,7 @@ double decode_linear_constraints(
   for (auto &group : witnesses)
     for (auto &witness : group) {
       for (const auto &p : witness.required)
-        b.add(p, 0, true, pk);
+        b.add(p, 0, true);
       bulged |= witness.bulged;
       coaxial_count += witness.coaxial;
       ++retained;
@@ -587,43 +572,13 @@ double decode_linear_constraints(
                   b.ip.add_constraint(row, col, 1);
         }
   }
-  const auto graph =
-      dd_bounded_graph(length, pairs, levels, options, pk, context);
-  std::vector<std::pair<int, double>> pk_columns;
-  for (std::size_t id = 0; id < graph.projected_coefficients.size(); ++id) {
-    const double score = graph.projected_coefficients[id];
-    if (score == 0) continue;
-    b.ip.add_objective_coefficient(columns[id], score);
-    pairs[id].weight += score;
-    if (!std::isfinite(pairs[id].weight))
-      throw std::invalid_argument("DD PK projected pair weight overflow");
-    pk_columns.push_back({columns[id], score});
-  }
-  if (pk.projected)
-    spdlog::info("DD PK projection: {} sampled scored block pairs, {} unary coefficients; "
-                 "no additional variables or support rows",
-                 graph.projected_blocks, pk_columns.size());
+  const auto graph = dd_bounded_graph(length, pairs, levels, options);
   for (const auto &support : graph.rows) {
     const int upper = columns[support.upper],
               row = b.ip.make_constraint(IP::LO, 0, 0);
     b.ip.add_constraint(row, upper, -1);
-    for (const auto &[id, score] : support.contacts) {
-      const int lower = columns[id];
-      b.ip.add_constraint(row, lower, 1);
-      if (score == 0)
-        continue;
-      const int z = b.ip.make_variable(score);
-      pk_columns.push_back({z, score});
-      for (int col : {upper, lower}) {
-        const int link = b.ip.make_constraint(IP::UP, 0, 0);
-        b.ip.add_constraint(link, z, 1);
-        b.ip.add_constraint(link, col, -1);
-      }
-      const int link = b.ip.make_constraint(IP::LO, -1, -1);
-      b.ip.add_constraint(link, z, 1);
-      b.ip.add_constraint(link, upper, -1);
-      b.ip.add_constraint(link, lower, -1);
-    }
+    for (int id : support.contacts)
+      b.ip.add_constraint(row, columns[id], 1);
   }
   struct CountSlack {
     std::string type;
@@ -750,20 +705,14 @@ double decode_linear_constraints(
                  result.noe_primal_calls, result.noe_primal_feasible, result.noe_primal_seconds);
   bpseq.assign(length, -1);
   plevel.assign(length, -1);
-  double pk_score = 0, penalty = 0;
+  double penalty = 0;
   for (std::size_t id = 0; id < pairs.size(); ++id)
     if (b.model.solution[columns[id]] > .5) {
       const auto &p = pairs[id];
       bpseq[p.left] = p.right;
       bpseq[p.right] = p.left;
       plevel[p.left] = plevel[p.right] = p.level;
-      if (p.level)
-        pk_score -= pk.level_penalty;
     }
-  for (const auto &[col, score] : pk_columns)
-    pk_score += score * b.model.solution[col];
-  if (pk_value)
-    *pk_value = pk_score;
   for (const auto &slack : slacks) {
     const double missing = b.model.solution[slack.missing],
                  excess =

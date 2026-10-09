@@ -111,50 +111,47 @@ with tempfile.TemporaryDirectory() as temporary:
     require_success(run('--decoder','dd','--dd-trace',trace,'--loglevel','info','-r','0','-x',bpp))
     ids=[x['solve_id'] for x in map(json.loads,trace.read_text().splitlines()) if x['event']=='summary']
     assert len(ids)>1 and len(ids)==len(set(ids))
-    require_success(run(*common,'--pk-h-intercept','8',bpp))
-    require_success(run(*common,'--pk-h-intercept','-8',bpp))
     # Integer certificates may lie below the DD LP: check original feasible
     # structures and finite certificates, not certificate>=current dual value.
-    for intercept in ('8', '-8'):
-        for flags in (
-                ['--dd-joint-bound','12','--dd-joint-states','0'],
-                ['--dd-joint-bound','8','--dd-joint-clusters'],
-                ['--dd-joint-bound','12','--dd-joint-clusters','--dd-exchange','12'],
-                ['--dd-joint-bound','8','--dd-joint-shift','--dd-joint-matching'],
-                ['--dd-joint-bound','8','--dd-joint-states','1'],
-                ['--dd-exchange','12','--dd-exchange-passes','2'],
-                ['--dd-exchange','8','--dd-exchange-passes','4','--dd-exchange-states','1'],
-                ['--dd-joint-bound','8','--dd-joint-shift','--dd-exchange','8',
-                 '--dd-bound-block','8','--dd-bound-shift','--dd-bound-strict-stack',
-                 '--dd-exchange-every','2','--dd-recovery-every','2']):
-            result = run(*common,'--pk-h-intercept',intercept,
-                         '--dd-trace',trace,'--dd-trace-state',*flags,bpp)
-            require_success(result)
-            events = [json.loads(line) for line in trace.read_text().splitlines()]
-            problem = next(x for x in events if x['event'] == 'problem')
-            summary = next(x for x in events if x['event'] == 'summary')
-            states = [x for x in events if x['event'] == 'iteration']
-            assert len(states) == summary['iterations'] and states[-1]['stop'] == summary['stop']
-            assert math.isfinite(summary['upper_bound']) and math.isfinite(summary['lower_bound'])
-            assert summary['upper_bound'] >= summary['lower_bound'] - 1e-8
-            for state in states:
-                check_recovered(problem, state)
-            if '--dd-joint-bound' in flags:
-                assert problem['joint_windows'] > 0 and math.isfinite(problem['static_certificate'])
-                if '--dd-joint-states' in flags and flags[flags.index('--dd-joint-states') + 1] == '1':
-                    assert problem['joint_fallbacks'] > 0
-            if '--dd-exchange' in flags:
-                assert problem['exchange_width'] > 0
-                assert all(summary[name] >= 0 for name in (
-                    'exchange_windows','exchange_improvements','exchange_budget_windows','exchange_states'))
+    for flags in (
+            ['--dd-joint-bound','12','--dd-joint-states','0'],
+            ['--dd-joint-bound','8','--dd-joint-clusters'],
+            ['--dd-joint-bound','12','--dd-joint-clusters','--dd-exchange','12'],
+            ['--dd-joint-bound','8','--dd-joint-shift','--dd-joint-matching'],
+            ['--dd-joint-bound','8','--dd-joint-states','1'],
+            ['--dd-exchange','12','--dd-exchange-passes','2'],
+            ['--dd-exchange','8','--dd-exchange-passes','4','--dd-exchange-states','1'],
+            ['--dd-joint-bound','8','--dd-joint-shift','--dd-exchange','8',
+             '--dd-bound-block','8','--dd-bound-shift','--dd-bound-strict-stack',
+             '--dd-exchange-every','2','--dd-recovery-every','2']):
+        result = run(*common,
+                     '--dd-trace',trace,'--dd-trace-state',*flags,bpp)
+        require_success(result)
+        events = [json.loads(line) for line in trace.read_text().splitlines()]
+        problem = next(x for x in events if x['event'] == 'problem')
+        summary = next(x for x in events if x['event'] == 'summary')
+        states = [x for x in events if x['event'] == 'iteration']
+        assert len(states) == summary['iterations'] and states[-1]['stop'] == summary['stop']
+        assert math.isfinite(summary['upper_bound']) and math.isfinite(summary['lower_bound'])
+        assert summary['upper_bound'] >= summary['lower_bound'] - 1e-8
+        for state in states:
+            check_recovered(problem, state)
+        if '--dd-joint-bound' in flags:
+            assert problem['joint_windows'] > 0 and math.isfinite(problem['static_certificate'])
+            if '--dd-joint-states' in flags and flags[flags.index('--dd-joint-states') + 1] == '1':
+                assert problem['joint_fallbacks'] > 0
+        if '--dd-exchange' in flags:
+            assert problem['exchange_width'] > 0
+            assert all(summary[name] >= 0 for name in (
+                'exchange_windows','exchange_improvements','exchange_budget_windows','exchange_states'))
     # Cached static proposals and shared decoder buffers preserve the original
-    # recovery trajectory, independently of positive/negative PK corrections.
-    for intercept in ('8', '-8'):
+    # recovery trajectory under both ordinary and improved beam decoding.
+    for dp in ('beam', 'improved-beam'):
         recovered_outputs = []
         recovered_states = []
         for optimization in ('true', 'false'):
-            output = root / f'recovery-{intercept}-{optimization}.bpseq'
-            result = run(*common,'--pk-h-intercept',intercept,'--dd-recovery-every','1',
+            output = root / f'recovery-{dp}-{optimization}.bpseq'
+            result = run(*common,'--dd-dp',dp,'--dd-recovery-every','1',
                          '--dd-max-iter','40','--dd-patience','0',
                          f'--dd-recovery-cache={optimization}',f'--dd-recovery-share={optimization}',
                          '--dd-trace',trace,'--dd-trace-state','-B',output,bpp)
@@ -167,60 +164,23 @@ with tempfile.TemporaryDirectory() as temporary:
                                      for state in events if state['event'] == 'iteration'])
         assert recovered_outputs[0] == recovered_outputs[1], 'Recovery caching/sharing changed structure'
         assert recovered_states[0] == recovered_states[1], 'Recovery caching/sharing changed DD trajectory'
-    learned = root / 'model.txt'
-    names = ('bias anchor_support weak_support weak_min_support support_product '
-             'support_gap weak_specificity anchor_specificity_product min_length '
-             'weak_length outer_loop middle_loop').split()
-    learned.write_text('IPKNOT_PK_LINEAR_V1\n' + ''.join(
-        f'{name} {1 if name == "bias" else 0}\n' for name in names))
-    require_success(run(*common,'--pk-learned-model',learned,bpp))
-    require_success(run(*common,'--pk-learned-model',learned,'--pk-hybrid-shape',
-                        '--pk-h-intercept','-1',bpp))
-    require_success(run(*common,'--pk-learned-model',learned,'--pk-learned-scale','0',
-                        '--pk-hybrid-shape','--pk-h-intercept','-1',bpp))
-    require_success(run(*common,'--pk-energy-model','dp','--pk-energy-scale','.01',bpp))
-    require_success(run(*common,'--pk-energy-model','cc','--pk-energy-scale','.01',bpp))
-    for intercept in ('-8','0','8'):
-        traced=run(*common,'--dd-dp','improved-beam','--dd-beam','100','--dd-max-iter','50',
-                   '--pk-learned-model',learned,'--pk-learned-scale','.05',
-                   '--pk-hybrid-shape','--pk-h-intercept',intercept,
-                   '--dd-trace',trace,'--dd-trace-state',bpp)
+    for extra in ([], ['--dd-recovery-every', '1', '--dd-exchange', '6',
+                       '--dd-unpruned-bound', '--dd-global-bound']):
+        traced = run(*common, '--dd-dp', 'improved-beam', '--dd-beam', '100',
+                     '--dd-max-iter', '50', '--dd-trace', trace,
+                     '--dd-trace-state', *extra, bpp)
         require_success(traced)
-        events=[json.loads(line) for line in trace.read_text().splitlines()]
-        graph=next(x for x in events if x['event']=='problem')
-        assert graph['improved_beam']==1 and graph['beam']==100
-        summary=next(x for x in events if x['event']=='summary')
-        assert summary['iterations']<=50
+        events = [json.loads(line) for line in trace.read_text().splitlines()]
+        graph = next(x for x in events if x['event'] == 'problem')
+        assert graph['improved_beam'] == 1 and graph['beam'] == 100
+        assert all(score == 0 for _, contacts in graph['rows'] for _, score in contacts)
+        summary = next(x for x in events if x['event'] == 'summary')
+        assert summary['iterations'] <= 50
         for state in events:
-            if state['event']=='iteration':check_recovered(graph,state)
-    for intercept in ('-8','0','8'):
-        for extra in ([], ['--dd-recovery-every','1','--dd-exchange','6',
-                           '--dd-unpruned-bound','--dd-global-bound']):
-            traced=run(*common,'--dd-dp','improved-beam','--dd-max-iter','50',
-                       '--pk-h-formulation','projected','--pk-h-intercept',intercept,
-                       '--dd-trace',trace,'--dd-trace-state',*extra,bpp)
-            require_success(traced)
-            events=[json.loads(line) for line in trace.read_text().splitlines()]
-            graph=next(x for x in events if x['event']=='problem')
-            coefficients=graph['projected_coefficients']
-            assert all(score==0 for _,contacts in graph['rows'] for _,score in contacts)
-            if intercept != '0':
-                assert coefficients and all(value==0 or value*float(intercept)>0 for value in coefficients)
-            summary=next(x for x in events if x['event']=='summary')
-            assert summary['iterations']<=50
-            for state in events:
-                if state['event']=='iteration':check_recovered(graph,state)
-    for extra in (['--pk-learned-model',learned],
-                  ['--pk-learned-model',learned,'--pk-hybrid-shape','--pk-h-intercept','-1'],
-                  ['--pk-energy-model','dp','--pk-energy-scale','.01'],
-                  ['--pk-energy-model','cc','--pk-energy-scale','.01']):
-        require_success(run(*common,'--pk-h-formulation','projected',*extra,bpp))
-    require_success(run('--decoder','dd','--loglevel','info','--dd-dp','improved-beam','-r','1','-t','auto,auto',
-                        '--pk-h-formulation','projected','--pk-h-intercept','.2',fixture))
-    for formulation in ('exact','supported','rerank'):
-        unsupported=run(*common,'--dd-dp','improved-beam','--pk-h-intercept','1',
-                        '--pk-h-formulation',formulation,bpp)
-        assert unsupported.returncode != 0, 'Unsupported PK formulation was silently accepted'
+            if state['event'] == 'iteration':
+                check_recovered(graph, state)
+    require_success(run('--decoder', 'dd', '--loglevel', 'info',
+                        '--dd-dp', 'improved-beam', '-r', '1', '-t', 'auto,auto', fixture))
     # Empty candidates and one-level prediction remain valid.
     require_success(run(*common[:-2],'-t','1',bpp))
     for extra in (['--dd-max-iter','0'],['--dd-beam','-1'],['--dd-crossing-beam','-1'],
@@ -229,8 +189,7 @@ with tempfile.TemporaryDirectory() as temporary:
                   ['--dd-exchange','-1'],['--dd-exchange','13'],['--dd-exchange-states','-1'],
                   ['--dd-exchange-passes','0'],['--dd-exchange-passes','5'],['--dd-exchange-every','-1'],
                   ['--dd-recovery-every','-1'],['--dd-recovery-mode','wrong'],['--dd-recovery-target','wrong'],['--dd-schedule','wrong'],['--dd-trace-state'],['--dd-step','nan'],['--dd-step','2'],
-                  ['--no-levelwise'],['--dd-constraint-states','-1'],['--decoder','wrong'],
-                  ['--pk-h-intercept','1','--pk-h-formulation','exact']):
+                  ['--no-levelwise'],['--dd-constraint-states','-1'],['--decoder','wrong']):
         result=run(*common,*extra,bpp)
         assert result.returncode != 0, extra
     raw=root/'native.bpp'; first=root/'first.bpseq'; second=root/'second.bpseq'

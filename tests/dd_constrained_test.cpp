@@ -129,7 +129,7 @@ int main() {
   IPModel forced; IP ip(forced); const int pair = ip.make_variable(-2.5);
   const int row = ip.make_constraint(IP::FX, 1, 1); ip.add_constraint(row, pair, 1);
   audit(forced, {{0,15,0,-2.5}}, {pair}, -2.5);
-  // A continuous signed PK product z = -.3*x*y, independent of integer
+  // A generic continuous signed product z = -.3*x*y, independent of integer
   // witnesses. Exhaustively compare its exact vertex value.
   IPModel pk; IP product(pk);
   const int x = product.make_variable(.2), y = product.make_variable(.4);
@@ -213,5 +213,5 @@ int main() {
   exact_dense.nussinov_dp=false;
   const auto beam=solve_constrained_dd(dense_length,dense_pairs,dense_columns,1,dense,exact_dense);
   check(beam.dp_pruned_states>0,"Dense regression input did not distinguish beam from exact DP");
-  std::cout << "Constrained DD row, implicit planarity, linear work, primal, signed PK, bounds and resumed recovery audits passed\n";
+  std::cout << "Constrained DD row, implicit planarity, linear work, primal, auxiliary products, bounds and resumed recovery audits passed\n";
 }

@@ -1,14 +1,14 @@
 // Sparse beam Nussinov follows DAFS src/nussinov.cpp (Kengo Sato, GPLv3).
 // The stacked-pair states, bounded crossing graph and DD factors are IPknot
-// extensions. See docs/dual-decomposition.md for the model and complexity.
+// extensions. See README.md for decoding modes and complexity.
 #include "dual_decomposition.h"
 #include "dd_bounds.h"
 #include "dd_recovery.h"
 #include "dd_joint_bound.h"
 #include "dd_exchange.h"
-#include "pk_best_partner.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <fstream>
 #include <iomanip>
@@ -255,143 +255,17 @@ double DDNussinov::decode(const std::vector<double>& weights,
 }
 
 namespace {
-struct Contact { int lower; double score = 0, first_q = 0, second_q = 0; int first_z = 0, second_z = 0; int group = -1; };
-struct SupportRow { int upper, lower_level; double multiplier = 0; std::vector<Contact> contacts;
-  bool best_partner = false; double upper_q = 0; int upper_z = 0, groups = 0;
-  std::vector<PKPartnerTerm> partner_terms;
-  PKPartnerWorkspace partner_workspace;
-};
-
-double row_score(const SupportRow& row, const std::vector<unsigned char>& selected) {
-  if (!row.best_partner) {
-    double result=0; for(const auto& c:row.contacts) if(selected[c.lower]) result+=c.score;
-    return result;
-  }
-  std::vector<double> sums(row.groups); std::vector<int> counts(row.groups);
-  for(const auto& c:row.contacts) if(selected[c.lower]) { sums[c.group]+=c.score; ++counts[c.group]; }
-  double result=-std::numeric_limits<double>::infinity();
-  for(int g=0;g<row.groups;++g) if(counts[g]) result=std::max(result,sums[g]);
-  return result;
-}
-struct Block { int left, right, length; };
-
-class ContactScores {
-  const PKScoreOptions& pk;
-  const PKPosteriorContext* posterior;
-  std::vector<Block> blocks;
-  std::vector<int> pair_block;
-  std::unordered_map<std::uint64_t, double> cache;
-  std::size_t eligible = 0;
-  const std::vector<DDPair>& pairs;
-  struct Maximum { double value = 0; bool seen = false; };
-  std::vector<std::vector<int>> level_counts;
-  std::vector<std::vector<Maximum>> projected_best;
-  std::vector<unsigned char> has_posterior;
-  std::size_t projected_blocks = 0;
-public:
-  ContactScores(const std::vector<DDPair>& p, int levels, const PKScoreOptions& options,
-                const PKPosteriorContext* context) : pk(options), posterior(context), pair_block(p.size(), -1), pairs(p) {
-    if (!pk.has_h_score()) return;
-    const bool learned = pk.needs_posterior_context();
-    std::unordered_map<std::uint64_t, std::vector<int>> physical;
-    for (int id = 0; id < static_cast<int>(p.size()); ++id)
-      physical[key(p[id].left, p[id].right)].push_back(id);
-    // Visit physical coordinates in deterministic input order, never hash order.
-    for (int id = 0; id < static_cast<int>(p.size()); ++id) {
-      const auto& pair = p[id];
-      if (pair_block[id] >= 0 || physical.count(key(pair.left - 1, pair.right + 1))) continue;
-      int run = 0;
-      while (pair.left + run < pair.right - run && physical.count(key(pair.left + run, pair.right - run))) ++run;
-      for (const auto [offset, size] : pk_core_segments(run, pk.core_width)) {
-      const int block = blocks.size();
-      blocks.push_back({pair.left + offset, pair.right - offset, size});
-      bool complete = true;
-      if (pk.projected) {
-        level_counts.emplace_back(levels, 0);
-        projected_best.emplace_back(levels - 1);
-      }
-      for (int d = offset; d < offset + size; ++d) {
-        if (learned)
-          complete &= posterior && posterior->contains(pair.left + d, pair.right - d);
-        for (int var : physical.at(key(pair.left + d, pair.right - d))) {
-          pair_block[var] = block;
-          if (pk.projected) ++level_counts[block][p[var].level];
-        }
-      }
-      has_posterior.push_back(complete);
-      }
-    }
-  }
-  int block_id(int id) const { return pair_block[id]; }
-  double score(int a_id, int b_id) {
-    if (!pk.has_h_score()) return 0;
-    int a = pair_block[a_id], b = pair_block[b_id];
-    if (blocks[a].left > blocks[b].left) std::swap(a, b);
-    const auto token = key(a, b);
-    auto cached = cache.find(token);
-    if (cached != cache.end()) return cached->second;
-    const auto& s = blocks[a]; const auto& t = blocks[b];
-    const std::array<int, 5> g{s.length, t.length, t.left - s.left - s.length,
-        s.right - s.length - t.left - t.length + 1, t.right - t.length - s.right};
-    double result = 0;
-    if (s.length >= 2 && t.length >= 2 && s.length <= pk.max_stem && t.length <= pk.max_stem &&
-        g[2] >= 0 && g[3] >= 0 && g[4] >= 0 && g[2] <= pk.max_loop && g[3] <= pk.max_loop && g[4] <= pk.max_loop) {
-      if (eligible++ >= static_cast<std::size_t>(pk.max_motifs))
-        throw std::runtime_error("DD PK block-pair budget exceeded; raise --pk-h-max-motifs");
-      if (pk.needs_posterior_context()) {
-        if (!posterior) throw std::invalid_argument("DD learned PK scoring needs posterior context");
-        // Forced pairs may be missing from BPP. Match native block scoring:
-        // abstain from learned confidence while retaining the geometric prior.
-        if (has_posterior[a] && has_posterior[b]) {
-          auto features = pk.learned.features(*posterior, {s.left, s.right, s.length}, {t.left, t.right, t.length}, g);
-          result = pk.learned_scale * pk.learned.score(features);
-          if (pk.learned.block_normalized()) result = result / s.length / t.length;
-          else result /= features.anchor_first ? s.length : t.length;
-        }
-        if (pk.hybrid_shape) result += pk.score(g) / s.length / t.length;
-      } else result = pk.score(g) / s.length / t.length;
-    }
-    if (!std::isfinite(result)) throw std::invalid_argument("DD PK contact score overflow");
-    cache.emplace(token, result);
-    if (pk.projected && result != 0) {
-      ++projected_blocks;
-      for (const auto orientation : {std::pair<int,int>{a,b}, {b,a}}) {
-        auto& maxima = projected_best[orientation.first];
-        const auto& counts = level_counts[orientation.second];
-        for (std::size_t lower = 0; lower < maxima.size(); ++lower) if (counts[lower]) {
-          // Repeated addition matches the ILP full-partner coefficient,
-          // including roundoff, without materializing A*B contact products.
-          double value = 0;
-          for (int n = 0; n < counts[lower]; ++n) value += result;
-          if (!std::isfinite(value)) throw std::invalid_argument("DD PK projected score overflow");
-          auto& best = maxima[lower];
-          if (!best.seen || value > best.value) { best.value = value; best.seen = true; }
-        }
-      }
-    }
-    return result;
-  }
-  std::vector<double> projection() const {
-    if (!pk.projected || !pk.has_h_score()) return {};
-    std::vector<double> result(pairs.size());
-    for (std::size_t id = 0; id < pairs.size(); ++id) {
-      for (int lower = 0; lower < pairs[id].level; ++lower) {
-        const auto& best = projected_best[pair_block[id]][lower];
-        if (best.seen) result[id] += best.value;
-      }
-      if (!std::isfinite(result[id])) throw std::invalid_argument("DD PK projected score overflow");
-    }
-    return result;
-  }
-  std::size_t projection_blocks() const { return projected_blocks; }
+struct Contact { int lower; };
+struct SupportRow {
+  int upper, lower_level;
+  double multiplier = 0;
+  std::vector<Contact> contacts;
 };
 }
 
 DDBoundedGraph dd_bounded_graph(int length, const std::vector<DDPair>& pairs,
-    int levels, const DDOptions& options, const PKScoreOptions& pk,
-    const PKPosteriorContext* posterior) {
+    int levels, const DDOptions& options) {
   DDBoundedGraph graph;
-  ContactScores scores(pairs, levels, pk, posterior);
   std::vector<std::vector<int>> by_left(length), row_ids(pairs.size()), active(levels);
   for (int id = 0; id < static_cast<int>(pairs.size()); ++id) {
     by_left[pairs[id].left].push_back(id);
@@ -401,12 +275,11 @@ DDBoundedGraph dd_bounded_graph(int length, const std::vector<DDPair>& pairs,
   }
   const auto offer = [&](int upper, int lower) {
     auto& contacts = graph.rows[row_ids[upper][pairs[lower].level]].contacts;
-    const double score = scores.score(upper, lower);
-    contacts.push_back({lower, pk.projected ? 0 : score});
+    contacts.push_back(lower);
     if (options.witnesses && contacts.size() > static_cast<std::size_t>(options.witnesses)) {
       auto better = [&](const auto& a, const auto& b) {
-        const double sa = pairs[a.first].weight + a.second, sb = pairs[b.first].weight + b.second;
-        return sa != sb ? sa > sb : a.first < b.first;
+        const double sa = pairs[a].weight, sb = pairs[b].weight;
+        return sa != sb ? sa > sb : a < b;
       };
       contacts.erase(std::max_element(contacts.begin(), contacts.end(), better)); ++graph.witness_drops;
     }
@@ -428,26 +301,13 @@ DDBoundedGraph dd_bounded_graph(int length, const std::vector<DDPair>& pairs,
       }
     }
   }
-  graph.projected_coefficients = scores.projection();
-  graph.projected_blocks = scores.projection_blocks();
   return graph;
 }
 
-DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_pairs,
-    int levels, bool no_lonely, const DDOptions& options,
-    const PKScoreOptions& pk, const PKPosteriorContext* posterior) {
-  options.validate(); pk.validate();
+DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& pairs,
+    int levels, bool no_lonely, const DDOptions& options) {
+  options.validate();
   if (length < 0 || levels < 1) throw std::invalid_argument("Invalid DD dimensions");
-  if (pk.has_h_score() && ((!pk.crossing && !pk.projected) || !pk.fixed_blocks))
-    throw std::invalid_argument("DD PK scoring requires crossing or projected with --pk-h-allocation blocks");
-  if (!pk.feature_output.empty() || pk.rerank || pk.supported)
-    throw std::invalid_argument("DD does not support PK feature export, rerank or supported scoring; use --decoder ilp");
-  if (pk.best_partner && (options.global_bound || options.joint_bound_width ||
-      options.exchange_width || options.recovery_every))
-    throw std::invalid_argument("DD best-partner scoring cannot use additive-contact bound/recovery helpers");
-  std::vector<DDPair> projected_pairs;
-  if (pk.projected && pk.has_h_score()) projected_pairs = input_pairs;
-  const auto& pairs = projected_pairs.empty() ? input_pairs : projected_pairs;
   DDResult result;
   result.bpseq.assign(length, -1); result.levels.assign(length, -1); result.pairs = pairs.size();
   const int count = pairs.size();
@@ -486,7 +346,6 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
           << ",\"upper_bound\":" << result.upper_bound << ",\"stop\":\"" << result.stop_reason << "\"}\n";
   };
   if (!count) { result.upper_bound = 0; emit_summary(); return result; }
-  ContactScores scores(pairs, levels, pk, posterior);
   std::vector<SupportRow> rows;
   for (int id = 0; id < count; ++id) for (int lower = 0; lower < pairs[id].level; ++lower) {
     row_ids[id].push_back(rows.size()); rows.push_back({id, lower, 0, {}});
@@ -494,13 +353,11 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
   std::vector<std::vector<int>> active(levels);
   const auto offer_contact = [&](int upper, int lower) {
     auto& row = rows[row_ids[upper][pairs[lower].level]];
-    const double potential = scores.score(upper, lower);
-    const double score = pk.projected ? 0 : potential;
-    row.contacts.push_back({lower, score});
+    row.contacts.push_back({lower});
     if (options.witnesses && row.contacts.size() > static_cast<std::size_t>(options.witnesses)) {
-      // Prefer posterior/objective evidence, then PK compatibility, then ID.
+      // Prefer posterior/objective evidence, then the deterministic pair ID.
       auto better = [&](const Contact& a, const Contact& b) {
-        const double sa = pairs[a.lower].weight + a.score, sb = pairs[b.lower].weight + b.score;
+        const double sa = pairs[a.lower].weight, sb = pairs[b.lower].weight;
         return sa != sb ? sa > sb : a.lower < b.lower;
       };
       auto worst = std::max_element(row.contacts.begin(), row.contacts.end(), better);
@@ -526,16 +383,6 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
         beam.erase(std::max_element(beam.begin(), beam.end(), better)); ++result.crossing_beam_drops;
       }
     }
-  }
-  // Build support with the original weights. Projection changes only unary
-  // objectives, including for 3+ levels, not witness ranking or feasibility.
-  const auto projected_coefficients = scores.projection();
-  result.projected_blocks = scores.projection_blocks();
-  for (std::size_t id = 0; id < projected_coefficients.size(); ++id) {
-    projected_pairs[id].weight += projected_coefficients[id];
-    if (!std::isfinite(projected_pairs[id].weight))
-      throw std::invalid_argument("DD PK projected pair weight overflow");
-    result.projected_pairs += projected_coefficients[id] != 0;
   }
   // Propagate impossible witnesses and stacking support in O(M+E). This
   // removes factors known to be zero before the first subgradient iteration.
@@ -572,33 +419,16 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
     else row.contacts.erase(std::remove_if(row.contacts.begin(), row.contacts.end(),
         [&](const Contact& c) { return !allowed[c.lower]; }), row.contacts.end());
     result.contacts += row.contacts.size();
-    for (const auto& c : row.contacts) result.scored_contacts += c.score != 0;
-    row.best_partner = pk.best_partner && std::any_of(row.contacts.begin(), row.contacts.end(),
-        [](const Contact& c) { return c.score != 0; });
-    if (row.best_partner) {
-      std::unordered_map<int,int> groups;
-      for(auto& c:row.contacts) {
-        const int block=scores.block_id(c.lower);
-        auto found=groups.find(block);
-        if(found==groups.end()) found=groups.emplace(block,groups.size()).first;
-        c.group=found->second;
-        row.partner_terms.push_back({c.group,c.score,0});
-      }
-      row.groups=groups.size();
-    }
   }
   double static_bound = std::numeric_limits<double>::infinity();
   if (options.global_bound) {
-    std::vector<DDScoredContact> contacts;
-    for (const auto& row : rows) for (const auto& c : row.contacts)
-      if (c.score != 0) contacts.push_back({row.upper,c.lower,c.score});
-    static_bound = dd_global_bound(length,pairs,contacts,allowed);
+    static_bound = dd_global_bound(length,pairs,{},allowed);
   }
   std::vector<DDRecoveryRow> model_rows;
   if (options.recovery_every || options.joint_bound_width || options.exchange_width)
     for (const auto& row : rows) {
       DDRecoveryRow copied; copied.upper=row.upper;
-      for (const auto& c : row.contacts) copied.contacts.push_back({c.lower,c.score});
+      for (const auto& c : row.contacts) copied.contacts.push_back({c.lower,0});
       model_rows.push_back(std::move(copied));
     }
   if (options.joint_bound_width) {
@@ -653,7 +483,6 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
           << ",\"improved_beam\":" << int(options.improved_beam)
           << ",\"crossing_beam\":" << options.crossing_beam << ",\"witnesses\":" << options.witnesses
           << ",\"max_iterations\":" << options.max_iterations << ",\"patience\":" << options.patience
-          << ",\"best_partner\":" << int(pk.best_partner) << ",\"core_width\":" << pk.core_width
           << ",\"bound_block\":" << options.bound_block << ",\"bound_every\":" << options.bound_every
           << ",\"global_bound\":" << int(options.global_bound) << ",\"recovery_every\":" << options.recovery_every
           << ",\"recovery_target_best\":" << int(options.recovery_target_best)
@@ -681,20 +510,6 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
           << ",\"witness_drops\":" << result.witness_drops;
     if (options.global_bound || options.joint_bound_width) trace << ",\"static_certificate\":" << static_bound;
     if (options.trace_state) {
-      trace << ",\"projected_coefficients\":[";
-      for (std::size_t id = 0; id < projected_coefficients.size(); ++id) {
-        if (id) trace << ',';
-        trace << projected_coefficients[id];
-      }
-      trace << "],\"partner_groups\":[";
-      for(std::size_t r=0;r<rows.size();++r) {
-        if(r) trace<<','; trace<<'[';
-        for(std::size_t k=0;k<rows[r].contacts.size();++k) {if(k)trace<<',';trace<<rows[r].contacts[k].group;}
-        trace<<']';
-      }
-      trace<<"],\"best_partner_rows\":[";
-      for(std::size_t r=0;r<rows.size();++r) {if(r)trace<<',';trace<<int(rows[r].best_partner);}
-      trace<<']';
       trace << ",\"pairs\":[";
       for (int id = 0; id < count; ++id) {
         const auto& p = pairs[id];
@@ -708,7 +523,7 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
         for (std::size_t k = 0; k < rows[r].contacts.size(); ++k) {
           if (k) trace << ',';
           const auto& c = rows[r].contacts[k];
-          trace << '[' << c.lower << ',' << c.score << ']';
+          trace << '[' << c.lower << ",0]";
         }
         trace << "]]";
       }
@@ -724,7 +539,6 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
   double baseline_best = 0;
   double scale = 0;
   for (const auto& p : pairs) scale = std::max(scale, std::abs(p.weight));
-  for (const auto& row : rows) for (const auto& c : row.contacts) scale = std::max(scale, std::abs(c.score));
   scale = std::max(scale, 1e-3);
   result.stop_reason = "max_iterations";
   int stagnant = 0;
@@ -733,34 +547,12 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
     std::fill(selected.begin(), selected.end(), 0);
     std::fill(degree.begin(), degree.end(), 0);
     for (int id = 0; id < count; ++id) weights[id] = pairs[id].weight - lambda[pairs[id].left] - lambda[pairs[id].right];
-    double factor_value = 0;
     for (auto& row : rows) {
-      if(row.best_partner) {
-        weights[row.upper]-=row.upper_q;
-        for(std::size_t k=0;k<row.contacts.size();++k) {
-          auto& c=row.contacts[k]; weights[c.lower]-=c.second_q;
-          row.partner_terms[k].multiplier=c.second_q;
-        }
-        const auto& state=pk_best_partner_factor(row.upper_q,row.partner_terms,row.groups,row.partner_workspace);
-        factor_value+=state.value; row.upper_z=state.upper;
-        for(std::size_t k=0;k<row.contacts.size();++k) row.contacts[k].second_z=state.lower[k];
-        continue;
-      }
       weights[row.upper] -= row.multiplier;
-      for (auto& c : row.contacts) {
+      for (const auto& c : row.contacts)
         weights[c.lower] += row.multiplier;
-        if (c.score == 0) continue;
-        weights[row.upper] -= c.first_q; weights[c.lower] -= c.second_q;
-        c.first_z = c.second_z = 0;
-        double value = 0;
-        for (int a = 0; a <= 1; ++a) for (int b = 0; b <= 1; ++b) {
-          const double candidate = c.score * a * b + c.first_q * a + c.second_q * b;
-          if (candidate > value) { value = candidate; c.first_z = a; c.second_z = b; }
-        }
-        factor_value += value;
-      }
     }
-    const double constant = std::accumulate(lambda.begin(), lambda.end(), factor_value);
+    const double constant = std::accumulate(lambda.begin(), lambda.end(), 0.0);
     double beam_value = constant, upper_bound = constant, endpoint_certificate = constant;
     int bound_evaluations = 0;
     const bool block_due = iteration == 0 || (iteration + 1) % options.bound_every == 0 || iteration + 1 == options.max_iterations;
@@ -808,10 +600,6 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
         for (int row_id : row_ids[id]) {
           bool supported = false;
           for (const auto& c : rows[row_id].contacts) if (recovered[c.lower]) supported = true;
-          if(supported) {
-            if(rows[row_id].best_partner) weights[id] += row_score(rows[row_id],recovered);
-            else for(const auto& c:rows[row_id].contacts) if(recovered[c.lower]) weights[id]+=c.score;
-          }
           mask[id] &= supported;
         }
       }
@@ -821,17 +609,10 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
       } else decoders[level]->decode(weights, mask, decoded);
       for (int id : decoded) { recovered[id] = 1; used[pairs[id].left] = used[pairs[id].right] = 1; }
     }
-    double primal = 0, pk_value = 0;
-    for (int id = 0; id < count; ++id) if (recovered[id]) {
+    double primal = 0;
+    for (int id = 0; id < count; ++id) if (recovered[id])
       primal += pairs[id].weight;
-      if (!projected_coefficients.empty()) pk_value += projected_coefficients[id];
-      if (pairs[id].level > 0) pk_value -= pk.level_penalty;
-    }
-    for (const auto& row : rows) if (recovered[row.upper]) {
-      if(row.best_partner) { const double value=row_score(row,recovered); primal+=value; pk_value+=value; }
-      else for(const auto& c:row.contacts) if(recovered[c.lower]) { primal+=c.score; pk_value+=c.score; }
-    }
-    if (!std::isfinite(primal) || !std::isfinite(pk_value))
+    if (!std::isfinite(primal))
       throw std::overflow_error("DD primal objective overflow; reduce the score scale");
     const double baseline_primal = primal;
     const bool baseline_improved = baseline_primal > baseline_best;
@@ -851,26 +632,9 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
       complementarity += std::abs(lambda[base] * gradient[base]);
     }
     for (const auto& row : rows) {
-      if(row.best_partner) {
-        add_norm(row.upper_z-selected[row.upper],0,false);
-        copy_violations+=row.upper_z!=selected[row.upper];
-        int support=0;
-        for(const auto& c:row.contacts) {
-          support+=selected[c.lower]; add_norm(c.second_z-selected[c.lower],0,false);
-          copy_violations+=c.second_z!=selected[c.lower];
-        }
-        support_violations+=selected[row.upper] && !support;
-        continue;
-      }
       double g = -selected[row.upper];
       for (const auto& c : row.contacts) {
         g += selected[c.lower];
-        if (c.score != 0) {
-          add_norm(c.first_z - selected[row.upper], 0, false);
-          add_norm(c.second_z - selected[c.lower], 0, false);
-          copy_violations += c.first_z != selected[row.upper];
-          copy_violations += c.second_z != selected[c.lower];
-        }
       }
       add_norm(g, row.multiplier, true);
       support_violations += g < 0;
@@ -901,14 +665,9 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
       recovery_proposals = proposal.proposals;
       result.recovery_proposals += recovery_proposals;
       if (proposal.objective > primal) {
-        recovered = std::move(proposal.selected); primal = 0; pk_value = 0;
-        for (int id=0;id<count;++id) if (recovered[id]) {
+        recovered = std::move(proposal.selected); primal = 0;
+        for (int id=0;id<count;++id) if (recovered[id])
           primal += pairs[id].weight;
-          if (!projected_coefficients.empty()) pk_value += projected_coefficients[id];
-          if (pairs[id].level > 0) pk_value -= pk.level_penalty;
-        }
-        for (const auto& row : rows) if (recovered[row.upper]) for (const auto& c : row.contacts)
-          if (recovered[c.lower]) { primal += c.score; pk_value += c.score; }
         recovery_method = proposal.method;
       }
     }
@@ -928,23 +687,18 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
       result.exchange_states+=proposal.states_visited;
       // Compare using the same double accumulation order as the baseline.
       // The helper's extended-precision score may round differently.
-      double candidate=0, candidate_pk=0;
-      for(int id=0;id<count;++id) if(proposal.selected[id]) {
+      double candidate=0;
+      for(int id=0;id<count;++id) if(proposal.selected[id])
         candidate+=pairs[id].weight;
-        if (!projected_coefficients.empty()) candidate_pk+=projected_coefficients[id];
-        if(pairs[id].level>0) candidate_pk-=pk.level_penalty;
-      }
-      for(const auto& row:rows) if(proposal.selected[row.upper]) for(const auto& c:row.contacts)
-        if(proposal.selected[c.lower]) { candidate+=c.score; candidate_pk+=c.score; }
       if (candidate > primal) {
-        recovered=std::move(proposal.selected); primal=candidate; pk_value=candidate_pk;
+        recovered=std::move(proposal.selected); primal=candidate;
         recovery_method="joint_exchange";
       }
     }
-    if (!std::isfinite(primal) || !std::isfinite(pk_value))
+    if (!std::isfinite(primal))
       throw std::overflow_error("DD primal objective overflow; reduce the score scale");
     if (primal > result.objective) {
-      result.objective = primal; result.pk_score = pk_value; best.clear();
+      result.objective = primal; best.clear();
       for (int id=0;id<count;++id) if (recovered[id]) best.push_back(id);
       stagnant = 0;
     } else if (baseline_improved) stagnant = 0;
@@ -1000,18 +754,9 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
     if (!stop.empty()) { result.stop_reason = stop; break; }
     for (int base = 0; base < length; ++base) lambda[base] = std::max(0.0, lambda[base] - eta * gradient[base]);
     for (auto& row : rows) {
-      if(row.best_partner) {
-        row.upper_q-=eta*(row.upper_z-selected[row.upper]);
-        for(auto& c:row.contacts) c.second_q-=eta*(c.second_z-selected[c.lower]);
-        continue;
-      }
       double g = -selected[row.upper];
       for (auto& c : row.contacts) {
         g += selected[c.lower];
-        if (c.score != 0) {
-          c.first_q -= eta * (c.first_z - selected[row.upper]);
-          c.second_q -= eta * (c.second_z - selected[c.lower]);
-        }
       }
       row.multiplier = std::max(0.0, row.multiplier - eta * g);
     }
@@ -1027,7 +772,8 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& input_p
 }
 
 std::vector<DDCrossingEvidence> dd_crossing_evidence(
-    const PKPosteriorPairs& posterior, int crossing_beam) {
+    const std::vector<std::vector<std::pair<unsigned int, float>>>& posterior,
+    int crossing_beam) {
   if (posterior.empty() || crossing_beam < 0)
     throw std::invalid_argument("Invalid DD crossing evidence dimensions");
   struct Evidence { int left, right; double probability; };

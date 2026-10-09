@@ -1,11 +1,7 @@
 #include "dual_decomposition.h"
-#include "ip.h"
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <random>
 #include <stdexcept>
@@ -63,131 +59,6 @@ double oracle(int n, const std::vector<DDPair>& pairs, bool lonely,
   };
   visit(0); return best;
 }
-void check_pk_contact_parity() {
-  const auto path = std::filesystem::temp_directory_path() /
-      ("ipknot-dd-pk-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-  {
-    std::ofstream output(path);
-    output << "IPKNOT_PK_LINEAR_V1\n";
-    int index = 0;
-    for (const auto name : pk_learned_feature_names())
-      output << name << ' ' << (index++ < 8 ? .1 * index - .45 : 0) << '\n';
-  }
-  PKLearnedModel learned;
-  learned.load(path.string());
-  {
-    std::ofstream output(path);
-    output << "IPKNOT_PK_BOUNDED_V1\nbias .2\nsupport 1\ncompetition .5\nloop_cost .002\ncap .05\n";
-  }
-  PKLearnedModel bounded;
-  bounded.load(path.string());
-  {
-    std::ofstream output(path);
-    output << "IPKNOT_PK_LINEAR_AB_V1\n";
-    for (std::size_t i=0;i<learned.weights.size();++i)
-      output << pk_learned_feature_names()[i] << ' ' << learned.weights[i] << '\n';
-  }
-  PKLearnedModel block_linear;
-  block_linear.load(path.string());
-  {std::ofstream output(path);output<<"IPKNOT_PK_EXCLUSION_V1\nintercept .2\nenergy_scale .03\ntemperature 37\n";}
-  PKLearnedModel exclusion;exclusion.load(path.string());
-  {std::ofstream output(path);output<<"IPKNOT_PK_DP_LOCAL_V1\nintercept .2\nenergy_scale .03\ntemperature 37\n";}
-  PKLearnedModel local;local.load(path.string());
-  std::filesystem::remove(path);
-  for (int levels : {2, 3}) {
-    IPModel recording;
-    IP ip(recording);
-    PKLevelPairs native(levels, std::vector<std::vector<std::pair<unsigned int, int>>>(15));
-    PKPosteriorPairs evidence(16);
-    std::vector<DDPair> pairs;
-    int index = 0;
-    for (const auto coordinate : std::vector<std::pair<int, int>>{
-        {0,9},{1,8},{2,7},{4,14},{5,13},{6,12},{3,11},{4,10}}) {
-      evidence[coordinate.first+1].push_back({static_cast<unsigned>(coordinate.second+1),
-                                             coordinate.first < 3 ? .6f : .2f});
-      for (int level = 0; level < levels; ++level) if ((index + level) % 3 != 1) {
-        const int variable = ip.make_variable(0);
-        native[level][coordinate.first].push_back({static_cast<unsigned>(coordinate.second),variable});
-        check(variable == static_cast<int>(pairs.size()), "Native and DD pair ids differ");
-        pairs.push_back({coordinate.first,coordinate.second,level,.1});
-      }
-      ++index;
-    }
-    PKPosteriorContext posterior(evidence);
-    for (int core : {0,2,3}) for (int mode = 0; mode < 12; ++mode) {
-      PKScoreOptions pk;
-      pk.core_width=core;
-      pk.crossing = pk.fixed_blocks = true;
-      if (mode < 2) pk.intercept = mode ? -1.2 : 1.2;
-      else if (mode < 4) {
-        pk.energy.model = mode == 2 ? PKLoopEnergyModel::DP : PKLoopEnergyModel::CC;
-        pk.energy_scale = .01;
-        pk.energy_intercept = .2;
-      } else {
-        pk.learned = mode == 8 ? bounded : mode == 9 ? block_linear : mode==10 ? exclusion : mode==11 ? local : learned;
-        pk.learned_scale = mode == 7 ? 0 : .05;
-        pk.hybrid_shape = mode >= 5 && mode < 8;
-        if (pk.hybrid_shape) {
-          pk.intercept = -.05;
-          pk.stem_reward = .025;
-          pk.loop_penalty = .0075;
-          if (mode == 6) pk.coax_bonus = .2;
-        }
-      }
-      const auto expected = add_pk_h_score(ip,native,pk,&posterior).crossing_scores;
-      for (int width : {0, 2, 100}) {
-        DDOptions options;
-        options.crossing_beam = width;
-        options.witnesses = width ? 2 : 0;
-        const auto actual = dd_bounded_graph(15,pairs,levels,options,pk,&posterior);
-        for (const auto& row : actual.rows) for (const auto& contact : row.contacts) {
-          double value = 0;
-          const auto upper = expected.find(row.upper);
-          if (upper != expected.end()) {
-            const auto lower = upper->second.find(contact.first);
-            if (lower != upper->second.end()) value = lower->second;
-          }
-          check(std::abs(contact.second-value) < 1e-12,
-                "DD retained contact differs from native shape, energy or learned/hybrid allocation");
-        }
-        if (!width) for (const auto& [upper,contacts] : expected)
-          for (const auto& [lower,value] : contacts) {
-            bool found = false;
-            for (const auto& row : actual.rows) if (row.upper == upper)
-              for (const auto& contact : row.contacts) found |= contact.first == lower;
-            check(found, "Unbounded DD omitted a scored native contact");
-          }
-      }
-      pk.crossing = false;
-      pk.projected = true;
-      std::vector<double> expected_projection(pairs.size());
-      for (const auto& [variable, coefficient] : add_pk_h_score(ip,native,pk,&posterior).terms)
-        expected_projection[variable] += coefficient;
-      for (int width : {0, 1, 100}) {
-        DDOptions options;
-        options.crossing_beam = width;
-        options.witnesses = 1;
-        const auto actual = dd_bounded_graph(15,pairs,levels,options,pk,&posterior);
-        const auto base = dd_bounded_graph(15,pairs,levels,options,PKScoreOptions(),nullptr);
-        check(actual.rows.size() == base.rows.size(), "Projection changed support rows");
-        for (std::size_t r = 0; r < actual.rows.size(); ++r)
-          check(actual.rows[r].upper == base.rows[r].upper &&
-                actual.rows[r].lower_level == base.rows[r].lower_level &&
-                actual.rows[r].contacts == base.rows[r].contacts,
-                "Projection changed support witnesses or added product factors");
-        if (!width) for (std::size_t id = 0; id < pairs.size(); ++id) {
-          const double coefficient = actual.projected_coefficients.empty() ? 0 : actual.projected_coefficients[id];
-          check(std::abs(coefficient-expected_projection[id]) < 1e-12,
-                "Unbounded DD projection differs from native signed full-partner coefficients");
-        }
-        options.witnesses = 0;
-        const auto all_witnesses = dd_bounded_graph(15,pairs,levels,options,pk,&posterior);
-        check(actual.projected_coefficients == all_witnesses.projected_coefficients,
-              "Witness trimming reduced full-partner projection");
-      }
-    }
-  }
-}
 
 void check_large_improved_column() {
   // More than 1024 starts exercises the fixed radix sorting path, rather
@@ -215,38 +86,8 @@ void check_large_improved_column() {
   }
 }
 
-void check_best_partner_model() {
-  std::mt19937 rng(57213);std::uniform_real_distribution<double> uniform(-.5,.5);
-  for(int trial=0;trial<40;++trial) {
-    std::vector<DDPair> pairs;
-    for(auto [i,j]:std::vector<std::pair<int,int>>{{0,9},{1,8},{3,12},{4,11},{6,15},{7,14}})
-      for(int level=0;level<2;++level)pairs.push_back({i,j,level,uniform(rng)});
-    DDOptions options;options.beam=0;options.crossing_beam=options.witnesses=0;options.max_iterations=50;
-    PKScoreOptions pk;pk.best_partner=pk.crossing=pk.fixed_blocks=true;pk.intercept=trial%2?-.8:.8;
-    const auto graph=dd_bounded_graph(16,pairs,2,options,pk,nullptr);
-    auto score=[&](const std::vector<int>& ids) {
-      std::vector<bool> selected(pairs.size());double value=0;
-      for(int id:ids){selected[id]=true;value+=pairs[id].weight;}
-      for(const auto& row:graph.rows)if(selected[row.upper]) {
-        std::map<int,double> groups;
-        for(auto [lower,w]:row.contacts)if(selected[lower])groups[lower/4]+=w;
-        check(!groups.empty(),"Best-partner structure lacks a witness");
-        double best=-1e100;for(auto [g,w]:groups)best=std::max(best,w);value+=best;
-      }
-      return value;
-    };
-    const double exact=oracle(16,pairs,true,score);
-    const auto result=solve_dual_decomposition(16,pairs,2,true,options,pk);
-    const auto ids=ids_from_result(pairs,result);
-    check(feasible(16,pairs,ids,true),"Best-partner DD recovery infeasible");
-    check(std::abs(result.objective-score(ids))<1e-10,"Best-partner primal objective differs");
-    check(result.objective<=exact+1e-9 && result.upper_bound>=exact-1e-9,"Best-partner DD certificate invalid");
-  }
-}
 
 int main() {
-  check_best_partner_model();
-  check_pk_contact_parity();
   check_large_improved_column();
   std::mt19937 random(314159);
   for (int trial = 0; trial < 150; ++trial) {
@@ -282,7 +123,7 @@ int main() {
     }
   }
   // The unbounded metric sample equals a direct all-crossing oracle.
-  PKPosteriorPairs evidence(10);
+  std::vector<std::vector<std::pair<unsigned int, float>>> evidence(10);
   for (int i=1;i<10;++i) for (int j=i+1;j<10;++j)
     if (random()%3==0) evidence[i].push_back({static_cast<unsigned>(j),.1f*(random()%9+1)});
   auto contacts=dd_crossing_evidence(evidence,0);
@@ -333,62 +174,32 @@ int main() {
   }
   options.unpruned_bound = false;
   std::vector<DDPair> h{{0,7,0,.4},{1,6,0,.4},{3,10,1,.4},{4,9,1,.4}};
-  PKScoreOptions pk; pk.crossing = pk.fixed_blocks = true; pk.intercept = 8;
   options.beam = 0;
-  auto rewarded = solve_dual_decomposition(11,h,2,true,options,pk);
-  check(std::abs(rewarded.objective - 9.6) < 1e-8 && std::abs(rewarded.pk_score - 8) < 1e-8, "PK block contact allocation differs from independent product score");
-  pk.intercept = -8;
-  auto penalized = solve_dual_decomposition(11,h,2,true,options,pk);
-  check(std::abs(penalized.objective - .8) < 1e-8 && penalized.pk_score == 0, "Negative PK correction was dropped or charged to absent contacts");
-  pk.intercept = 0; pk.energy.model = PKLoopEnergyModel::DP; pk.energy_intercept = 10; pk.energy_scale = .01;
-  auto energy = solve_dual_decomposition(11,h,2,true,options,pk);
-  check(std::abs(energy.pk_score - pk.score({2,2,1,1,1})) < 1e-8, "DD PK energy differs from physical block geometry");
-  PKScoreOptions projected;
-  projected.projected = projected.fixed_blocks = true;
-  projected.intercept = 1;
-  const std::vector<DDPair> partial{{0,7,0,.4},{1,6,0,.4},{2,5,0,-.1},
-                                  {3,10,1,.4},{4,9,1,.4}};
-  options.crossing_beam = 0;
-  options.witnesses = 1;
-  const auto projection = solve_dual_decomposition(11,partial,2,true,options,projected);
-  check(std::abs(projection.objective-2.6) < 1e-8 &&
-        std::abs(projection.pk_score-1) < 1e-8 && projection.bpseq[2] < 0,
-        "Projection did not charge full potential partner when only two of three lower pairs are selected");
-  check(projection.scored_contacts == 0 && projection.projected_pairs == 2,
-        "Projection unexpectedly created product factors");
-  projected.intercept = -1;
-  const auto negative_projection = solve_dual_decomposition(11,partial,2,true,options,projected);
-  check(std::abs(negative_projection.objective-.8) < 1e-8 && negative_projection.pk_score == 0,
-        "Negative projected score was clipped to zero or charged to absent upper pairs");
-  options.witnesses = 0;
-  // Signed product factors with alternative layer assignments: compare the
-  // returned primal and bound with a separately enumerated contact objective.
+  const auto ordinary = solve_dual_decomposition(11,h,2,true,options);
+  check(std::abs(ordinary.objective - 1.6) < 1e-8,
+        "Ordinary crossing structure changed its pair-only objective");
+  // Alternative layer assignments: compare the returned pair-only primal
+  // and bound with an independently enumerated structural objective.
   for (int trial=0;trial<30;++trial) {
     std::vector<DDPair> alternatives;
     for (const auto& pair:h) for (int level=0;level<2;++level)
       alternatives.push_back({pair.left,pair.right,level,(static_cast<int>(random()%9)-3)/5.0});
-    PKScoreOptions contact_pk;
-    contact_pk.crossing=contact_pk.fixed_blocks=true;
-    contact_pk.intercept=(static_cast<int>(random()%9)-4)/2.0;
     const auto score=[&](const std::vector<int>& ids) {
       double value=0;
       for(int id:ids) value+=alternatives[id].weight;
-      for(int a:ids) for(int b:ids)
-        if(alternatives[a].level>alternatives[b].level && crossing(alternatives[a],alternatives[b]))
-          value+=contact_pk.intercept/4;
       return value;
     };
     const double optimum=oracle(11,alternatives,true,score);
     for(bool projected:{false,true}) {
       options.projected_norm=projected;
-      auto value=solve_dual_decomposition(11,alternatives,2,true,options,contact_pk);
+      auto value=solve_dual_decomposition(11,alternatives,2,true,options);
       auto ids=ids_from_result(alternatives,value);
       check(feasible(11,alternatives,ids,true),"Product-factor recovery invalid");
       check(std::abs(value.objective-score(ids))<1e-8,"Product-factor primal mismatch");
-      check(value.upper_bound+1e-8>=optimum,"Product-factor bound below signed contact optimum");
+      check(value.upper_bound+1e-8>=optimum,"Product-factor bound below pair-only optimum");
     }
-    // A whole physical window couples the original signed H contacts and
-    // both level structures. Its certificate and feasible exchange meet at
+    // A whole physical window couples both level structures. Its
+    // certificate and feasible exchange meet at
     // the independently enumerated integer optimum, even for a narrow beam.
     for (bool optimized : {false, true}) {
       DDOptions coupled;
@@ -397,10 +208,10 @@ int main() {
       coupled.joint_bound_width=12; coupled.joint_bound_states=0;
       coupled.exchange_width=12; coupled.exchange_passes=2; coupled.exchange_states=0;
       coupled.recovery_every=7; coupled.recovery_cache=coupled.recovery_share=optimized;
-      const auto result=solve_dual_decomposition(11,alternatives,2,true,coupled,contact_pk);
+      const auto result=solve_dual_decomposition(11,alternatives,2,true,coupled);
       const auto selected=ids_from_result(alternatives,result);
       check(feasible(11,alternatives,selected,true),"Joint certificate/exchange returned infeasible H structure");
-      check(std::abs(result.objective-score(selected))<1e-8,"Joint exchange used proposal instead of original H score");
+      check(std::abs(result.objective-score(selected))<1e-8,"Joint exchange used proposal instead of original pair weights");
       check(std::abs(result.objective-optimum)<1e-8,"Whole-window H exchange failed independent integer optimum");
       check(std::abs(result.upper_bound-optimum)<1e-8,"Whole-window H certificate differs from integer optimum");
       check(result.stop_reason=="bound_gap","Whole-window integer bounds did not certify optimal stopping");
@@ -408,24 +219,20 @@ int main() {
   }
   // Additional primal proposals leave the baseline Polyak trajectory in
   // place. They must dominate the baseline under both a fixed budget and
-  // patience, including signed contacts and genuinely pruned oracles.
+  // patience, including signed pair weights and genuinely pruned oracles.
   for (int trial=0;trial<40;++trial) {
     std::vector<DDPair> alternatives;
     for (const auto& pair:h) for (int level=0;level<2;++level)
       alternatives.push_back({pair.left,pair.right,level,(int(random()%13)-5)/4.0});
-    PKScoreOptions contact_pk; contact_pk.crossing=contact_pk.fixed_blocks=true;
-    contact_pk.intercept=(int(random()%11)-5)/2.0;
     const auto score=[&](const std::vector<int>& ids) {
       double value=0;for(int id:ids)value+=alternatives[id].weight;
-      for(int a:ids)for(int b:ids)if(alternatives[a].level>alternatives[b].level && crossing(alternatives[a],alternatives[b]))
-        value+=contact_pk.intercept/4;
       return value;
     };
     const double optimum=oracle(11,alternatives,true,score);
     for(int patience:{0,3}) {
       DDOptions base; base.beam=2;base.crossing_beam=base.witnesses=0;
       base.max_iterations=25;base.patience=patience;base.unpruned_bound=true;
-      const auto original=solve_dual_decomposition(11,alternatives,2,true,base,contact_pk);
+      const auto original=solve_dual_decomposition(11,alternatives,2,true,base);
       for(int mode=0;mode<5;++mode) {
         auto improved=base;
         improved.global_bound=mode==0 || mode>=3;
@@ -433,7 +240,7 @@ int main() {
         improved.bound_every=7;
         improved.recovery_every=mode>=2 ? 7 : 0;
         improved.recovery_target_best=mode==4;
-        const auto result=solve_dual_decomposition(11,alternatives,2,true,improved,contact_pk);
+        const auto result=solve_dual_decomposition(11,alternatives,2,true,improved);
         const auto ids=ids_from_result(alternatives,result);
         check(feasible(11,alternatives,ids,true),"Bound/recovery integration is infeasible");
         check(std::abs(result.objective-score(ids))<1e-8,"Bound/recovery integration score mismatch");
@@ -448,11 +255,11 @@ int main() {
           enhanced.exchange_width=8; enhanced.exchange_passes=2;
           enhanced.recovery_every=7;
           enhanced.recovery_cache=enhanced.recovery_share=optimized;
-          const auto result=solve_dual_decomposition(11,alternatives,2,true,enhanced,contact_pk);
+          const auto result=solve_dual_decomposition(11,alternatives,2,true,enhanced);
           const auto ids=ids_from_result(alternatives,result);
           check(feasible(11,alternatives,ids,true),"Pruned integer-window integration violated feasibility");
           check(result.objective>=original.objective-1e-8,"Baseline-target joint exchange worsened fixed-budget output");
-          check(result.upper_bound>=optimum-1e-8 && result.objective<=optimum+1e-8,"Integer-window integration failed signed H oracle");
+          check(result.upper_bound>=optimum-1e-8 && result.objective<=optimum+1e-8,"Integer-window integration failed pair-only oracle");
           if (optimized)
             check(result.objective==previous.objective && result.bpseq==previous.bpseq && result.levels==previous.levels,
                   "Recovery caching/sharing changed integer-window prediction");
@@ -488,5 +295,5 @@ int main() {
   std::vector<unsigned char> mask(long_pairs.size(),1);
   std::vector<int> selected;
   check(long_decoder.decode(weights,mask,selected)==long_pairs.size(), "Long iterative traceback failed");
-  std::cout << "Exhaustive Nussinov/DD feasibility, bounds, signed PK scores and long traceback passed\n";
+  std::cout << "Exhaustive Nussinov/DD feasibility, bounds, pair-only objectives and long traceback passed\n";
 }

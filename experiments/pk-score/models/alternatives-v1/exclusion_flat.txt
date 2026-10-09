@@ -1,4 +1,0 @@
-IPKNOT_PK_EXCLUSION_V1
-intercept 0
-energy_scale 0
-temperature 37

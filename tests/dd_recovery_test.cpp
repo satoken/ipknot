@@ -164,7 +164,7 @@ int main() {
   DDPrimalRecovery signed_recovery(11,pairs,2,0,true,allowed,rows);
   signed_recovery.observe_adjusted(adjusted);
   auto signed_result=signed_recovery.propose(dual);
-  check(std::abs(signed_result.objective-4)<1e-9,"Signed PK contacts changed feasible objective");
+  check(std::abs(signed_result.objective-4)<1e-9,"Signed contacts changed feasible objective");
   check(std::abs(signed_result.objective-score(pairs,rows,signed_result.selected))<1e-9,
         "Negative contact accounting mismatch");
 

@@ -16,7 +16,7 @@ struct DDJointBoundResult {
 
 // Original-objective certificate using coupled INTEGER physical matchings
 // within disjoint windows/clusters. It can be below the original DD LP.
-// Internal signed PK products and structural rules are kept in joint mode;
+// Internal signed contact products and structural rules are kept in joint mode;
 // matching-only mode majorizes all positive products and drops structure.
 // External positive contacts are majorized, external pairs credit-covered.
 // A fixed state budget switches a busy window to a certified unary-cover

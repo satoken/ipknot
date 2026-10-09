@@ -16,3 +16,7 @@ build
 __pycache__/
 exp
 /prompt.txt
+
+# Keep local research documentation out of future commits.
+/docs/
+/build-no-pk-highs/

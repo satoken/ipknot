@@ -128,16 +128,16 @@ int main() {
       }
     }
   }
-  // Negative PK creates a strict DD integrality gap: u<=l, w_u=1,w_l=0,c=-2.
+  // A negative coupling creates a DD integrality gap: u<=l, w_u=1,w_l=0,c=-2.
   // LP witness u=l=1/2,y=0 has score1/2. For u>1/2, y>=2u-1 makes
   // score<=2-3u<=1/2, proving D*=1/2. Integers choose l alone or empty (0).
   std::vector<DDPair> gap{{0, 2, 0, 0}, {1, 3, 1, 1}};
   std::vector<DDRecoveryRow> gap_rows{{1, {{0, -2}}}};
   std::vector<unsigned char> allowed{1, 1};
   DDJointBound coupled_gap(4, gap, 2, false, allowed, gap_rows, 4, 0, false, 0);
-  check(coupled_gap.evaluate().upper_bound == 0, "Joint signed PK certificate did not close explicit DD LP gap");
+  check(coupled_gap.evaluate().upper_bound == 0, "Joint signed-contact certificate did not close explicit DD LP gap");
   DDJointBound relaxed_gap(4, gap, 2, false, allowed, gap_rows, 4, 0, true, 0);
-  check(relaxed_gap.evaluate().upper_bound >= 1, "Matching-only relaxation unexpectedly used negative PK constraint");
+  check(relaxed_gap.evaluate().upper_bound >= 1, "Matching-only relaxation unexpectedly used negative contact constraint");
   // Odd-set matching constraint missing from a degree-only endpoint cover.
   std::vector<DDPair> triangle{{0, 1, 0, 1}, {1, 2, 0, 1}, {0, 2, 0, 1}};
   allowed.assign(3, 1);

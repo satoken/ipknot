@@ -27,7 +27,6 @@
 #include <string>
 #include <list>
 #include <map>
-#include "pk_score.h"
 #include "dual_decomposition.h"
 
 class IP;
@@ -193,7 +192,6 @@ public:
          bool require_canonical_neighbor = false,
          bool allow_coaxial_stacking = false,
          NMRConstraintOptions nmr_options = NMRConstraintOptions(),
-         PKScoreOptions pk_score_options = PKScoreOptions(),
          DDOptions dd_options = DDOptions());
 
 public:
@@ -224,16 +222,12 @@ private:
                             const VF& th, VI& bpseq, VI& plevel,
                             bool constraint,
                             const BPConstraints& bp_constraints,
-                            const StackConstraints& stack_constraints,
-                            double* pk_score = nullptr,
-                            const PKPosteriorContext* posterior = nullptr) const;
+                            const StackConstraints& stack_constraints) const;
 
   double solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
                const VF& th, VI& bpseq, VI& plevel, bool constraint,
                const BPConstraints& bp_constraints,
-               const StackConstraints& stack_constraints,
-               double* pk_score,
-               const PKPosteriorContext* posterior) const;
+               const StackConstraints& stack_constraints) const;
 
   static auto compute_expected_accuracy(float etp, float etn, float efp, float efn) -> std::tuple<float,float,float,float>;
   static auto compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>;
@@ -252,7 +246,6 @@ private:
   bool require_canonical_neighbor_;  // require canonical base pair above or below for non-canonical pairs
   bool allow_coaxial_stacking_;      // consider flush coaxial stacks in multibranch loops
   NMRConstraintOptions nmr_options_;
-  PKScoreOptions pk_score_options_;
   DDOptions dd_options_;
 };
 

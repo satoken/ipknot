@@ -19,8 +19,9 @@ int main(int argc,char** argv) {
     o.joint_bound_states=js;o.recovery_every=std::stoi(argv[15]);o.recovery_cache=std::stoi(argv[16]);
     o.recovery_share=std::stoi(argv[17]);o.exchange_width=std::stoi(argv[18]);o.exchange_passes=std::stoi(argv[19]);
     o.exchange_every=std::stoi(argv[20]);o.exchange_states=es;o.global_bound=std::stoi(argv[22]);o.joint_bound_clusters=std::stoi(argv[23]);
-    std::ofstream(o.trace_file).close();PKScoreOptions pk;pk.crossing=pk.fixed_blocks=true;pk.intercept=contact;
-    const auto r=solve_dual_decomposition(n,pairs,levels,lonely,o,pk);
+    std::ofstream(o.trace_file).close();
+    if (contact != 0) throw std::runtime_error("PK-specific scores are no longer supported");
+    const auto r=solve_dual_decomposition(n,pairs,levels,lonely,o);
     std::cout<<r.objective<<' '<<r.upper_bound<<' '<<r.stop_reason<<'\n';
   }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

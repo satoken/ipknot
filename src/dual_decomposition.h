@@ -1,7 +1,8 @@
 #ifndef IPKNOT_DUAL_DECOMPOSITION_H
 #define IPKNOT_DUAL_DECOMPOSITION_H
 
-#include "pk_score.h"
+#include <string>
+#include <utility>
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -78,29 +79,23 @@ struct DDCrossingEvidence {
 };
 // Fixed-width physical crossing sample for automatic threshold selection.
 std::vector<DDCrossingEvidence> dd_crossing_evidence(
-    const PKPosteriorPairs& posterior, int crossing_beam);
+    const std::vector<std::vector<std::pair<unsigned int, float>>>& posterior,
+    int crossing_beam);
 
 struct DDBoundedRow {
   int upper, lower_level;
-  std::vector<std::pair<int, double>> contacts;
+  std::vector<int> contacts;
 };
 struct DDBoundedGraph {
   std::vector<DDBoundedRow> rows;
   std::size_t crossing_drops = 0, witness_drops = 0;
-  // Fixed-block, full-partner projection over block pairs encountered before
-  // witness trimming. Empty unless projected H scoring is active. Support
-  // rows retain the original weights and zero product scores in this mode.
-  std::vector<double> projected_coefficients;
-  std::size_t projected_blocks = 0;
 };
 DDBoundedGraph dd_bounded_graph(int length, const std::vector<DDPair>& pairs,
-    int levels, const DDOptions& options, const PKScoreOptions& pk,
-    const PKPosteriorContext* posterior);
+    int levels, const DDOptions& options);
 
 struct DDResult {
   std::vector<int> bpseq, levels;
   double objective = 0;
-  double pk_score = 0;
   // Bound on the bounded witness graph, NOT the unrestricted ILP model.
   double upper_bound = std::numeric_limits<double>::infinity();
   int iterations = 0;
@@ -109,14 +104,11 @@ struct DDResult {
   std::size_t exchange_windows = 0, exchange_improvements = 0;
   std::size_t exchange_budget_windows = 0, exchange_states = 0;
   std::string stop_reason = "no_candidates";
-  std::size_t pairs = 0, support_rows = 0, contacts = 0, scored_contacts = 0;
+  std::size_t pairs = 0, support_rows = 0, contacts = 0;
   std::size_t crossing_beam_drops = 0, witness_drops = 0;
-  std::size_t projected_pairs = 0, projected_blocks = 0;
 };
 
 DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& pairs,
-    int levels, bool no_lonely_pairs, const DDOptions& options,
-    const PKScoreOptions& pk = PKScoreOptions(),
-    const PKPosteriorContext* posterior = nullptr);
+    int levels, bool no_lonely_pairs, const DDOptions& options);
 
 #endif

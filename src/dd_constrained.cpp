@@ -26,7 +26,8 @@ struct DualRow {
 };
 
 // Interval propagation preserves all feasible assignments. It is also used
-// on auxiliary counts, witness links, topology blockers and PK score columns.
+// on auxiliary counts, witness links, topology blockers and independent
+// continuous auxiliary columns.
 class Repair {
 public:
   const IPModel& model;
@@ -95,10 +96,10 @@ public:
         incident[col].push_back(rows.size());
         continuous += !m.variables[col].integer;
       }
-      // The crossing/blocks PK formulation has at most one continuous score
-      // per row. Once integers are fixed its exact feasible interval is known.
+      // At most one continuous auxiliary per row is supported. Once the
+      // integers are fixed its exact feasible interval is known.
       if (continuous > 1)
-        throw std::invalid_argument("Constrained DD requires independent continuous score columns");
+        throw std::invalid_argument("Constrained DD requires independent continuous auxiliary columns");
       rows.push_back(std::move(row));
     }
     if (!propagate(root, -1)) throw DDInfeasible(o.linear_constraints ? "Retained constrained DD graph is infeasible (constraint propagation); increase candidate/witness beams or use --dd-constraints full" : "Constrained DD model is infeasible (constraint propagation)");
