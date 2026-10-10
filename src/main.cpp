@@ -750,10 +750,8 @@ main(int argc, char* argv[])
       cxxopts::value<std::string>(), "FILE")
     ("bpp", "Output base-pairing probabilities",
       cxxopts::value<std::string>(), "FILE")
-#ifndef WITH_GLPK
     ("n,threads", "The number of threads for the available solvers",
       cxxopts::value<uint>()->default_value("1"), "N")
-#endif
     ("P,param", "Read the energy parameter file for Vienna RNA package",
       cxxopts::value<std::string>(), "FILE")
     ("x,aux", "Import an auxiliary file for base-pairing probabilities",
@@ -830,9 +828,7 @@ main(int argc, char* argv[])
   if (res.count("param")) param = res["param"].as<std::string>();
   aux = res["aux"].as<bool>();
   levelwise = !res["no-levelwise"].as<bool>();
-#ifndef WITH_GLPK
   n_th = res["threads"].as<uint>();
-#endif
   output_energy = res["energy"].as<bool>();
   if (res.count("constraint")) constraint = res["constraint"].as<std::string>();
   if (res.count("stack-constraint")) stack_constraint_args = res["stack-constraint"].as<std::vector<std::string>>();
@@ -1101,10 +1097,10 @@ main(int argc, char* argv[])
     if (decoder != "auto" && decoder != "ilp" && decoder != "dd")
       throw std::invalid_argument("Decoder must be auto, ilp, or dd");
     dd_options.enabled = decoder == "dd";
-#if !defined(WITH_GLPK) && !defined(WITH_CPLEX) && !defined(WITH_GUROBI) && !defined(WITH_SCIP) && !defined(WITH_HIGHS)
-    if (decoder == "ilp") throw std::invalid_argument("No ILP solver is linked; use --decoder dd");
-    dd_options.enabled = true;
-#endif
+    if (!IP::available()) {
+      if (decoder == "ilp") throw std::invalid_argument("No ILP solver is linked; use --decoder dd");
+      dd_options.enabled = true;
+    }
     const auto constraint_model = res["dd-constraints"].as<std::string>();
     if (constraint_model != "linear" && constraint_model != "full")
       throw std::invalid_argument("DD constraints must be linear or full");

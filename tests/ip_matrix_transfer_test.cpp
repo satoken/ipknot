@@ -20,15 +20,16 @@ int main(int argc, char** argv) {
     for (int element = 0; element < degree; ++element)
       expected[row_index(column, element)] += coefficient(column, element) * (column % 2);
   IP ip(IP::MAX, 1);
+  std::vector<int> column_ids(columns), row_ids(rows);
   for (int column = 0; column < columns; ++column)
-    assert(ip.make_variable(1, column % 2, column % 2) == column);
+    column_ids[column] = ip.make_variable(1, column % 2, column % 2);
   for (int row = 0; row < rows; ++row)
-    assert(ip.make_constraint(IP::FX, expected[row], expected[row]) == row);
+    row_ids[row] = ip.make_constraint(IP::FX, expected[row], expected[row]);
   for (int column = 0; column < columns; ++column)
     for (int element = 0; element < degree; ++element)
-      ip.add_constraint(row_index(column, element), column, coefficient(column, element));
+      ip.add_constraint(row_ids[row_index(column, element)], column_ids[column], coefficient(column, element));
   assert(ip.solve() == columns / 2);
-  for (int column = 0; column < columns; ++column) assert(ip.get_value(column) == column % 2);
+  for (int column = 0; column < columns; ++column) assert(ip.get_value(column_ids[column]) == column % 2);
   std::cout << "Verified " << columns << " columns, " << rows << " rows, "
             << 1LL * columns * degree << " coefficients\n";
 }

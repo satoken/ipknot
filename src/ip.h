@@ -21,6 +21,7 @@
 #define __INC_IP_H__
 
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -74,6 +75,21 @@ struct IPModel {
   std::vector<Row> rows;
   std::vector<double> solution;
   std::function<double()> optimize;
+};
+
+// Optimize an immutable recorded model with changing objective coefficients.
+// Model indices are always zero-based, independently of the backend's indices.
+// Backend-specific model reuse and objective bounds are implemented in ip.cpp.
+class IPModelSolver {
+public:
+  struct Result { double objective, bound; };
+  IPModelSolver(const IPModel& model, IP::DirType direction, int threads = 1);
+  ~IPModelSolver();
+  Result solve(const std::vector<double>& coefficients);
+  double get_value(int column) const;
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 #endif  // __INC_IP_H__

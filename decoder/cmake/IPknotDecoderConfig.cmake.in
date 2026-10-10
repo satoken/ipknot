@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+if(@IPKNOT_DECODER_WITH_SCIP@)
+  include(CMakeFindDependencyMacro)
+  find_dependency(SCIP)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/IPknotDecoderTargets.cmake")
+check_required_components(IPknotDecoder)

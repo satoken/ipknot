@@ -107,6 +107,15 @@ To use the optional MXfold2 integration (disabled by default), configure with ``
 Usage
 -----
 
+### Decode probabilities as a C++ library
+
+The reusable `IPknot::decoder` target accepts supplied base-pair probabilities
+and returns partners, pseudoknot levels, and the objective. It supports bounded
+beam DD, unpruned Nussinov DD, and ILP without linking probability engines or the
+CLI. See [the decoder API and examples](decoder/README.md) for CMake integration,
+installation, input formats, and complexity. Refinement and NMR constraints remain
+available through IPknot.
+
 ### Single sequences
 
 IPknot can take FASTA formatted RNA sequences as input, then predicts their secondary structures including pseudoknots.

@@ -39,6 +39,9 @@
 #include <cstdint>
 
 #include "ipknot.h"
+#include "ipknot/decoder.h"
+#include "ilp_model.h"
+#include "decoder_internal.h"
 #include "ip.h"
 #include "dd_constrained.h"
 #include "dd_constraint_builder.h"
@@ -328,23 +331,26 @@ double IPknot::solve_with_penalty(const std::string& seq, const VSVF& bp,
              const BPConstraints& bp_constraints,
              const StackConstraints& stack_constraints) const
 {
-    if (dd_options_.enabled && !constraint && !bp_constraints.has_constraints() && !stack_constraints.has_constraints()) {
-      if (th.size() != pk_level_ || bp.size() != seq.size() + 1)
-        throw std::invalid_argument("Invalid sparse posterior or threshold dimensions for DD");
-      std::vector<DDPair> pairs;
-      for (unsigned i = 1; i < bp.size(); ++i)
-        for (const auto& [j, p] : bp[i]) {
-          if (j == 0 || j >= bp.size() || j == i || !std::isfinite(p) || p < 0)
-            throw std::invalid_argument("Invalid sparse posterior pair for DD");
-          if (i >= j) continue;
-          for (unsigned level = 0; level < pk_level_; ++level) {
-            if (p > th[level]) pairs.push_back({static_cast<int>(i - 1), static_cast<int>(j - 1),
-                static_cast<int>(level), (p - th[level]) * alpha_[level]});
-          }
-        }
-      const auto result = solve_dual_decomposition(seq.size(), pairs, pk_level_,
-          stacking_constraints_, dd_options_);
-      bpseq = result.bpseq; plevel = result.levels;
+    if (levelwise_ && !constraint && !bp_constraints.has_constraints() && !stack_constraints.has_constraints()) {
+      ipknot::DecoderOptions options;
+      options.backend = dd_options_.enabled ? ipknot::Backend::DD : ipknot::Backend::ILP;
+      options.thresholds = th;
+      options.weights = alpha_;
+      options.no_lonely_pairs = stacking_constraints_;
+      options.threads = n_th_;
+      options.dd = dd_options_;
+      if (bp.size() != seq.size() + 1)
+        throw std::invalid_argument("Invalid sparse posterior dimensions");
+      // Refinement accumulates posterior contributions and can exceed one.
+      spdlog::stopwatch decoder_timer;
+      const auto decoded = ipknot::detail::decode_posterior_scores(bp, std::move(options));
+      bpseq = decoded.bpseq; plevel = decoded.levels;
+      if (!decoded.dd) {
+        spdlog::debug("IP objective: {:.12g}", decoded.objective);
+        spdlog::info("IP optimization finished in {:.6f}s", decoder_timer.elapsed().count());
+        return 0.0;
+      }
+      const auto& result = *decoded.dd;
       spdlog::info("DD: iterations={}, pairs={}, support_rows={}, contacts={}, "
                    "crossing_beam_drops={}, witness_drops={}, objective={:.12g}, "
                    "graph_upper_bound={:.12g}, stop={}",
@@ -680,87 +686,15 @@ double IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVS
       }
     }
 
-    if (levelwise_)
-    {
-      // constraint 2: disallow pseudoknots in x[lv]
-      for (auto lv=0; lv!=pk_level_; ++lv)
-        for (auto i=0; i<v_l[lv].size(); ++i)
-          for (auto [j, v_ij]: v_l[lv][i])
-            for (auto k=i+1; k<j; ++k)
-              for (auto [l, v_kl]: v_l[lv][k])
-                if (j<l)
-                {
-                  auto row = ip.make_constraint(IP::UP, 0, 1);
-                  ip.add_constraint(row, v_ij, 1);
-                  ip.add_constraint(row, v_kl, 1);
-                }
-
-      // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
-      for (auto lv=1; lv!=pk_level_; ++lv)
-        for (auto k=0; k<v_l[lv].size(); ++k)
-          for (auto [l, v_kl]: v_l[lv][k])
-            for (auto plv=0; plv!=lv; ++plv)
-            {
-              int row = ip.make_constraint(IP::LO, 0, 0);
-              ip.add_constraint(row, v_kl, -1);
-              for (auto i=0; i<k; ++i)
-                for (auto [j, v_ij]: v_l[plv][i])
-                  if (k<j && j<l)
-                    ip.add_constraint(row, v_ij, 1);
-
-              for (auto i=k+1; i<l; ++i)
-                for (auto [j, v_ij]: v_l[plv][i])
-                  if (l<j)
-                    ip.add_constraint(row, v_ij, 1);
-            }
-    }
+    if (levelwise_) ipknot::detail::add_level_constraints(ip, v_l);
 
     const bool has_bulged_instance = std::any_of(
         stack_constraints.instances.begin(), stack_constraints.instances.end(),
         [](const StackInstance& instance) { return instance.has_bulge; });
     const int max_neighbor_distance = has_bulged_instance ? 2 : 1;
-    if (stacking_constraints_)
-    {
-      // Relax ordinary stacking support only when the effective NMR witness
-      // set actually contains a one-nucleotide bulge.  In particular,
-      // --nmr-bulge-mode none must retain IPknot's original adjacent-pair
-      // rule instead of broadening the feasible structure set merely because
-      // an NMR stack constraint is present.
+    if (stacking_constraints_) {
       spdlog::debug("Stacking neighbor distance: {}", max_neighbor_distance);
-      for (auto lv=0; lv!=pk_level_; ++lv)
-      {
-        // upstream
-        for (auto i=0; i<L; ++i)
-        {
-          int row = ip.make_constraint(IP::LO, 0, 0);
-          for (auto [j, v_ji]: v_r[lv][i])
-            ip.add_constraint(row, v_ji, -1);
-          for (int d=1; d<=max_neighbor_distance; ++d) {
-            if (i>=static_cast<uint>(d))
-              for (auto [j, v_ji]: v_r[lv][i-d])
-                ip.add_constraint(row, v_ji, 1);
-            if (i+d<L)
-              for (auto [j, v_ji]: v_r[lv][i+d])
-                ip.add_constraint(row, v_ji, 1);
-          }
-        }
-
-        // downstream
-        for (auto i=0; i<L; ++i)
-        {
-          auto row = ip.make_constraint(IP::LO, 0, 0);
-          for (auto [j, v_ij]: v_l[lv][i])
-            ip.add_constraint(row, v_ij, -1);
-          for (int d=1; d<=max_neighbor_distance; ++d) {
-            if (i>=static_cast<uint>(d))
-              for (auto [j, v_ij]: v_l[lv][i-d])
-                ip.add_constraint(row, v_ij, 1);
-            if (i+d<L)
-              for (auto [j, v_ij]: v_l[lv][i+d])
-                ip.add_constraint(row, v_ij, 1);
-          }
-        }
-      }
+      ipknot::detail::add_stacking_constraints(ip, v_l, v_r, max_neighbor_distance);
     }
 
     // Add base pair type constraints if specified

@@ -96,3 +96,17 @@ double IP::get_value(int column) const {
 #endif
   return 0;
 }
+
+#ifndef NMR_RECORDER_LEGACY_IP_API
+struct IPModelSolver::Impl {};
+IPModelSolver::IPModelSolver(const IPModel&, IP::DirType, int) {
+  throw std::logic_error("The model recorder cannot optimize IP models");
+}
+IPModelSolver::~IPModelSolver() = default;
+IPModelSolver::Result IPModelSolver::solve(const std::vector<double>&) {
+  throw std::logic_error("The model recorder cannot optimize IP models");
+}
+double IPModelSolver::get_value(int) const {
+  throw std::logic_error("The model recorder cannot optimize IP models");
+}
+#endif
