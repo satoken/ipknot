@@ -148,6 +148,19 @@ private:
   const char* param_;
 };
 
+class LinearNupackModel : public BPEngineSeq
+{
+public:
+  LinearNupackModel(const char* param, uint beam_size=100) : param_(param), beam_size_(beam_size) {}
+  void calculate_posterior(const std::string&, std::vector<float>&, std::vector<int>&) const override;
+  VSVF calculate_posterior(const std::string&, float th=DEFAULT_THRESHOLD) const override;
+  void calculate_posterior(const std::string&, const std::string&, std::vector<float>&, std::vector<int>&) const override;
+  VSVF calculate_posterior(const std::string&, const std::string&, float th=DEFAULT_THRESHOLD) const override;
+private:
+  const char* param_;
+  uint beam_size_;
+};
+
 class LinearPartitionModel : public BPEngineSeq
 {
 public:

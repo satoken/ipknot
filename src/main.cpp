@@ -754,7 +754,7 @@ main(int argc, char* argv[])
     ("n,threads", "The number of threads for the available solvers",
       cxxopts::value<uint>()->default_value("1"), "N")
 #endif
-    ("P,param", "Read the energy parameter file for Vienna RNA package",
+    ("P,param", "Read an energy parameter file for the selected model",
       cxxopts::value<std::string>(), "FILE")
     ("x,aux", "Import an auxiliary file for base-pairing probabilities",
       cxxopts::value<bool>()->default_value("false"))
@@ -773,7 +773,7 @@ main(int argc, char* argv[])
     ("V,verbose", "Verbose output")
     ("loglevel", "Set the logging level (trace, debug, info, warn, error, critical)",
       cxxopts::value<std::string>()->default_value("warn"), "LEVEL")
-    ("beam-size", "Beam size for LinearPartition algorithm",
+    ("beam-size", "Beam size for LinearPartition / LinearNUPACK (0 disables pruning)",
       cxxopts::value<uint>()->default_value("100"), "N")
     ("base-pairs", "Specify base pair count constraints (e.g., GC=1,AU=3,GU=1,UU=1)",
       cxxopts::value<std::string>(), "CONSTRAINTS")

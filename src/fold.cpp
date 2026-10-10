@@ -53,6 +53,7 @@ typedef Vienna::FLT_OR_DBL FLT_OR_DBL;
 #endif
 
 #include "nupack/nupack.h"
+#include "nupack/linear_nupack.h"
 #ifdef WITH_MXFOLD2
 #include "mxfold2.h"
 #endif
@@ -394,7 +395,10 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
 {
   Nupack<long double> nu;
   if (param_)
-    nu.load_parameters(param_);
+  {
+    if (!nu.load_parameters(param_))
+      throw std::runtime_error(std::string("Cannot load NUPACK parameters: ")+param_);
+  }
   else
     nu.load_default_parameters(/*model_*/);
   //nu.dump_parameters(std::cout);
@@ -426,6 +430,70 @@ calculate_posterior(const std::string& seq, float th) const
     }
 
   return sbp;
+}
+
+// LinearNUPACK model. The sparse path never materializes a quadratic matrix.
+namespace {
+LinearNupack run_linear_nupack(const char* param, uint beam, const std::string& seq,
+                             const std::string& constraints)
+{
+  LinearNupack parser(beam);
+  if (param && !parser.load_parameters(param))
+    throw std::runtime_error(std::string("Cannot load LinearNUPACK parameters: ")+param);
+  parser.calculate(seq,constraints);
+  return parser;
+}
+
+void linear_nupack_dense(const LinearNupack& parser, std::size_t n,
+                        std::vector<float>& bp, std::vector<int>& offset)
+{
+  bp.assign((n+1)*(n+2)/2,0);
+  offset.resize(n+1);
+  for (std::size_t i=0; i<=n; ++i) offset[i]=i*(2*n+1-i)/2;
+  for (const auto& item:parser.posterior())
+  {
+    auto [i,j,p]=item;
+    bp[offset[i+1]+j+1]=static_cast<float>(p);
+  }
+}
+
+VSVF linear_nupack_sparse(const LinearNupack& parser, std::size_t n, float threshold)
+{
+  VSVF result(n+1);
+  for (const auto& item:parser.posterior())
+  {
+    auto [i,j,p]=item;
+    const float probability=static_cast<float>(p);
+    if (probability>=threshold)
+    {
+      result[i+1].emplace_back(j+1,probability);
+      result[j+1].emplace_back(i+1,probability);
+    }
+  }
+  return result;
+}
+}
+
+void LinearNupackModel::calculate_posterior(const std::string& seq, std::vector<float>& bp,
+                                           std::vector<int>& offset) const
+{
+  calculate_posterior(seq,"",bp,offset);
+}
+
+VSVF LinearNupackModel::calculate_posterior(const std::string& seq, float th) const
+{
+  return calculate_posterior(seq,"",th);
+}
+
+void LinearNupackModel::calculate_posterior(const std::string& seq, const std::string& constraints,
+                                           std::vector<float>& bp, std::vector<int>& offset) const
+{
+  linear_nupack_dense(run_linear_nupack(param_,beam_size_,seq,constraints),seq.size(),bp,offset);
+}
+
+VSVF LinearNupackModel::calculate_posterior(const std::string& seq, const std::string& constraints, float th) const
+{
+  return linear_nupack_sparse(run_linear_nupack(param_,beam_size_,seq,constraints),seq.size(),th);
 }
 
 // LinearPartition model
@@ -1382,6 +1450,8 @@ BPEngineSeq::build(const char* model, const char* param, uint beam_size, uint n_
     en = std::make_unique<CONTRAfoldModel>();
   else if (strcasecmp(model, "nupack")==0)
     en = std::make_unique<NupackModel>(param);
+  else if (strcasecmp(model, "LinearNUPACK")==0 || strcasecmp(model, "lnupack")==0)
+    en = std::make_unique<LinearNupackModel>(param, beam_size);
   else if (strcasecmp(model, "LinearPartition-C")==0 || strcasecmp(model, "lpc")==0)
     en = std::make_unique<LinearPartitionModel>(false, beam_size);
   else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
@@ -1426,6 +1496,11 @@ BPEngineAln::build(const std::vector<std::string>& model, const char* param, uin
       else if (strcasecmp(m, "CONTRAfold")==0)
       {
         auto e = std::make_unique<CONTRAfoldModel>();
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+      else if (strcasecmp(m, "NUPACK")==0 || strcasecmp(m, "LinearNUPACK")==0 || strcasecmp(m, "lnupack")==0)
+      {
+        auto e=BPEngineSeq::build(m,param,beam_size);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
       else if (strcasecmp(m, "Alifold")==0)

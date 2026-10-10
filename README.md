@@ -132,8 +132,86 @@ IPknot can calculate the base pairing probability using the following probabilit
 * McCaskill model with ViennaRNA parameters (`ViennaRNA`)
 * CONTRAfold model (`CONTRAfold`)
 * NUPACK model (`NUPACK`)
+* Beam approximation with NUPACK energies and two crossing pseudoknot bands
+  (`LinearNUPACK` or `lnupack`)
 
 You can specify the model using `-e` option.
+
+`NUPACK` retains the full pseudoknot dynamic program. Its hot paths now use
+precomputed table offsets and loop/dangling energies, constant-time poly-C
+checks, and a bounded cache of **exact** `expl` results keyed by the float
+argument. These optimizations do not use energy quantization or fast-math.
+The default parameter reader also consumes the NINIO upper bound correctly;
+previously this value was uninitialized and subsequent parameters were shifted
+by one. The posterior pass now includes single-pair pseudoknot bands and the
+same band penalty as the inside pass. Predictions can change because of these
+correctness repairs. BPSEQ restrictions are validated and stored only in the
+upper triangle.
+
+For long sequences, select the approximate model explicitly:
+
+```sh
+ipknot -e LinearNUPACK --beam-size 100 -r 0 sequence.fa
+```
+
+`LinearNUPACK` implements left-to-right beam search inspired by
+[LinearFold](https://github.com/LinearFold/LinearFold/blob/master/src/LinearFold.cpp)
+and [LinearPartition](https://github.com/LinearFold/LinearPartition/blob/master/src/LinearPartition.cpp),
+using this repository's NUPACK energy functions. It computes inside/outside
+values in log space on the retained derivation forest. The sparse posterior
+path, including constrained refinement, avoids dense probability and
+four-dimensional tables. Sequence and alignment inputs are supported, as are
+parameter files through `-P`.
+
+Both NUPACK engines preserve ambiguous nucleotide symbols and their positions,
+while treating them as unpaired, like LPC/LPV. Sequence-specific loop bonuses
+are omitted when the relevant nucleotide is unknown; small interior loops with
+unknown bases use generic length/asymmetry energies.
+
+The full 2022 single-sequence comparison uses refinement 0 for both NUPACK
+engines and refinement 1 for LPC/LPV; see
+[benchmark results and reproduction](experiments/nupack/benchmark-2022/README.md).
+
+The approximation retains ordinary hairpins, bulges, interior loops and
+multiloops, plus pseudoknots with two crossing bands. Both bands can have
+arbitrary stem length and bounded bulges/interior loops; all three gaps can
+contain secondary structures or further pseudoknots. Multiloops **inside a
+crossing band** are excluded. Interior loops, left multiloop padding and
+leading padding of structured gap states are limited to 30 unpaired bases.
+Middle-gap starts come from up to 30 bases of padding or from retained
+structured gap states. These bounds
+are separate from the beam and are configurable through the C++ constructor.
+There is no overall sequence window or maximum pair distance.
+
+Each state family retains at most the requested beam width per right endpoint,
+with deterministic tie-breaking and prefix-plus-inside ranking. For fixed
+positive beam width and loop bound, expected time and memory are O(sequence
+length). Constants depend on the beam and loop bound; retaining the forest's
+edges for outside computation can use substantial memory at larger beams
+(up to O(n(bL²+b²)) edges for length n, beam b and loop bound L).
+Hairpin selection and posterior coordinate ordering also avoid global
+comparison sorts. Dense output requested through the C++ matrix interface
+still requires O(length²) space. `--beam-size 0` disables pruning but keeps
+the grammar bounds; it is not equivalent to full `NUPACK` and has no linear
+complexity guarantee. Larger beams provide a tunable approximation, without
+an accuracy or monotonicity guarantee.
+
+The correctness tests compare short inside/outside results with the full
+pseudoknot DP, independently extract forced motif weights from exact subset
+partition functions, check probability normalization and long-distance pairs,
+and exercise sparse output and refinement. Reproduce kernel timings and
+posterior errors with:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ILP=OFF
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+python3 experiments/nupack/benchmark.py --output experiments/nupack/results.json
+```
+
+The benchmark applies the same correctness repairs to its reference version
+before checking exact posterior identity and speed. Measurements and their
+limits are recorded in [experiments/nupack/RESULTS.md](experiments/nupack/RESULTS.md).
 
 #### Thresholds
 
