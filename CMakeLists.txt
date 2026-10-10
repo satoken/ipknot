@@ -42,6 +42,7 @@ add_executable(ipknot
   src/bpseq.h src/bpseq.cpp
   src/boltzmann_param.c
   src/nupack/nupack.cpp
+  src/nupack/linear_nupack.cpp
   src/contrafold/LogSpace.hpp
   src/contrafold/Defaults.hpp
   src/contrafold/InferenceEngine.cpp
@@ -79,6 +80,21 @@ endif()
 
 install(TARGETS ipknot RUNTIME DESTINATION bin)
 if(BUILD_TESTING)
+  add_executable(nupack_test tests/nupack_test.cpp src/nupack/nupack.cpp src/nupack/linear_nupack.cpp)
+  target_include_directories(nupack_test PRIVATE src)
+  target_compile_features(nupack_test PRIVATE cxx_std_17)
+  if(MSVC)
+    target_compile_options(nupack_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(nupack_test PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME nupack_exact_and_linear COMMAND nupack_test)
+  set_tests_properties(nupack_exact_and_linear PROPERTIES TIMEOUT 120)
+  if(UNIX)
+    add_executable(nupack_benchmark experiments/nupack/driver.cpp src/nupack/nupack.cpp src/nupack/linear_nupack.cpp)
+    target_include_directories(nupack_benchmark PRIVATE src/nupack)
+    target_compile_features(nupack_benchmark PRIVATE cxx_std_17)
+  endif()
   add_executable(nmr_pair_index_test tests/nmr_pair_index_test.cpp)
   add_executable(nmr_sequence_index_test tests/nmr_sequence_index_test.cpp)
   add_executable(nmr_candidate_filter_test tests/nmr_candidate_filter_test.cpp)
@@ -484,6 +500,9 @@ if(BUILD_TESTING)
   endforeach()
   find_package(Python3 QUIET COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
+    add_test(NAME linear_nupack_cli COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/linear_nupack_cli_test.py $<TARGET_FILE:ipknot>)
+    set_tests_properties(linear_nupack_cli PROPERTIES TIMEOUT 120)
     add_test(NAME removed_options_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/removed_options_cli_test.py $<TARGET_FILE:ipknot>)
     set_tests_properties(removed_options_cli PROPERTIES TIMEOUT 60)

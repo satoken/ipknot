@@ -23,6 +23,12 @@
 #define __INC_DP_TABLE_H__
 
 #include <cassert>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <stdexcept>
+#include <limits>
+#include <vector>
 
 template < class T >
 class DPTable2
@@ -37,7 +43,7 @@ public:
   void resize(int n)
   {
     N_=n;
-    V_.resize(N_*(N_+1)/2+(N_+1));
+    V_.resize(std::size_t(N_)*(N_+1)/2+(N_+1));
   }
 
   void fill(const T& v)
@@ -56,12 +62,13 @@ public:
   }
 
 private:
-  int index(int i, int j) const
+  std::size_t index(int i, int j) const
   {
     //assert(i<=j);
     assert(j<=N_);
 
-    return j==i-1 ? N_*(N_+1)/2 + i : i*N_+j-i*(1+i)/2;
+    return j==i-1 ? std::size_t(N_)*(N_+1)/2 + i :
+      std::size_t(i)*N_+j-std::size_t(i)*(1+i)/2;
   }
 
 private:
@@ -79,8 +86,21 @@ public:
 
   void resize(int n)
   {
+    if (n < 0) throw std::invalid_argument("negative DP table size");
+    if (n == N_ && !V_.empty()) return;
     N_=n;
-    V_.resize(N_*(N_-1)*(N_-2)*(N_-3)/2/3/4);
+    const auto count = choose(n, 4);
+    // The degenerate one-pair state has its own slot, even for n < 4.
+    V_.resize(static_cast<std::size_t>(count)+1);
+    left_.resize(n);
+    inner_left_.resize(n);
+    inner_right_.resize(n);
+    for (int i=0; i<n; ++i)
+    {
+      left_[i] = count-choose(n-i,4)+choose(n-i-1,3);
+      inner_left_[i] = -choose(n-i,3)+choose(n-i-1,2);
+      inner_right_[i] = -choose(n-i,2)-i-1;
+    }
   }
 
   void fill(const T& v)
@@ -99,33 +119,35 @@ public:
   }
 
 private:
-  int index(int h, int r, int m, int s) const
+  static std::int64_t choose(int n, int k)
   {
-    int n = N_;
-    int h2 = h*h;
-    int h3 = h2*h;
-    int h4 = h3*h;
-    int m2 = m*m;
-    int n2 = n*n;
-    int n3 = n2*n;
-    int r2 = r*r;
-    int r3 = r2*r;
+    if (n < k) return 0;
+    std::int64_t result=1;
+    for (int i=1; i<=k; ++i)
+    {
+      if (result>std::numeric_limits<std::int64_t>::max()/(n-i+1))
+        throw std::length_error("NUPACK DP table is too large");
+      result=result*(n-i+1)/i;
+    }
+    return result;
+  }
 
+  std::size_t index(int h, int r, int m, int s) const
+  {
+    assert(h>=0);
     assert(h<=r);
     assert(r<=m);
     assert(m<=s);
-    assert(s<=N_);
-
-    return (h==r && m==s) ? V_.size()-1 :
-      (-24 - 50*h - 35*h2 - 10*h3 - h4 - 36*m -12*m2 +
-       12*n + 70*h*n + 30*h2*n + 4*h3*n + 24*m*n - 12*n2 -30*h*n2 -
-       6*h2*n2 + 4*h*n3 + 44*r - 48*n*r + 12*n2*r + 
-       24*r2 - 12*n*r2 +  4*r3 + 24*s)/24 ;
+    assert(s<N_);
+    if (h==r && m==s) return V_.size()-1;
+    assert(h<r && r<m && m<s);
+    return static_cast<std::size_t>(left_[h]+inner_left_[r]+inner_right_[m]+s);
   }
 
 private:
   std::vector<T> V_;
   int N_;
+  std::vector<std::int64_t> left_, inner_left_, inner_right_;
 };
 
 template < class T >
@@ -140,9 +162,10 @@ public:
   {
     N_=n;
     D_=d;
-    int max_sz=0;
+    std::size_t max_sz=0;
     for (int i=d; i<d+3; ++i)
-      max_sz = std::max(max_sz, (N_-i)*(i-5)*(i-1)*(i-2)/2);
+      if (i>5 && i<N_)
+        max_sz = std::max(max_sz, std::size_t(N_-i)*(i-5)*(i-1)*(i-2)/2);
     V_.resize(max_sz);
   }
 
@@ -169,17 +192,17 @@ public:
   }
 
 private:
-  int index(int i, int h1, int m1, int s) const
+  std::size_t index(int i, int h1, int m1, int s) const
   {
     int d=D_;
-    int d1d2 = (d-1)*(d-2);
+    std::size_t d1d2 = std::size_t(d-1)*(d-2);
     int d5 = d-5;
     int h1_i_1 = h1-i-1;
     assert(i+d<N_);
     assert(d-6>=s);
     assert(i<h1);
-    return i*d5*d1d2/2 + s*d1d2/2 + 
-      h1_i_1*(d-1) - h1_i_1*(h1-i)/2 + m1 - h1 - 1;
+    return std::size_t(i)*d5*d1d2/2 + s*d1d2/2 +
+      std::size_t(h1_i_1)*(d-1) - std::size_t(h1_i_1)*(h1-i)/2 + m1 - h1 - 1;
   }
 
 private:

@@ -1,0 +1,84 @@
+{
+  "source_worktree": "/home/sato-lab.org/satoken/.codex/worktrees/nupack-linear/ipknot",
+  "branch": "codex/nupack-linear",
+  "base_commit": "b0f965c60e860f34382fc4d5dc669be6812f85fb",
+  "source_files": {
+    "CMakeLists.txt": "0b6fc446dd656067736734ab446d6866b905346895a8757e863a1da0ab5aebce",
+    "README.md": "cb4c7cafa904660f07dc697043d4d5c2d590d58e86211ec819a191daddbacb64",
+    "src/fold.cpp": "de260f486f79162857999e721be90e8e603c53339a5779e67bb99cd7bbe75add",
+    "src/fold.h": "6fa26f0e116ed14bdf22ddf9990a2085aa94fc4be6cab9714955c305cfcbacb0",
+    "src/main.cpp": "1c7acae172b34203d119d0c333b24376deb1182837d56d370e3a4e6247410073",
+    "src/dual_decomposition.h": "d5d89f000e4e1b9ce3b08402da9bcfad56fe22e1316e516c146f44c1d0a6f733",
+    "src/dual_decomposition.cpp": "686ec13e7b4ee05f4695c11d9bb9dcc17f4e7bea16f85fa8866f502b829f36d0",
+    "src/ipknot.cpp": "c45e307a44b2a6f5600521a492fd30197e0be86bb6402c80d237ca360eaa3d6b",
+    "src/nupack/dptable.h": "1cd8afeb5f66ce8c67892e6e5c0eff9255b6dff8df66d201771bfe6e15a3a629",
+    "src/nupack/nupack.cpp": "9e80b4dc81e1e9aea5cccb3cb0b8e4a4cf6d93aa9ebb57d1879056377fabdb92",
+    "src/nupack/nupack.h": "e90a00ea8d25fe083b1e1d3e1eb064b9c838d6e0eb451aa9c8719e347bb2f6bb",
+    "src/nupack/linear_nupack.cpp": "a72a4b4c9cba05a3acd034488bd1888e95506449b6f9f11c7c7539cac633c03c",
+    "src/nupack/linear_nupack.h": "619b1f563ec6c814b37143b71a13d9c3768fd4fe3110516d61393e21076feb27",
+    "tests/nupack_test.cpp": "2542d13833f67f0563fd594499e3244c0d4a9ee7976856c033e7da08b34029a3",
+    "tests/linear_nupack_cli_test.py": "e0c73c2cfda095ca222566b287b972b2e75bd7eae56d3da603a81d936e6b529a",
+    "experiments/nupack/driver.cpp": "5a66d79bc10dc9ecb725cb3d57b81a3a96a3397487e0cb7181b278b94db8672a",
+    "experiments/nupack/benchmark.py": "ce78851ddebe9146f46a7db03d56b3b57c1298b6e5dca48c08924b64211e13f0",
+    "src/nupack/def_param.h": "7746562f16da621440056d0ff2ffa7cb572c08a457f7e0be3315a5d31f28bf31"
+  },
+  "binary_sha256": "95ecacea89ff3f6b40d5c5364024ae8a58e7cb94cee7363f2e5dc40381095de4",
+  "compiler": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+  "build_flags": "Release -O3 -DNDEBUG; ENABLE_ILP=OFF; no ViennaRNA library",
+  "tests": "CTest 17/17; ASan/UBSan NUPACK tests passed with leak detection disabled",
+  "cpu_identification": {
+    "5": "0x00000000410fd851",
+    "6": "0x00000000410fd851",
+    "7": "0x00000000410fd851",
+    "8": "0x00000000410fd851",
+    "9": "0x00000000410fd851",
+    "15": "0x00000000410fd851",
+    "16": "0x00000000410fd851",
+    "17": "0x00000000410fd851",
+    "18": "0x00000000410fd851",
+    "19": "0x00000000410fd851"
+  },
+  "archive_sha256": "fd360f9d98820fb7f41b7cd3ea333416fc4e0ce12a1816171ed0fa12303d41a2",
+  "refinement": {
+    "nupack": 0,
+    "lnupack": 0,
+    "lpc": 1,
+    "lpv": 1
+  },
+  "data_source": "Existing official archive /tmp/ipknot-dataset.zip; 2022 IPknot, Zenodo 4923158; MD5/SHA256 verified by dataset.py",
+  "ambiguous_policy": "All non-ACGUT letters map to N and cannot pair. Unknown loop bases have no sequence-specific bonus; unknown small interior loops use generic length/asymmetry energies. Original symbols and coordinates are preserved.",
+  "protocol_changes": "Early r=1 pilot and interrupted preliminary runs were superseded by user-specified r=0 NUPACK and ambiguous-base fix. No preliminary measurements are included in the final results.",
+  "canonical_regression": "After ambiguous-base changes: repaired reference and optimized exact log Z / float BPP matched bitwise at lengths 20, 40, 60; independent one-run validation on CPU 0, excluded from benchmark timings.",
+  "harness_tests": "5/5 passed, including independent crossing-pair oracle, exact-pair metric check, common-set selection and score-corruption rejection, real subprocess timeout and address-space limit checks.",
+  "existing_benchmark_check": {
+    "condition": "DD50 / LPC100 / r=1 / all 816 long sequences",
+    "archived_macro_f1": 0.4065567522065055,
+    "current_macro_f1": 0.4065567522065055,
+    "exactly_equal": true,
+    "archive": "experiments/dual-decomposition/paper2022/full-summary.json"
+  },
+  "auxiliary_accuracy_phase": {
+    "cutoff_nt": 190,
+    "source_rule": "All <=190 nt: separate accuracy-short/A725 phase; all >190 nt: original final/X925 phase. Rule fixed before auxiliary predictions.",
+    "settings": "Identical frozen binary, posterior and decoder settings, refinement 0 for LinearNUPACK / 1 for LPC and LPV.",
+    "scope": "Accuracy only; no mixed-CPU runtime or memory aggregation. Original final phase remains the performance source.",
+    "scheduling": "Runs concurrently on otherwise idle A725 cores 0-4,10-14. Original final phase is on X925 cores 5-9,15-19.",
+    "artifacts": "LINEAR_ACCURACY.md, linear-accuracy.json, linear-accuracy-raw.jsonl.gz, complete_linear.py, linear_accuracy.py"
+  },
+  "existing_benchmark_check_full": {
+    "condition": "DD50 / LPC100 / r=1 / all 11843 official sequences",
+    "macro_f1": 0.6155939919031688,
+    "crossing_pk_macro_f1": 0.20289539302624807,
+    "compared_fields": [
+      "tp",
+      "fp",
+      "fn",
+      "macro_f1",
+      "macro_ppv",
+      "macro_sen",
+      "micro_f1"
+    ],
+    "regular_and_crossing_scores_exactly_equal": true,
+    "archive": "experiments/dual-decomposition/paper2022/full-summary.json"
+  }
+}
