@@ -48,7 +48,8 @@ against all hard constraints. Candidate limits may omit feasible structures;
 `--dd-constraints full` retains the original full model for small diagnostics
 and has no linear complexity guarantee.
 Use `--dd-dp nussinov` to replace beam search with exact per-level
-Nussinov interval DP. It ignores `--dd-beam`, retains every interval start,
+Nussinov interval DP. It ignores `--dd-beam`, removes dominated interval starts
+and decomposable closed split candidates without beam pruning,
 and works with fixed and NMR constraints in both constraint modes. It has
 no linear complexity guarantee: worst-case time is cubic and DP memory is
 quadratic. Candidate/witness limits still apply to the retained graph.
@@ -58,6 +59,15 @@ beam used in the DD/LPC comparison. It removes dominated interval states
 before beam selection and uses deterministic traceback ties. The crossing
 and iteration budgets still apply. Heap and adaptive-beam experiments are
 not enabled by this option.
+
+Use `--dd-threads 2` to solve independent DD levels concurrently in all three
+DP modes, including constrained DD. The default is 1; 0 uses the OpenMP runtime
+limit, capped at the number of levels. Level scores are accumulated in the same
+order as serial execution. Primal recovery remains sequential because upper
+levels depend on the recovered lower levels. CMake enables OpenMP when available;
+use `-DENABLE_OPENMP=OFF` for a serial build. A serial build accepts 0/1 threads
+and rejects larger requests. See the [performance study](experiments/dual-decomposition/performance/README.md)
+for sparsification, parallelism limits, and reproducible measurements.
 
 Use `--dd-constraint-recovery-every 10` to resume constrained integer
 recovery every 10 iterations (default 0: final-only recovery). Initial,

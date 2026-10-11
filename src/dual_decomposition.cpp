@@ -6,6 +6,7 @@
 #include "dd_recovery.h"
 #include "dd_joint_bound.h"
 #include "dd_exchange.h"
+#include "dd_parallel.h"
 
 #include <algorithm>
 #include <array>
@@ -18,6 +19,10 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
+#include <exception>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace {
 std::uint64_t key(int i, int j) {
@@ -32,6 +37,10 @@ struct Cell { int start = 0, trace = -1; double score = 0; };
 }
 
 void DDOptions::validate() const {
+  if (threads < 0) throw std::invalid_argument("DD threads must be nonnegative");
+#ifndef _OPENMP
+  if (threads > 1) throw std::invalid_argument("DD threads > 1 requires an OpenMP build");
+#endif
   if (constraint_passes < 1 || nmr_pair_beam < 1 || nmr_witnesses < 1 || nmr_pattern_beam < 1)
     throw std::invalid_argument("DD constraint passes and NMR beams must be positive");
   if (constraint_recovery_every < 0)
@@ -54,6 +63,7 @@ void DDOptions::validate() const {
 struct DDNussinov::Workspace {
   int length, beam;
   std::size_t pruned = 0;
+  std::size_t sparsified = 0;
   bool no_lonely, improved;
   const std::vector<DDPair>& pairs;
   std::vector<std::vector<int>> by_right;
@@ -67,18 +77,23 @@ struct DDNussinov::Workspace {
   std::vector<Trace> traces;
   std::vector<double> prefix;
   Workspace(int n, const std::vector<DDPair>& p, int level, int b, bool lonely, bool improve)
-      : length(n), beam(b), no_lonely(lonely), improved(improve), pairs(p), by_right(n),
-        inner(p.size(), -1), paired_trace(p.size(), -1), paired_score(p.size()),
+      : length(n), beam(b), no_lonely(lonely), improved(improve || !b), pairs(p), by_right(n),
+        inner(lonely ? p.size() : 0, -1), paired_trace(lonely ? p.size() : 0, -1),
+        paired_score(lonely ? p.size() : 0),
         chart(n), candidates(n), candidate_traces(n), origin(n), generation(n, -1), prefix(n) {
     std::unordered_map<std::uint64_t, int> lookup;
     for (int id = 0; id < static_cast<int>(p.size()); ++id) if (p[id].level == level) {
       by_right[p[id].right].push_back(id);
-      lookup.emplace(key(p[id].left, p[id].right), id);
+      if (no_lonely) lookup.emplace(key(p[id].left, p[id].right), id);
     }
-    for (const auto& row : by_right) for (int id : row) {
+    if (no_lonely) for (const auto& row : by_right) for (int id : row) {
       auto found = lookup.find(key(p[id].left + 1, p[id].right - 1));
       if (found != lookup.end()) inner[id] = found->second;
     }
+    if (!beam) for (auto& row : by_right)
+      std::sort(row.begin(), row.end(), [&](int a, int b) {
+        return p[a].left != p[b].left ? p[a].left > p[b].left : a < b;
+      });
   }
 };
 
@@ -92,6 +107,7 @@ DDNussinov::DDNussinov(int n, const std::vector<DDPair>& pairs, int level,
 }
 DDNussinov::~DDNussinov() = default;
 std::size_t DDNussinov::pruned_states() const { return workspace_->pruned; }
+std::size_t DDNussinov::sparsified_candidates() const { return workspace_->sparsified; }
 
 double DDNussinov::decode(const std::vector<double>& weights,
                          const std::vector<unsigned char>& allowed,
@@ -101,10 +117,12 @@ double DDNussinov::decode(const std::vector<double>& weights,
     throw std::invalid_argument("Nussinov weight/mask size mismatch");
   selected.clear();
   w.pruned = 0;
+  w.sparsified = 0;
   if (!w.length) return 0;
   w.traces.clear();
   std::fill(w.generation.begin(), w.generation.end(), -1);
-  std::fill(w.paired_score.begin(), w.paired_score.end(), -std::numeric_limits<double>::infinity());
+  if (w.no_lonely)
+    std::fill(w.paired_score.begin(), w.paired_score.end(), -std::numeric_limits<double>::infinity());
   const auto trace = [&](int pair, int first, int second) {
     w.traces.push_back({pair, first, second});
     return static_cast<int>(w.traces.size() - 1);
@@ -146,6 +164,9 @@ double DDNussinov::decode(const std::vector<double>& weights,
       }
       for (const auto& cell : previous) offer(cell.start, cell.score, -1, cell.trace, -1);
     }
+    int suffix_start = right;
+    double decomposable = 0;
+    std::size_t inside_position = right ? w.chart[right - 1].size() : 0;
     for (int id : w.by_right[right]) {
       if (!allowed[id]) continue;
       const auto& p = w.pairs[id];
@@ -153,24 +174,35 @@ double DDNussinov::decode(const std::vector<double>& weights,
       int inside_trace = -1;
       if (right) {
         const auto& previous = w.chart[right - 1];
-        auto it = std::lower_bound(previous.begin(), previous.end(), p.left + 1,
-            [](const Cell& cell, int start) { return cell.start < start; });
-        if (it != previous.end()) {
-          const auto& cell = previous[w.suffix_best[it - previous.begin()]];
+        std::size_t index;
+        if (!w.beam) {
+          // Exact pair rows are in descending left order; all lower-bound
+          // queries share one backwards pass through the previous column.
+          while (inside_position && previous[inside_position - 1].start > p.left) --inside_position;
+          index = inside_position;
+        } else {
+          index = previous.size() == std::size_t(right) ? std::size_t(p.left + 1) :
+              std::size_t(std::lower_bound(previous.begin(), previous.end(), p.left + 1,
+                  [](const Cell& cell, int start) { return cell.start < start; }) - previous.begin());
+        }
+        if (index < previous.size()) {
+          const auto& cell = previous[w.suffix_best[index]];
           inside = cell.score; inside_trace = cell.trace;
         }
       }
       // P(i,j) may borrow stacking support from its parent. F intervals
       // contain only complete helices; a pair exposed to F must have a child.
-      const int child = w.inner[id];
+      const int child = w.no_lonely ? w.inner[id] : -1;
       if (w.no_lonely && child >= 0 && w.paired_score[child] > inside) {
         inside = w.paired_score[child]; inside_trace = w.paired_trace[child];
       }
-      w.paired_score[id] = weights[id] + inside;
-      w.paired_trace[id] = trace(id, inside_trace, -1);
-      double complete = w.paired_score[id];
+      double complete = weights[id] + inside;
       int complete_inside = inside_trace;
       if (w.no_lonely) {
+        // Keep even dominated/negative P states: a parent may need this pair
+        // as stacking support. Only complete components may be sparsified.
+        w.paired_score[id] = complete;
+        w.paired_trace[id] = trace(id, inside_trace, -1);
         if (child < 0 || !std::isfinite(w.paired_score[child])) continue;
         complete = weights[id] + w.paired_score[child];
         complete_inside = w.paired_trace[child];
@@ -178,6 +210,22 @@ double DDNussinov::decode(const std::vector<double>& weights,
       // Negative pairs remain available inside a profitable stack. Only a
       // complete negative component can safely be discarded.
       if (!(complete > 0)) continue;
+      if (!w.beam) {
+        // Descending left endpoints let us query the suffix maximum by a
+        // single monotone scan. Earlier split updates touch starts < left;
+        // none can change a suffix already scanned. Include later starts
+        // because exact suffix dominance may have omitted this very start.
+        while (suffix_start >= p.left) {
+          if (w.generation[suffix_start] == right)
+            decomposable = std::max(decomposable, w.candidates[suffix_start].score);
+          --suffix_start;
+        }
+        // A no-better closed component cannot improve any prefix split
+        // (the max-plus triangle inequality). Beam charts cannot use this
+        // criterion because alternative derivations may later be pruned.
+        if (complete <= decomposable) { ++w.sparsified; continue; }
+        decomposable = complete;
+      }
       offer(p.left, complete, id, complete_inside, -1);
       if (p.left) for (const auto& prefix : w.chart[p.left - 1])
         offer(prefix.start, prefix.score + complete, id, complete_inside, prefix.trace);
@@ -186,8 +234,9 @@ double DDNussinov::decode(const std::vector<double>& weights,
       // Match the fixed-beam dominance/lazy-trace experiment, with heap and
       // adaptive widths disabled. Sorting large sparse columns by four fixed
       // radix passes keeps work linear before applying the fixed beam.
-      if (w.starts.size() < 1024) std::sort(w.starts.begin(), w.starts.end());
-      else {
+      const bool scan_exact = !w.beam && w.starts.size() >= std::size_t(right / 16 + 1);
+      if (!scan_exact && w.starts.size() < 1024) std::sort(w.starts.begin(), w.starts.end());
+      else if (!scan_exact) {
         w.scratch.resize(w.starts.size());
         for (unsigned shift = 0; shift < 32; shift += 8) {
           std::array<std::size_t, 256> offsets{};
@@ -203,14 +252,18 @@ double DDNussinov::decode(const std::vector<double>& weights,
       // as well, including under signed pair weights and stacking support.
       double suffix_score = -std::numeric_limits<double>::infinity();
       w.scratch.clear();
-      for (std::size_t k = w.starts.size(); k-- > 0;) {
-        const int start = w.starts[k];
+      const auto retain = [&](int start) {
+        if (w.generation[start] != right) return;
         const double score = w.candidates[start].score;
         if (start == 0 || score > suffix_score) {
           w.scratch.push_back(start);
           suffix_score = std::max(suffix_score, score);
         }
-      }
+      };
+      // Scan populated exact columns without sorting. Very sparse columns
+      // still sort their few starts, avoiding quadratic work on empty charts.
+      if (scan_exact) for (int start = right; start >= 0; --start) retain(start);
+      else for (std::size_t k = w.starts.size(); k-- > 0;) retain(w.starts[k]);
       w.starts.swap(w.scratch);
     }
     auto better = [&](int a, int b) {
@@ -218,7 +271,8 @@ double DDNussinov::decode(const std::vector<double>& weights,
       const double sb = w.candidates[b].score + (b ? w.prefix[b - 1] : 0);
       return sa != sb ? sa > sb : a < b;
     };
-    if (w.beam && w.starts.size() > static_cast<std::size_t>(w.beam)) {
+    const bool beam_pruned = w.beam && w.starts.size() > static_cast<std::size_t>(w.beam);
+    if (beam_pruned) {
       w.pruned += w.starts.size() - w.beam;
       std::nth_element(w.starts.begin(), w.starts.begin() + w.beam, w.starts.end(), better);
       w.starts.resize(w.beam);
@@ -227,9 +281,13 @@ double DDNussinov::decode(const std::vector<double>& weights,
         *worst = 0;
       }
     }
-    std::sort(w.starts.begin(), w.starts.end()); // interval-start order for suffix queries
+    // Dominance emits descending starts, so an unpruned column can restore
+    // interval order without another comparison sort.
+    if (w.improved && !beam_pruned) std::reverse(w.starts.begin(), w.starts.end());
+    else std::sort(w.starts.begin(), w.starts.end());
     auto& column = w.chart[right];
     column.clear();
+    column.reserve(w.starts.size());
     // Materialize only the winning traceback for each retained cell.
     // Eager traces for every improving split can use cubic memory in exact
     // mode; retained chart cells plus one paired trace per candidate need
@@ -252,6 +310,36 @@ double DDNussinov::decode(const std::vector<double>& weights,
     w.pending.push_back(t.first); w.pending.push_back(t.second);
   }
   return w.prefix.back();
+}
+
+void dd_decode_levels(const std::vector<std::unique_ptr<DDNussinov>>& decoders,
+    const std::vector<double>& weights, const std::vector<unsigned char>& allowed,
+    std::vector<std::vector<int>>& selected, std::vector<double>& scores, int threads) {
+  const int levels = static_cast<int>(decoders.size());
+  selected.resize(levels);
+  scores.resize(levels);
+  int workers = 1;
+#ifdef _OPENMP
+  workers = std::min(levels, threads ? threads : omp_get_max_threads());
+#else
+  (void)threads;
+#endif
+  if (workers <= 1) {
+    for (int level = 0; level < levels; ++level)
+      scores[level] = decoders[level]->decode(weights, allowed, selected[level]);
+    return;
+  }
+  std::vector<std::exception_ptr> errors(levels);
+  // Exceptions must not leave an OpenMP region. Rethrow on the caller after
+  // every worker has joined, including allocation and input errors.
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(workers) schedule(static)
+#endif
+  for (int level = 0; level < levels; ++level) {
+    try { scores[level] = decoders[level]->decode(weights, allowed, selected[level]); }
+    catch (...) { errors[level] = std::current_exception(); }
+  }
+  for (const auto& error : errors) if (error) std::rethrow_exception(error);
 }
 
 namespace {
@@ -533,6 +621,9 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& pairs,
   }
   std::vector<double> lambda(length), weights(count), degree(length), gradient(length), maxima(length);
   std::vector<int> decoded, used(length), best;
+  std::vector<std::vector<int>> level_selected(levels);
+  std::vector<double> level_scores(levels);
+  std::vector<unsigned char> recovery_mask = allowed;
   std::vector<double> level_bounds(levels);
   std::vector<unsigned char> exact_levels(levels);
   double best_bound = static_bound, best_beam = std::numeric_limits<double>::infinity();
@@ -557,8 +648,9 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& pairs,
     int bound_evaluations = 0;
     const bool block_due = iteration == 0 || (iteration + 1) % options.bound_every == 0 || iteration + 1 == options.max_iterations;
     std::size_t pruned_states = 0;
+    dd_decode_levels(decoders, weights, allowed, level_selected, level_scores, options.threads);
     for (int level = 0; level < levels; ++level) {
-      const double score = decoders[level]->decode(weights, allowed, decoded);
+      const double score = level_scores[level];
       beam_value += score;
       pruned_states += decoders[level]->pruned_states();
       if (!options.dp_beam() || (options.unpruned_bound && !decoders[level]->pruned_states())) {
@@ -580,7 +672,7 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& pairs,
         }
         upper_bound += level_bound; level_bounds[level] = level_bound;
       }
-      for (int id : decoded) { selected[id] = 1; ++degree[pairs[id].left]; ++degree[pairs[id].right]; }
+      for (int id : level_selected[level]) { selected[id] = 1; ++degree[pairs[id].left]; ++degree[pairs[id].right]; }
     }
     if (!std::isfinite(beam_value))
       throw std::overflow_error("DD dual value overflow; reduce the score scale");
@@ -593,20 +685,19 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& pairs,
     // bases and partners actually selected in EVERY required lower level.
     std::fill(recovered.begin(), recovered.end(), 0); std::fill(used.begin(), used.end(), 0);
     for (int level = 0; level < levels; ++level) {
-      auto mask = allowed;
       for (int id : by_level[level]) {
-        mask[id] = allowed[id] && !used[pairs[id].left] && !used[pairs[id].right];
+        recovery_mask[id] = allowed[id] && !used[pairs[id].left] && !used[pairs[id].right];
         weights[id] = pairs[id].weight;
         for (int row_id : row_ids[id]) {
           bool supported = false;
           for (const auto& c : rows[row_id].contacts) if (recovered[c.lower]) supported = true;
-          mask[id] &= supported;
+          recovery_mask[id] &= supported;
         }
       }
       if (level == 0) {
         decoded.clear();
         for (int id : by_level[0]) if (selected[id]) decoded.push_back(id);
-      } else decoders[level]->decode(weights, mask, decoded);
+      } else decoders[level]->decode(weights, recovery_mask, decoded);
       for (int id : decoded) { recovered[id] = 1; used[pairs[id].left] = used[pairs[id].right] = 1; }
     }
     double primal = 0;

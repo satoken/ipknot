@@ -19,6 +19,7 @@ struct DDOptions {
   int nmr_pair_beam = 64, nmr_witnesses = 64, nmr_pattern_beam = 32;
   int nmr_bulge_mode = 2; // none=0, fallback=1, all=2
   int beam = 100;
+  int threads = 1; // independent level oracles; 0: OpenMP runtime default
   bool nussinov_dp = false; // exact Nussinov ignores the configured beam
   bool improved_beam = false; // suffix dominance before beam selection
   int dp_beam() const { return nussinov_dp ? 0 : beam; }
@@ -56,7 +57,8 @@ struct DDPair {
 };
 
 // A sparse, left-to-right Nussinov chart with reusable buffers. beam=0
-// retains all interval starts, for exact per-level decoding on the retained graph.
+// disables beam pruning, for exact per-level decoding on the retained graph.
+// Exact charts omit dominated starts and decomposable closed split candidates.
 class DDNussinov {
 public:
   DDNussinov(int length, const std::vector<DDPair>& pairs,
@@ -65,6 +67,7 @@ public:
   DDNussinov(const DDNussinov&) = delete;
   DDNussinov& operator=(const DDNussinov&) = delete;
   std::size_t pruned_states() const;
+  std::size_t sparsified_candidates() const;
   double decode(const std::vector<double>& weights,
                 const std::vector<unsigned char>& allowed,
                 std::vector<int>& selected);

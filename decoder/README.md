@@ -94,6 +94,16 @@ The existing DD bound, recovery, exchange, and tracing settings are available
 through `options.dd`. `dd.enabled` and NMR-specific settings are unused here;
 `options.backend` selects the backend.
 
+Exact level DP applies suffix dominance and omits decomposable closed candidates
+without beam pruning. Tied optima may trace back to a different structure than
+older revisions. Worst-case cubic time and quadratic chart memory still apply.
+Set `options.dd.threads = 2` to run independent level oracles concurrently;
+the default is 1, and 0 uses the OpenMP runtime limit capped at the level count.
+Serial and parallel executions aggregate scores in the same order. Recovery
+remains sequential. CMake discovers OpenMP by default; disable it with
+`-DENABLE_OPENMP=OFF`. Builds without OpenMP accept 0/1 and reject larger values.
+Installed CMake packages propagate the OpenMP dependency to consumers.
+
 Exact Nussinov solves each *level subproblem*. DD may still stop with a gap
 between its feasible solution and upper bound. Its bound certifies the retained
 witness graph; with truncated crossings/witnesses it is not a certificate for

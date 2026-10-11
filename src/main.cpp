@@ -676,6 +676,8 @@ main(int argc, char* argv[])
       cxxopts::value<std::string>()->default_value("beam"), "NAME")
     ("dd-beam", "Beam DP width (0: exact); ignored by --dd-dp nussinov",
       cxxopts::value<int>()->default_value("100"), "N")
+    ("dd-threads", "Threads for independent DD level oracles (0: automatic; requires OpenMP for >1)",
+      cxxopts::value<int>()->default_value("1"), "N")
     ("dd-crossing-beam", "Active crossing candidates per level (0: unbounded)",
       cxxopts::value<int>()->default_value("100"), "N")
     ("dd-witnesses", "Crossing witnesses per pair/lower-level row (0: all)",
@@ -1124,6 +1126,7 @@ main(int argc, char* argv[])
     dd_options.constraint_recovery_every = res["dd-constraint-recovery-every"].as<int>();
     dd_options.max_iterations = res["dd-max-iter"].as<int>();
     dd_options.beam = res["dd-beam"].as<int>();
+    dd_options.threads = res["dd-threads"].as<int>();
     const auto dd_dp = res["dd-dp"].as<std::string>();
     if (dd_dp != "beam" && dd_dp != "improved-beam" && dd_dp != "nussinov")
       throw std::invalid_argument("DD DP must be beam, improved-beam or nussinov");
