@@ -672,11 +672,13 @@ main(int argc, char* argv[])
       cxxopts::value<int>()->default_value("0"), "N")
     ("dd-max-iter", "Maximum DD iterations per threshold/refinement",
       cxxopts::value<int>()->default_value("50"), "N")
-    ("dd-dp", "Per-level DP: beam, improved-beam (suffix dominance), or nussinov (exact; ignores --dd-beam)",
+    ("dd-dp", "Per-level DP: beam, improved-beam (suffix dominance), nussinov (sparse exact), or wavefront (exact interval DP)",
       cxxopts::value<std::string>()->default_value("beam"), "NAME")
-    ("dd-beam", "Beam DP width (0: exact); ignored by --dd-dp nussinov",
+    ("dd-beam", "Beam DP width (0: exact); ignored by nussinov/wavefront",
       cxxopts::value<int>()->default_value("100"), "N")
     ("dd-threads", "Threads for independent DD level oracles (0: automatic; requires OpenMP for >1)",
+      cxxopts::value<int>()->default_value("1"), "N")
+    ("dd-dp-threads", "Within-DP threads for beam/improved-beam/wavefront (0: automatic); overrides --dd-threads",
       cxxopts::value<int>()->default_value("1"), "N")
     ("dd-crossing-beam", "Active crossing candidates per level (0: unbounded)",
       cxxopts::value<int>()->default_value("100"), "N")
@@ -1127,9 +1129,11 @@ main(int argc, char* argv[])
     dd_options.max_iterations = res["dd-max-iter"].as<int>();
     dd_options.beam = res["dd-beam"].as<int>();
     dd_options.threads = res["dd-threads"].as<int>();
+    dd_options.dp_threads = res["dd-dp-threads"].as<int>();
     const auto dd_dp = res["dd-dp"].as<std::string>();
-    if (dd_dp != "beam" && dd_dp != "improved-beam" && dd_dp != "nussinov")
-      throw std::invalid_argument("DD DP must be beam, improved-beam or nussinov");
+    if (dd_dp != "beam" && dd_dp != "improved-beam" && dd_dp != "nussinov" && dd_dp != "wavefront")
+      throw std::invalid_argument("DD DP must be beam, improved-beam, nussinov or wavefront");
+    dd_options.wavefront_dp = dd_dp == "wavefront";
     dd_options.nussinov_dp = dd_dp == "nussinov";
     dd_options.improved_beam = dd_dp == "improved-beam";
     dd_options.crossing_beam = res["dd-crossing-beam"].as<int>();

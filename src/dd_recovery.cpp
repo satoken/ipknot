@@ -30,7 +30,7 @@ struct DDPrimalRecovery::Workspace {
   Workspace(int n, const std::vector<DDPair>& p, int l, int beam, bool lonely,
             const std::vector<unsigned char>& a,
             const std::vector<DDRecoveryRow>& r, int h, unsigned methods, bool cache,
-            const std::vector<DDNussinov*>& shared, bool improved)
+            const std::vector<DDNussinov*>& shared, bool improved, int dp_threads, bool wavefront)
       : length(n), levels(l), history_width(h), proposal_mask(methods), cache_static(cache), pairs(p), allowed(a), rows(r),
         by_level(l), row_ids(p.size()), history(h), weights(p.size()),
         selected(p.size()), mask(p.size()), used(n) {
@@ -40,7 +40,7 @@ struct DDPrimalRecovery::Workspace {
       row_ids[rows[id].upper].push_back(id);
     if (!shared.empty()) decoders = shared;
     else for (int level = 0; level < l; ++level) {
-      owned_decoders.push_back(std::make_unique<DDNussinov>(n, p, level, beam, lonely, improved));
+      owned_decoders.push_back(std::make_unique<DDNussinov>(n, p, level, beam, lonely, improved, dp_threads, wavefront));
       decoders.push_back(owned_decoders.back().get());
     }
   }
@@ -138,7 +138,7 @@ DDPrimalRecovery::DDPrimalRecovery(int n, const std::vector<DDPair>& pairs,
     int levels, int beam, bool no_lonely,
     const std::vector<unsigned char>& allowed,
     const std::vector<DDRecoveryRow>& rows, int history, unsigned proposal_mask,
-    bool cache_static, const std::vector<DDNussinov*>& shared_decoders, bool improved_beam) {
+    bool cache_static, const std::vector<DDNussinov*>& shared_decoders, bool improved_beam, int dp_threads, bool wavefront) {
   if (n < 0 || levels < 1 || beam < 0 || history < 1 || history > 32 ||
       allowed.size() != pairs.size() || !proposal_mask || proposal_mask > 7)
     throw std::invalid_argument("Invalid DD recovery dimensions/history");
@@ -181,7 +181,7 @@ DDPrimalRecovery::DDPrimalRecovery(int n, const std::vector<DDPair>& pairs,
   for (std::size_t id = 0; id < pairs.size(); ++id) if (allowed[id])
     for (unsigned char count : lower_rows[id]) if (!count)
       throw std::invalid_argument("Missing DD recovery lower-level witness row");
-  workspace_ = std::make_unique<Workspace>(n, pairs, levels, beam, no_lonely, allowed, rows, history, proposal_mask, cache_static, shared_decoders, improved_beam);
+  workspace_ = std::make_unique<Workspace>(n, pairs, levels, beam, no_lonely, allowed, rows, history, proposal_mask, cache_static, shared_decoders, improved_beam, dp_threads, wavefront);
 }
 
 DDPrimalRecovery::~DDPrimalRecovery() = default;

@@ -20,9 +20,11 @@ struct DDOptions {
   int nmr_bulge_mode = 2; // none=0, fallback=1, all=2
   int beam = 100;
   int threads = 1; // independent level oracles; 0: OpenMP runtime default
+  int dp_threads = 1; // beam/wavefront workers; 0: automatic; overrides level threads
   bool nussinov_dp = false; // exact Nussinov ignores the configured beam
+  bool wavefront_dp = false; // exact interval wavefront, quadratic storage
   bool improved_beam = false; // suffix dominance before beam selection
-  int dp_beam() const { return nussinov_dp ? 0 : beam; }
+  int dp_beam() const { return nussinov_dp || wavefront_dp ? 0 : beam; }
   int crossing_beam = 100;
   int witnesses = 16;
   int patience = 0;
@@ -59,15 +61,21 @@ struct DDPair {
 // A sparse, left-to-right Nussinov chart with reusable buffers. beam=0
 // disables beam pruning, for exact per-level decoding on the retained graph.
 // Exact charts omit dominated starts and decomposable closed split candidates.
+// wavefront=true selects an exact quadratic interval chart (requires beam=0).
+// dp_threads controls wavefront/finite-beam teams; sparse exact stays serial.
 class DDNussinov {
 public:
   DDNussinov(int length, const std::vector<DDPair>& pairs,
-             int level, int beam, bool no_lonely_pairs, bool improved_beam = false);
+             int level, int beam, bool no_lonely_pairs, bool improved_beam = false,
+             int dp_threads = 1, bool wavefront = false);
   ~DDNussinov();
   DDNussinov(const DDNussinov&) = delete;
   DDNussinov& operator=(const DDNussinov&) = delete;
   std::size_t pruned_states() const;
   std::size_t sparsified_candidates() const;
+  int dp_threads() const;
+  int used_workers() const; // most recent decode (including serial fallback)
+  std::size_t parallel_steps() const; // processed columns, or wavefront diagonals
   double decode(const std::vector<double>& weights,
                 const std::vector<unsigned char>& allowed,
                 std::vector<int>& selected);

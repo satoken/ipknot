@@ -1,0 +1,962 @@
+[
+  {
+    "dp": "beam",
+    "revision": "baseline",
+    "threads": 1,
+    "files": 10,
+    "median_seconds": 0.2761784456670284,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.31616149356516,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 2.0285000149160624,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.57450044900179,
+        "upper_bound": 37.83983076169513,
+        "iterations": 18,
+        "structure_sha256": "a6b2dbacf8bdfae2995f43ed4c75bdcec142ebd6efeb50a6101e728efac3556e"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.47550068795681,
+        "upper_bound": 38.17957033800375,
+        "iterations": 50,
+        "structure_sha256": "0b1a8464e25033e661d174d3384f083064c72b77a8130e0df4e3882f17235bb6"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 39.24370840415184,
+        "iterations": 50,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.17265106494597,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.26950028911233,
+        "upper_bound": 27.358880842171665,
+        "iterations": 50,
+        "structure_sha256": "db82bf9d92ee27a4bf8011d18aaddfe916ab66a9520b6e28847e661c9a31a0f0"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "beam",
+    "revision": "candidate",
+    "threads": 1,
+    "files": 10,
+    "median_seconds": 0.26356867235153913,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.31616149356516,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 2.0285000149160624,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.57450044900179,
+        "upper_bound": 37.83983076169513,
+        "iterations": 18,
+        "structure_sha256": "a6b2dbacf8bdfae2995f43ed4c75bdcec142ebd6efeb50a6101e728efac3556e"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.47550068795681,
+        "upper_bound": 38.17957033800375,
+        "iterations": 50,
+        "structure_sha256": "0b1a8464e25033e661d174d3384f083064c72b77a8130e0df4e3882f17235bb6"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 39.24370840415184,
+        "iterations": 50,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.17265106494597,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.26950028911233,
+        "upper_bound": 27.358880842171665,
+        "iterations": 50,
+        "structure_sha256": "db82bf9d92ee27a4bf8011d18aaddfe916ab66a9520b6e28847e661c9a31a0f0"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "beam",
+    "revision": "candidate",
+    "threads": 4,
+    "files": 10,
+    "median_seconds": 0.252718155272305,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.31616149356516,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 2.0285000149160624,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.57450044900179,
+        "upper_bound": 37.83983076169513,
+        "iterations": 18,
+        "structure_sha256": "a6b2dbacf8bdfae2995f43ed4c75bdcec142ebd6efeb50a6101e728efac3556e"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.47550068795681,
+        "upper_bound": 38.17957033800375,
+        "iterations": 50,
+        "structure_sha256": "0b1a8464e25033e661d174d3384f083064c72b77a8130e0df4e3882f17235bb6"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 39.24370840415184,
+        "iterations": 50,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.17265106494597,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.26950028911233,
+        "upper_bound": 27.358880842171665,
+        "iterations": 50,
+        "structure_sha256": "db82bf9d92ee27a4bf8011d18aaddfe916ab66a9520b6e28847e661c9a31a0f0"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "improved-beam",
+    "revision": "baseline",
+    "threads": 1,
+    "files": 10,
+    "median_seconds": 0.07400509715080261,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.31616149356516,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 2.0285000149160624,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 37.70202723616507,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 38.3363088601307,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 39.22437102615221,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.17265106494597,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 27.009250067760608,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "improved-beam",
+    "revision": "candidate",
+    "threads": 1,
+    "files": 10,
+    "median_seconds": 0.06717959325760603,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.31616149356516,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 2.0285000149160624,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 37.70202723616507,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 38.3363088601307,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 39.22437102615221,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.17265106494597,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 27.009250067760608,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "improved-beam",
+    "revision": "candidate",
+    "threads": 4,
+    "files": 10,
+    "median_seconds": 0.06000824738293886,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.31616149356516,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 2.0285000149160624,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 37.70202723616507,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 38.3363088601307,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 39.22437102615221,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.17265106494597,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 27.009250067760608,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "nussinov",
+    "revision": "baseline",
+    "threads": 1,
+    "files": 10,
+    "median_seconds": 0.06951218005269766,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.20250079780817,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 1.918000016361475,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 36.76204109101905,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 36.54400068894028,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 38.30450069904328,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.014500699937344,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 25.80817659708467,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "nussinov",
+    "revision": "candidate",
+    "threads": 1,
+    "files": 10,
+    "median_seconds": 0.07505762949585915,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.20250079780817,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 1.918000016361475,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 36.76204109101905,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 36.54400068894028,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 38.30450069904328,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.014500699937344,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 25.80817659708467,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "nussinov",
+    "revision": "candidate",
+    "threads": 4,
+    "files": 10,
+    "median_seconds": 0.07394279260188341,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.20250079780817,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 1.918000016361475,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 36.76204109101905,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 36.54400068894028,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 38.30450069904328,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.014500699937344,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 25.80817659708467,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "wavefront",
+    "revision": "baseline",
+    "threads": 1,
+    "files": 10,
+    "median_seconds": 0.07514009345322847,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.20250079780817,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 1.918000016361475,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 36.76204109101905,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 36.54400068894028,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 38.30450069904328,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.014500699937344,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 25.80817659708467,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "wavefront",
+    "revision": "candidate",
+    "threads": 1,
+    "files": 10,
+    "median_seconds": 0.13638983387500048,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.20250079780817,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 1.918000016361475,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 36.76204109101905,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 36.54400068894028,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 38.30450069904328,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.014500699937344,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 25.80817659708467,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  },
+  {
+    "dp": "wavefront",
+    "revision": "candidate",
+    "threads": 4,
+    "files": 10,
+    "median_seconds": 0.15721989888697863,
+    "summaries": [
+      {
+        "file": "7YGD_3|Chain C[auth N]|RNA (384-MER)|Tetrahymena (5890).bpp",
+        "objective": 35.20250079780817,
+        "upper_bound": 35.20250079780817,
+        "iterations": 6,
+        "structure_sha256": "8f70a052b665e16401266ce6a42a6e186a4f83a1a0c10b72ccb129801f9e797a"
+      },
+      {
+        "file": "M1377.bpp",
+        "objective": 37.841000497341156,
+        "upper_bound": 37.841000497341156,
+        "iterations": 1,
+        "structure_sha256": "b38bba8179f4040a614b2e22a78b9fd21d7c66fe71df7458bea30065f9dcce18"
+      },
+      {
+        "file": "R2345.bpp",
+        "objective": 1.918000016361475,
+        "upper_bound": 1.918000016361475,
+        "iterations": 6,
+        "structure_sha256": "cbe948b4ac640e35109153f4475f4a03df9fbaca6431251e1f8a430f16a2fa6c"
+      },
+      {
+        "file": "R2350.bpp",
+        "objective": 36.46500043570995,
+        "upper_bound": 36.76204109101905,
+        "iterations": 50,
+        "structure_sha256": "0b6c5d99a0772eac47a834927609d49c9e31af782e752564161d7cec50980e97"
+      },
+      {
+        "file": "R2351.bpp",
+        "objective": 36.54400068894029,
+        "upper_bound": 36.54400068894028,
+        "iterations": 18,
+        "structure_sha256": "3bcfc97edfd8e5bac04f67b3af8a786059ab8795ffb3f8ae0d0a57fabf6d4861"
+      },
+      {
+        "file": "R2352.bpp",
+        "objective": 38.304500699043274,
+        "upper_bound": 38.30450069904328,
+        "iterations": 9,
+        "structure_sha256": "aaf05022d723978a25569111f30d85cbaca0a7a9694ef6f246c0c042e568d5b6"
+      },
+      {
+        "file": "R2353.bpp",
+        "objective": 36.014500699937344,
+        "upper_bound": 36.014500699937344,
+        "iterations": 4,
+        "structure_sha256": "c96da545216036e5f9951bee7335255a45337b80ea2c4d2c0b50e4cc078d41b6"
+      },
+      {
+        "file": "R2365.bpp",
+        "objective": 4.8290000557899475,
+        "upper_bound": 4.8290000557899475,
+        "iterations": 1,
+        "structure_sha256": "f244054c6b14940d0242d49b357bb6f3af917e69c9bc19034b8bedecdb5935db"
+      },
+      {
+        "file": "R2429 | RNA | 345 residues.bpp",
+        "objective": 25.69450033456087,
+        "upper_bound": 25.80817659708467,
+        "iterations": 50,
+        "structure_sha256": "ef9886bafe2fc2ac4a13c7e0bd08323ea9106c6ea48c720a150787b247e54935"
+      },
+      {
+        "file": "R2452 | RNA | 51 residues.bpp",
+        "objective": 1.2980000004172325,
+        "upper_bound": 1.2980000004172325,
+        "iterations": 2,
+        "structure_sha256": "0f6c8b8deea12dc4b1fa17f7546f78107929ffd55c303a4854e2c50a14e87e40"
+      }
+    ],
+    "thread_scope": "dp"
+  }
+]

@@ -114,7 +114,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 if json.loads(line)['event'] == 'problem']
     assert improved and all(p['dp'] == 'improved-beam' and p['beam'] == 100 for p in improved)
     run('-x', '-c', constraints, '--dd-dp', 'wrong', bpp,
-        success=False, message='DD DP must be beam, improved-beam or nussinov')
+        success=False, message='DD DP must be beam, improved-beam, nussinov or wavefront')
     run('-x', '-c', constraints, '--dd-constraint-recovery-every', '-1', bpp,
         success=False, message='recovery interval must be nonnegative')
     for option in ('--dd-crossing-beam', '--dd-witnesses', '--dd-constraint-states'):

@@ -60,7 +60,7 @@ before beam selection and uses deterministic traceback ties. The crossing
 and iteration budgets still apply. Heap and adaptive-beam experiments are
 not enabled by this option.
 
-Use `--dd-threads 2` to solve independent DD levels concurrently in all three
+Use `--dd-threads 2` to solve independent DD levels concurrently in all
 DP modes, including constrained DD. The default is 1; 0 uses the OpenMP runtime
 limit, capped at the number of levels. Level scores are accumulated in the same
 order as serial execution. Primal recovery remains sequential because upper
@@ -68,6 +68,22 @@ levels depend on the recovered lower levels. CMake enables OpenMP when available
 use `-DENABLE_OPENMP=OFF` for a serial build. A serial build accepts 0/1 threads
 and rejects larger requests. See the [performance study](experiments/dual-decomposition/performance/README.md)
 for sparsification, parallelism limits, and reproducible measurements.
+
+Use `--dd-dp wavefront --dd-dp-threads 4` for exact interval-length wavefront
+parallelism within a single level. It retains closed-candidate sparsification
+and stacking support, but always allocates a quadratic interval chart (about
+`6*n*(n+1)` bytes for scores and choices, plus candidate/stack buffers).
+The sparse `nussinov` backend remains useful for long, sparse inputs and uses
+level parallelism only. Exact backends may choose different tied structures.
+
+`--dd-dp beam --dd-dp-threads 4` and `improved-beam` distribute closed components
+and prefix splits within each column, then merge before pruning. Thread counts
+preserve serial structures, scores and pruning decisions. Light inputs fall
+back to serial processing; the default sparse beam=100 workload usually gains
+more from level parallelism. Within-DP threads default to 1; 0 uses the runtime
+limit, subject to work-size caps for beam mode. A request other than 1 overrides
+`--dd-threads` to avoid nested teams. Recovery levels remain ordered, but each
+recovery DP can use the requested inner workers.
 
 Use `--dd-constraint-recovery-every 10` to resume constrained integer
 recovery every 10 iterations (default 0: final-only recovery). Initial,

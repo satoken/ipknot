@@ -183,7 +183,7 @@ with tempfile.TemporaryDirectory() as temporary:
                         '--dd-dp', 'improved-beam', '-r', '1', '-t', 'auto,auto', fixture))
     # Empty candidates and one-level prediction remain valid.
     require_success(run(*common[:-2],'-t','1',bpp))
-    for extra in (['--dd-max-iter','0'],['--dd-beam','-1'],['--dd-threads','-1'],['--dd-crossing-beam','-1'],
+    for extra in (['--dd-max-iter','0'],['--dd-beam','-1'],['--dd-threads','-1'],['--dd-dp-threads','-1'],['--dd-crossing-beam','-1'],
                   ['--dd-witnesses','-1'],['--dd-bound-block','65'],['--dd-bound-every','0'],
                   ['--dd-joint-bound','8','--dd-joint-clusters','--dd-joint-shift'],['--dd-joint-bound','-1'],['--dd-joint-bound','13'],['--dd-joint-states','-1'],
                   ['--dd-exchange','-1'],['--dd-exchange','13'],['--dd-exchange-states','-1'],
@@ -200,7 +200,7 @@ with tempfile.TemporaryDirectory() as temporary:
     def pairs(path):
         return [line for line in path.read_text().splitlines() if line and line[0].isdigit()]
     assert pairs(first)==pairs(second), 'Native and imported BPP changed DD decoding'
-    for dp in ('beam', 'improved-beam', 'nussinov'):
+    for dp in ('beam', 'improved-beam', 'nussinov', 'wavefront'):
         require_success(run(*common, '--dd-dp', dp, '--dd-threads', '1', '-B', first, bpp))
         for threads in ('0', '2'):
             result = run(*common, '--dd-dp', dp, '--dd-threads', threads, '-B', second, bpp)
@@ -209,5 +209,13 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 require_success(result)
                 assert pairs(first) == pairs(second), 'CLI thread setting changed structure'
+        for threads in ('0', '1', '2'):
+            result = run(*common, '--dd-dp', dp, '--dd-threads', '1',
+                         '--dd-dp-threads', threads, '-B', second, bpp)
+            if threads == '2' and result.returncode != 0:
+                assert 'requires an OpenMP build' in result.stdout + result.stderr
+            else:
+                require_success(result)
+                assert pairs(first) == pairs(second), 'CLI DP thread setting changed structure'
     require_success(run('--decoder','dd','--loglevel','info','-r','1','-t','auto,auto',fixture))
 print('DD CLI, native sparse BPP roundtrip and automatic threshold/refinement passed')

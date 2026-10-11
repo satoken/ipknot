@@ -5,6 +5,7 @@
 
 // Each level owns its workspace and output. Aggregate scores and update shared
 // primal/dual state in level order after joining, preserving serial arithmetic.
+// Within-DP thread requests take precedence over this level team.
 void dd_decode_levels(const std::vector<std::unique_ptr<DDNussinov>>& decoders,
     const std::vector<double>& weights, const std::vector<unsigned char>& allowed,
     std::vector<std::vector<int>>& selected, std::vector<double>& scores, int threads);

@@ -387,7 +387,7 @@ DDConstrainedResult solve_constrained_dd(int length,
   }
   std::vector<std::unique_ptr<DDNussinov>> decoders;
   for (int level = 0; level < levels; ++level)
-    decoders.push_back(std::make_unique<DDNussinov>(length, pairs, level, options.dp_beam(), false, options.improved_beam));
+    decoders.push_back(std::make_unique<DDNussinov>(length, pairs, level, options.dp_beam(), false, options.improved_beam, options.dp_threads, options.wavefront_dp));
   std::vector<double> weights(pairs.size()), adjusted(count), selected(count), preference(count);
   std::vector<std::vector<int>> by_level(levels), level_selected(levels);
   for (std::size_t id = 0; id < pairs.size(); ++id) by_level[pairs[id].level].push_back(id);
@@ -409,8 +409,9 @@ DDConstrainedResult solve_constrained_dd(int length,
     trace.exceptions(std::ios::badbit | std::ios::failbit);
     trace << std::setprecision(17);
     trace << "{\"event\":\"problem\",\"solve_id\":" << solve_id
-          << ",\"constrained\":true,\"dp\":\"" << (options.nussinov_dp ? "nussinov" : options.improved_beam ? "improved-beam" : "beam")
+          << ",\"constrained\":true,\"dp\":\"" << (options.wavefront_dp ? "wavefront" : options.nussinov_dp ? "nussinov" : options.improved_beam ? "improved-beam" : "beam")
           << "\",\"beam\":" << options.dp_beam()
+          << ",\"dp_threads\":" << options.dp_threads
           << ",\"repair_state_budget\":" << options.constraint_states
           << ",\"constraint_recovery_every\":" << options.constraint_recovery_every
           << ",\"recovery_target\":\"" << (options.recovery_target_best ? "best" : "baseline") << "\""

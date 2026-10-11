@@ -1,5 +1,9 @@
 # Nussinov sparsification and DD threading
 
+This section records the first optimization against `454db3b`. The subsequent
+[single-DP parallelism study](INTRA_DP.md) compares against `1b12107` and adds
+exact wavefront and finite-beam column workers.
+
 Baseline: `454db3b` (`dev`), GCC 13.3.0, Release (`-O3 -DNDEBUG`), solver-free
 build on Linux aarch64. Measurements use a fixed seed, one warmup, and the median
 of five timed runs. The machine exposes Cortex-X925 and Cortex-A725 cores;
@@ -49,15 +53,13 @@ is capped at the number of levels. Each worker owns its decoder workspace and
 output; aggregation and multiplier updates keep serial ordering. Worker
 exceptions are rethrown after joining. No global OpenMP settings are changed.
 
-Two levels provide at most two-way oracle parallelism. Upper-level primal
-recovery depends on recovered lower levels and remains sequential. Single-level
-decoding receives no threading speedup from this implementation. Standard exact
-interval Nussinov can instead use an interval-length wavefront, but that requires
-a different scheduling/chart implementation from this sparse left-to-right DP.
-The beam algorithm's endpoint progression and pruning depend on previous
-columns, so endpoints cannot simply run in parallel. Fine-grained work within a
-column would require merges and a synchronization point at each endpoint; this
-change implements the coarser independent-level approach.
+At `1b12107`, two levels provided at most two-way oracle parallelism and
+single-level decoding received no threading speedup. Upper-level primal recovery
+depends on recovered lower levels, so those levels must remain ordered.
+The subsequent study implements a separate exact interval-length wavefront and
+deterministic merges within finite-beam columns, including recovery DPs. The
+beam algorithm's endpoint progression and pruning still depend on previous
+columns, so endpoints themselves cannot simply run in parallel.
 
 Other changes avoid unnecessary paired-state buffers and hash lookup construction
 when lonely pairs are allowed, reuse constrained-DD endpoint maxima and

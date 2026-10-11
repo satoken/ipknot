@@ -37,9 +37,9 @@ struct Cell { int start = 0, trace = -1; double score = 0; };
 }
 
 void DDOptions::validate() const {
-  if (threads < 0) throw std::invalid_argument("DD threads must be nonnegative");
+  if (threads < 0 || dp_threads < 0) throw std::invalid_argument("DD threads must be nonnegative");
 #ifndef _OPENMP
-  if (threads > 1) throw std::invalid_argument("DD threads > 1 requires an OpenMP build");
+  if (threads > 1 || dp_threads > 1) throw std::invalid_argument("DD threads > 1 requires an OpenMP build");
 #endif
   if (constraint_passes < 1 || nmr_pair_beam < 1 || nmr_witnesses < 1 || nmr_pattern_beam < 1)
     throw std::invalid_argument("DD constraint passes and NMR beams must be positive");
@@ -61,7 +61,10 @@ void DDOptions::validate() const {
 }
 
 struct DDNussinov::Workspace {
-  int length, beam;
+  int length, beam, dp_threads;
+  bool wavefront;
+  int used_workers = 1;
+  std::size_t parallel_steps = 0;
   std::size_t pruned = 0;
   std::size_t sparsified = 0;
   bool no_lonely, improved;
@@ -76,8 +79,8 @@ struct DDNussinov::Workspace {
   std::vector<int> generation, starts, suffix_best, pending;
   std::vector<Trace> traces;
   std::vector<double> prefix;
-  Workspace(int n, const std::vector<DDPair>& p, int level, int b, bool lonely, bool improve)
-      : length(n), beam(b), no_lonely(lonely), improved(improve || !b), pairs(p), by_right(n),
+  Workspace(int n, const std::vector<DDPair>& p, int level, int b, bool lonely, bool improve, int workers, bool wave)
+      : length(n), beam(b), dp_threads(workers), wavefront(wave), no_lonely(lonely), improved(improve || !b), pairs(p), by_right(n),
         inner(lonely ? p.size() : 0, -1), paired_trace(lonely ? p.size() : 0, -1),
         paired_score(lonely ? p.size() : 0),
         chart(n), candidates(n), candidate_traces(n), origin(n), generation(n, -1), prefix(n) {
@@ -95,24 +98,380 @@ struct DDNussinov::Workspace {
         return p[a].left != p[b].left ? p[a].left > p[b].left : a < b;
       });
   }
+  struct LocalColumn {
+    std::vector<Cell> cells;
+    std::vector<Trace> proposals;
+    std::vector<int> generation, starts, origin;
+    explicit LocalColumn(int n) : cells(n), proposals(n), generation(n, -1), origin(n) {
+      starts.reserve(n);
+    }
+    void offer(int right, int start, double score, int pair, int first, int second) {
+      const bool fresh = generation[start] != right;
+      if (fresh || score > cells[start].score || (score == cells[start].score && pair < origin[start])) {
+        if (fresh) { generation[start] = right; starts.push_back(start); }
+        cells[start] = {start, -1, score};
+        proposals[start] = {pair, first, second};
+        origin[start] = pair;
+      }
+    }
+  };
+  struct Component { double score; int trace; };
+  struct Closed { int left, pair; double score; };
+  std::vector<LocalColumn> local_columns;
+  std::vector<std::size_t> offsets;
+  std::vector<double> intervals;
+  std::vector<int> choices, cursors;
+  std::vector<unsigned char> paired_child;
+  std::vector<std::vector<Closed>> closed;
+  std::vector<std::size_t> omitted;
+  void offer(int right, int start, double score, int pair, int first, int second);
+  void prepare_column(int right);
+  void finish_column(int right);
+  Component beam_component(int right, int id, const std::vector<double>& weights, int trace_slot);
+  double decode_sparse(const std::vector<double>& weights,
+      const std::vector<unsigned char>& allowed, std::vector<int>& selected);
+  double decode_wavefront(const std::vector<double>& weights,
+                          const std::vector<unsigned char>& allowed, std::vector<int>& selected);
+  void decode_beam_parallel(const std::vector<double>& weights,
+                            const std::vector<unsigned char>& allowed, int workers);
+
 };
 
 DDNussinov::DDNussinov(int n, const std::vector<DDPair>& pairs, int level,
-                     int beam, bool no_lonely_pairs, bool improved_beam) {
-  if (n < 0 || level < 0 || beam < 0) throw std::invalid_argument("Invalid Nussinov dimensions");
+                     int beam, bool no_lonely_pairs, bool improved_beam, int dp_threads, bool wavefront) {
+  if (n < 0 || level < 0 || beam < 0 || dp_threads < 0 || (wavefront && beam)) throw std::invalid_argument("Invalid Nussinov dimensions");
+#ifndef _OPENMP
+  if (dp_threads > 1) throw std::invalid_argument("DP threads > 1 requires an OpenMP build");
+#endif
   for (const auto& p : pairs)
     if (p.left < 0 || p.right >= n || p.left >= p.right || p.level < 0 || !std::isfinite(p.weight))
       throw std::invalid_argument("Invalid Nussinov pair");
-  workspace_ = std::make_unique<Workspace>(n, pairs, level, beam, no_lonely_pairs, improved_beam);
+  workspace_ = std::make_unique<Workspace>(n, pairs, level, beam, no_lonely_pairs, improved_beam, dp_threads, wavefront);
 }
 DDNussinov::~DDNussinov() = default;
 std::size_t DDNussinov::pruned_states() const { return workspace_->pruned; }
 std::size_t DDNussinov::sparsified_candidates() const { return workspace_->sparsified; }
 
-double DDNussinov::decode(const std::vector<double>& weights,
+int DDNussinov::dp_threads() const { return workspace_->dp_threads; }
+int DDNussinov::used_workers() const { return workspace_->used_workers; }
+std::size_t DDNussinov::parallel_steps() const { return workspace_->parallel_steps; }
+
+void DDNussinov::Workspace::offer(int right, int start, double score, int pair, int first, int second) {
+  const bool fresh = generation[start] != right;
+  // Carry wins ties; among closed components, the original pair ID wins.
+  // This also reproduces the ordinary serial beam's first-in-row tie rule.
+  if (fresh || score > candidates[start].score ||
+      (score == candidates[start].score && pair < candidate_traces[start].pair)) {
+    if (fresh) { generation[start] = right; starts.push_back(start); }
+    candidates[start] = {start, pair < 0 ? first : -1, score};
+    candidate_traces[start] = {pair, first, second};
+  }
+}
+
+void DDNussinov::Workspace::prepare_column(int right) {
+  auto& w = *this;
+  w.starts.clear();
+  offer(right, 0, 0, -1, -1, -1);
+  offer(right, right, 0, -1, -1, -1);
+  if (right) {
+    const auto& previous = w.chart[right - 1];
+    w.suffix_best.resize(previous.size());
+    int best = -1;
+    for (int k = static_cast<int>(previous.size()); k-- > 0;) {
+      if (best < 0 || previous[k].score > previous[best].score) best = k;
+      w.suffix_best[k] = best;
+    }
+    for (const auto& cell : previous) offer(right, cell.start, cell.score, -1, cell.trace, -1);
+  }
+}
+
+DDNussinov::Workspace::Component DDNussinov::Workspace::beam_component(int right, int id,
+    const std::vector<double>& weights, int trace_slot) {
+  auto& w = *this;
+  const auto& p = w.pairs[id];
+  double inside = 0;
+  int inside_trace = -1;
+  if (right) {
+    const auto& previous = w.chart[right - 1];
+    const std::size_t index = previous.size() == std::size_t(right) ? std::size_t(p.left + 1) :
+        std::size_t(std::lower_bound(previous.begin(), previous.end(), p.left + 1,
+            [](const Cell& cell, int start) { return cell.start < start; }) - previous.begin());
+    if (index < previous.size()) {
+      const auto& cell = previous[w.suffix_best[index]];
+      inside = cell.score; inside_trace = cell.trace;
+    }
+  }
+  // P(i,j) may borrow stacking support from its parent. F intervals
+  // contain only complete helices; a pair exposed to F must have a child.
+  const int child = w.no_lonely ? w.inner[id] : -1;
+  if (w.no_lonely && child >= 0 && w.paired_score[child] > inside) {
+    inside = w.paired_score[child]; inside_trace = w.paired_trace[child];
+  }
+  double complete = weights[id] + inside;
+  int complete_inside = inside_trace;
+  if (w.no_lonely) {
+    // Keep even dominated/negative P states: a parent may need this pair
+    // as stacking support. Only complete components may be sparsified.
+    w.paired_score[id] = complete;
+    w.traces[trace_slot] = {id, inside_trace, -1};
+    w.paired_trace[id] = trace_slot;
+    if (child < 0 || !std::isfinite(w.paired_score[child])) return {0, -1};
+    complete = weights[id] + w.paired_score[child];
+    complete_inside = w.paired_trace[child];
+  }
+  return {complete, complete_inside};
+}
+
+void DDNussinov::Workspace::finish_column(int right) {
+  auto& w = *this;
+  if (w.improved) {
+    // Match the fixed-beam dominance/lazy-trace experiment, with heap and
+    // adaptive widths disabled. Sorting large sparse columns by four fixed
+    // radix passes keeps work linear before applying the fixed beam.
+    const bool scan_exact = !w.beam && w.starts.size() >= std::size_t(right / 16 + 1);
+    if (!scan_exact && w.starts.size() < 1024) std::sort(w.starts.begin(), w.starts.end());
+    else if (!scan_exact) {
+      w.scratch.resize(w.starts.size());
+      for (unsigned shift = 0; shift < 32; shift += 8) {
+        std::array<std::size_t, 256> offsets{};
+        for (int start : w.starts) ++offsets[(static_cast<unsigned>(start) >> shift) & 255];
+        std::size_t offset = 0;
+        for (auto& count : offsets) { const auto next = count; count = offset; offset += next; }
+        for (int start : w.starts) w.scratch[offsets[(static_cast<unsigned>(start) >> shift) & 255]++] = start;
+        w.starts.swap(w.scratch);
+      }
+    }
+    // An earlier non-root interval with no greater score merely adds unused
+    // leading bases. Its later suffix answers every future query at least
+    // as well, including under signed pair weights and stacking support.
+    double suffix_score = -std::numeric_limits<double>::infinity();
+    w.scratch.clear();
+    const auto retain = [&](int start) {
+      if (w.generation[start] != right) return;
+      const double score = w.candidates[start].score;
+      if (start == 0 || score > suffix_score) {
+        w.scratch.push_back(start);
+        suffix_score = std::max(suffix_score, score);
+      }
+    };
+    // Scan populated exact columns without sorting. Very sparse columns
+    // still sort their few starts, avoiding quadratic work on empty charts.
+    if (scan_exact) for (int start = right; start >= 0; --start) retain(start);
+    else for (std::size_t k = w.starts.size(); k-- > 0;) retain(w.starts[k]);
+    w.starts.swap(w.scratch);
+  }
+  auto better = [&](int a, int b) {
+    const double sa = w.candidates[a].score + (a ? w.prefix[a - 1] : 0);
+    const double sb = w.candidates[b].score + (b ? w.prefix[b - 1] : 0);
+    return sa != sb ? sa > sb : a < b;
+  };
+  const bool beam_pruned = w.beam && w.starts.size() > static_cast<std::size_t>(w.beam);
+  if (beam_pruned) {
+    w.pruned += w.starts.size() - w.beam;
+    std::nth_element(w.starts.begin(), w.starts.begin() + w.beam, w.starts.end(), better);
+    w.starts.resize(w.beam);
+    if (std::find(w.starts.begin(), w.starts.end(), 0) == w.starts.end()) {
+      auto worst = std::max_element(w.starts.begin(), w.starts.end(), better);
+      *worst = 0;
+    }
+  }
+  // Dominance emits descending starts, so an unpruned column can restore
+  // interval order without another comparison sort.
+  if (w.improved && !beam_pruned) std::reverse(w.starts.begin(), w.starts.end());
+  else std::sort(w.starts.begin(), w.starts.end());
+  auto& column = w.chart[right];
+  column.clear();
+  column.reserve(w.starts.size());
+  // Materialize only the winning traceback for each retained cell.
+  // Eager traces for every improving split can use cubic memory in exact
+  // mode; retained chart cells plus one paired trace per candidate need
+  // O(n*min(beam,n)+M) records (O(n^2+M) when beam=0).
+  for (int start : w.starts) {
+    auto cell = w.candidates[start];
+    const auto& proposal = w.candidate_traces[start];
+    if (proposal.pair >= 0) {
+      w.traces.push_back(proposal);
+      cell.trace = static_cast<int>(w.traces.size() - 1);
+    }
+    column.push_back(cell);
+  }
+  w.prefix[right] = w.candidates[0].score;
+}
+
+void DDNussinov::Workspace::decode_beam_parallel(const std::vector<double>& weights,
+    const std::vector<unsigned char>& allowed, int workers) {
+  if (local_columns.size() != static_cast<std::size_t>(workers)) {
+    local_columns.clear();
+    local_columns.reserve(workers);
+    for (int k = 0; k < workers; ++k) local_columns.emplace_back(length);
+  }
+  for (auto& local : local_columns) std::fill(local.generation.begin(), local.generation.end(), -1);
+  std::exception_ptr error;
+  int trace_base = 0;
+  // Keep one team alive across endpoints. Only the leader changes vector
+  // sizes; workers write disjoint paired states and private split proposals.
+#ifdef _OPENMP
+#pragma omp parallel num_threads(workers) shared(error, trace_base)
+#endif
+  {
+    int worker = 0;
+#ifdef _OPENMP
+    worker = omp_get_thread_num();
+#pragma omp single
+    used_workers = omp_get_num_threads();
+#endif
+    auto& local = local_columns[worker];
+    for (int right = 0; right < length; ++right) {
+#ifdef _OPENMP
+#pragma omp single
+#endif
+      {
+        try {
+          prepare_column(right);
+          trace_base = static_cast<int>(traces.size());
+          if (no_lonely) traces.resize(traces.size() + by_right[right].size());
+        } catch (...) { error = std::current_exception(); }
+      }
+      local.starts.clear();
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+      for (int k = 0; k < static_cast<int>(by_right[right].size()); ++k) {
+        if (error) continue;
+        const int id = by_right[right][k];
+        if (!allowed[id]) continue;
+        const auto result = beam_component(right, id, weights, no_lonely ? trace_base + k : -1);
+        if (!(result.score > 0)) continue;
+        const int left = pairs[id].left;
+        local.offer(right, left, result.score, id, result.trace, -1);
+        if (left) for (const auto& prefix : chart[left - 1])
+          local.offer(right, prefix.start, prefix.score + result.score, id, result.trace, prefix.trace);
+      }
+#ifdef _OPENMP
+#pragma omp single
+#endif
+      {
+        if (!error) try {
+          for (int k = 0; k < used_workers; ++k) for (int start : local_columns[k].starts) {
+            const auto& proposal = local_columns[k].proposals[start];
+            offer(right, start, local_columns[k].cells[start].score,
+                  proposal.pair, proposal.first, proposal.second);
+          }
+          finish_column(right);
+          ++parallel_steps;
+        } catch (...) { error = std::current_exception(); }
+      }
+      if (error) break;
+    }
+  }
+  if (error) std::rethrow_exception(error);
+}
+
+double DDNussinov::Workspace::decode_wavefront(const std::vector<double>& weights,
+    const std::vector<unsigned char>& allowed, std::vector<int>& selected) {
+  const auto n = static_cast<std::size_t>(length);
+  if (n > (std::numeric_limits<std::size_t>::max() / (n + 1)))
+    throw std::length_error("Nussinov wavefront chart is too large");
+  const auto cells = n * (n + 1) / 2;
+  intervals.resize(cells);
+  choices.resize(cells);
+  offsets.resize(n);
+  cursors.assign(n, 0);
+  omitted.assign(n, 0);
+  closed.resize(n);
+  if (no_lonely) paired_child.resize(pairs.size());
+  std::size_t offset = 0;
+  for (int i = 0; i < length; ++i) {
+    offsets[i] = offset;
+    intervals[offset] = 0;
+    choices[offset] = -1;
+    offset += n - i;
+    closed[i].clear();
+    closed[i].reserve(by_right[i].size());
+  }
+  const auto index = [&](int i, int j) { return offsets[i] + j - i; };
+  int workers = 1;
+#ifdef _OPENMP
+  workers = std::min(length, dp_threads ? dp_threads : omp_get_max_threads());
+#pragma omp parallel num_threads(workers) if(workers > 1)
+#endif
+  {
+#ifdef _OPENMP
+#pragma omp single
+    used_workers = omp_get_num_threads();
+#endif
+    // At each interval length, a right endpoint belongs to exactly one
+    // worker. Its candidate list is extended only after all shorter
+    // intervals have completed. The implicit barrier enforces this order.
+    for (int span = 1; span < length; ++span) {
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+      for (int i = 0; i < length - span; ++i) {
+        const int j = i + span;
+        double best = intervals[index(i, j - 1)];
+        int choice = -1;
+        for (const auto& candidate : closed[j]) {
+          const double score = intervals[index(i, candidate.left - 1)] + candidate.score;
+          if (score > best) { best = score; choice = candidate.pair; }
+        }
+        auto& cursor = cursors[j];
+        while (cursor < static_cast<int>(by_right[j].size()) && pairs[by_right[j][cursor]].left == i) {
+          const int id = by_right[j][cursor++];
+          if (!allowed[id]) continue;
+          double inside = i + 1 < j ? intervals[index(i + 1, j - 1)] : 0;
+          const int child = no_lonely ? inner[id] : -1;
+          if (no_lonely) {
+            paired_child[id] = child >= 0 && paired_score[child] > inside;
+            if (paired_child[id]) inside = paired_score[child];
+            // Parent-supported P states survive even when C is dominated.
+            paired_score[id] = weights[id] + inside;
+          }
+          const double complete = no_lonely ?
+              (child >= 0 ? weights[id] + paired_score[child] : -INFINITY) : weights[id] + inside;
+          if (complete > best) {
+            closed[j].push_back({i, id, complete}); // capacity reserved before entering the team
+            best = complete; choice = id;
+          } else if (complete > 0) ++omitted[j];
+        }
+        intervals[index(i, j)] = best;
+        choices[index(i, j)] = choice;
+      }
+    }
+  }
+  sparsified = std::accumulate(omitted.begin(), omitted.end(), std::size_t{0});
+  if (used_workers > 1) parallel_steps = length - 1;
+  // Frames distinguish complete intervals from parent-supported paired
+  // states, so signed child pairs are retained in stacked tracebacks.
+  std::vector<std::array<int, 3>> pending{{0, 0, length - 1}};
+  while (!pending.empty()) {
+    const auto frame = pending.back(); pending.pop_back();
+    if (frame[0]) {
+      const int id = frame[1];
+      selected.push_back(id);
+      if (paired_child[id]) pending.push_back({1, inner[id], 0});
+      else pending.push_back({0, pairs[id].left + 1, pairs[id].right - 1});
+      continue;
+    }
+    int i = frame[1], j = frame[2];
+    while (i < j && choices[index(i, j)] < 0) --j;
+    if (i >= j) continue;
+    const int id = choices[index(i, j)];
+    selected.push_back(id);
+    pending.push_back({0, i, pairs[id].left - 1});
+    if (no_lonely) pending.push_back({1, inner[id], 0});
+    else pending.push_back({0, pairs[id].left + 1, j - 1});
+  }
+  return intervals[index(0, length - 1)];
+}
+
+// Preserve the fused serial kernel: staging its hot offers/components for
+// parallel execution costs 9-15% on dense single-thread charts with GCC 13.
+// The independent reference and serial/parallel trace tests cover both paths.
+double DDNussinov::Workspace::decode_sparse(const std::vector<double>& weights,
                          const std::vector<unsigned char>& allowed,
                          std::vector<int>& selected) {
-  auto& w = *workspace_;
+  auto& w = *this;
   if (weights.size() != w.pairs.size() || allowed.size() != weights.size())
     throw std::invalid_argument("Nussinov weight/mask size mismatch");
   selected.clear();
@@ -312,6 +671,52 @@ double DDNussinov::decode(const std::vector<double>& weights,
   return w.prefix.back();
 }
 
+double DDNussinov::decode(const std::vector<double>& weights,
+                         const std::vector<unsigned char>& allowed,
+                         std::vector<int>& selected) {
+  auto& w = *workspace_;
+  if (weights.size() != w.pairs.size() || allowed.size() != weights.size())
+    throw std::invalid_argument("Nussinov weight/mask size mismatch");
+  selected.clear();
+  w.pruned = 0;
+  w.sparsified = 0;
+  w.used_workers = 1;
+  w.parallel_steps = 0;
+  if (!w.length) return 0;
+  int workers = 1;
+#ifdef _OPENMP
+  workers = std::min(w.length, w.dp_threads ? w.dp_threads : omp_get_max_threads());
+#endif
+  if (w.beam && workers > 1) {
+    // Private scatters and one merge per endpoint need enough prefix splits
+    // to amortize synchronization. Sparse/default-width charts stay serial.
+    std::size_t work = 0;
+    for (const auto& row : w.by_right) for (int id : row)
+      if (allowed[id]) work += std::min(w.beam, w.pairs[id].left + 1);
+    const auto average = work / static_cast<std::size_t>(w.length);
+    workers = average < 8192 ? 1 : std::min(workers, static_cast<int>(
+        std::min(average / 4096, static_cast<std::size_t>(std::numeric_limits<int>::max()))));
+  }
+  if (!w.wavefront && (!w.beam || workers <= 1))
+    return w.decode_sparse(weights, allowed, selected);
+  w.traces.clear();
+  std::fill(w.generation.begin(), w.generation.end(), -1);
+  if (w.no_lonely)
+    std::fill(w.paired_score.begin(), w.paired_score.end(), -std::numeric_limits<double>::infinity());
+  if (w.wavefront) return w.decode_wavefront(weights, allowed, selected);
+  w.decode_beam_parallel(weights, allowed, workers);
+  w.pending.clear();
+  w.pending.push_back(w.chart.back().front().trace);
+  while (!w.pending.empty()) {
+    int id = w.pending.back(); w.pending.pop_back();
+    if (id < 0) continue;
+    const auto& t = w.traces[id];
+    if (t.pair >= 0) selected.push_back(t.pair);
+    w.pending.push_back(t.first); w.pending.push_back(t.second);
+  }
+  return w.prefix.back();
+}
+
 void dd_decode_levels(const std::vector<std::unique_ptr<DDNussinov>>& decoders,
     const std::vector<double>& weights, const std::vector<unsigned char>& allowed,
     std::vector<std::vector<int>>& selected, std::vector<double>& scores, int threads) {
@@ -324,6 +729,8 @@ void dd_decode_levels(const std::vector<std::unique_ptr<DDNussinov>>& decoders,
 #else
   (void)threads;
 #endif
+  // Inner DP teams take precedence; do not create nested OpenMP teams.
+  for (const auto& decoder : decoders) if (decoder->dp_threads() != 1) workers = 1;
   if (workers <= 1) {
     for (int level = 0; level < levels; ++level)
       scores[level] = decoders[level]->decode(weights, allowed, selected[level]);
@@ -545,13 +952,13 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& pairs,
   std::vector<std::unique_ptr<DDNussinov>> decoders;
   std::vector<DDNussinov*> shared_decoders;
   for (int level=0;level<levels;++level) {
-    decoders.push_back(std::make_unique<DDNussinov>(length,pairs,level,options.dp_beam(),no_lonely,options.improved_beam));
+    decoders.push_back(std::make_unique<DDNussinov>(length,pairs,level,options.dp_beam(),no_lonely,options.improved_beam,options.dp_threads,options.wavefront_dp));
     if (options.recovery_share) shared_decoders.push_back(decoders.back().get());
   }
   std::unique_ptr<DDPrimalRecovery> recovery;
   if (options.recovery_every)
     recovery=std::make_unique<DDPrimalRecovery>(length,pairs,levels,options.dp_beam(),no_lonely,
-        allowed,model_rows,8,options.recovery_mode,options.recovery_cache,shared_decoders,options.improved_beam);
+        allowed,model_rows,8,options.recovery_mode,options.recovery_cache,shared_decoders,options.improved_beam,options.dp_threads,options.wavefront_dp);
   std::unique_ptr<DDLocalExchange> exchange;
   if (options.exchange_width)
     exchange=std::make_unique<DDLocalExchange>(length,pairs,levels,no_lonely,allowed,model_rows);
@@ -569,6 +976,7 @@ DDResult solve_dual_decomposition(int length, const std::vector<DDPair>& pairs,
           << ",\"length\":" << length << ",\"levels\":" << levels
           << ",\"no_lonely\":" << int(no_lonely) << ",\"beam\":" << options.dp_beam()
           << ",\"improved_beam\":" << int(options.improved_beam)
+          << ",\"wavefront\":" << int(options.wavefront_dp) << ",\"dp_threads\":" << options.dp_threads
           << ",\"crossing_beam\":" << options.crossing_beam << ",\"witnesses\":" << options.witnesses
           << ",\"max_iterations\":" << options.max_iterations << ",\"patience\":" << options.patience
           << ",\"bound_block\":" << options.bound_block << ",\"bound_every\":" << options.bound_every
