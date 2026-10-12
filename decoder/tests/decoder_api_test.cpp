@@ -72,7 +72,56 @@ double exhaustive(int n, const std::vector<PairProbability> &pairs, const Decode
   return best;
 }
 
+void check_default_improved_beam() {
+  DecoderOptions options;
+  check(DDOptions{}.improved_beam && options.dd.improved_beam);
+  // A long unpaired prefix makes standard beam=100 discard the outer pair.
+  // Improved beam retains both nested pairs, whose combined weight is 0.4.
+  constexpr int n = 120;
+  const std::vector<PairProbability> pairs{{116, 119, .4f}, {117, 118, .9f}};
+  std::vector<int> expected(n, -1);
+  expected[116] = 119; expected[119] = 116;
+  expected[117] = 118; expected[118] = 117;
+  options.no_lonely_pairs = false;
+  const auto implicit = Decoder(options).decode(n, pairs);
+  options.dd.improved_beam = true;
+  const auto explicit_improved = Decoder(options).decode(n, pairs);
+  check(implicit.bpseq == expected && explicit_improved.bpseq == expected);
+  check(implicit.levels == explicit_improved.levels);
+  check(std::abs(implicit.objective - .4) < 1e-6);
+  check(implicit.objective == explicit_improved.objective);
+  check(implicit.dd->upper_bound == explicit_improved.dd->upper_bound);
+  check(implicit.dd->iterations == explicit_improved.dd->iterations);
+  check(implicit.dd->stop_reason == explicit_improved.dd->stop_reason);
+  // The constructor with no options uses improved beam with stacking enabled.
+  check(Decoder().decode(n, pairs).bpseq == expected);
+  SparsePosterior posterior(n + 1);
+  for (const auto &pair : pairs)
+    posterior[pair.left + 1].emplace_back(pair.right + 1, pair.probability);
+  check(Decoder(options).decode(posterior).bpseq == expected);
+  options.dd.improved_beam = false;
+  const auto standard = Decoder(options).decode(n, pairs);
+  check(standard.bpseq[116] == -1 && standard.bpseq[117] == 118);
+  check(std::abs(standard.objective - .325) < 1e-6);
+
+  // The installed low-level DP constructor must use the same default.
+  const std::vector<DDPair> candidates{{116, 119, 0, .15}, {117, 118, 0, .65}};
+  const std::vector<double> weights{.15, .65};
+  const std::vector<unsigned char> allowed{1, 1};
+  DDNussinov dp(n, candidates, 0, 100, false);
+  DDNussinov improved_dp(n, candidates, 0, 100, false, true);
+  DDNussinov standard_dp(n, candidates, 0, 100, false, false);
+  std::vector<int> selected, explicit_selected;
+  const double score = dp.decode(weights, allowed, selected);
+  check(selected == std::vector<int>({0, 1}) && std::abs(score - .8) < 1e-9);
+  check(improved_dp.decode(weights, allowed, explicit_selected) == score);
+  check(explicit_selected == selected);
+  check(std::abs(standard_dp.decode(weights, allowed, selected) - .65) < 1e-9);
+  check(selected == std::vector<int>({1}));
+}
+
 int main() {
+  check_default_improved_beam();
   DecoderOptions options;
   options.thresholds = {0.2f, 0.1f};
   const std::vector<PairProbability> pairs{{0, 7, .9f}, {1, 6, .9f}, {3, 10, .9f}, {4, 9, .9f}};
@@ -82,11 +131,12 @@ int main() {
     symmetric[pair.left + 1].emplace_back(pair.right + 1, pair.probability);
     symmetric[pair.right + 1].emplace_back(pair.left + 1, pair.probability);
   }
-  for (const std::string mode : {"beam", "improved-beam", "nussinov", "wavefront", "full-dd", "ilp"}) {
+  for (const std::string mode : {"default", "beam", "improved-beam", "nussinov", "wavefront", "full-dd", "ilp"}) {
     if (mode == "ilp" && !Decoder::ilp_available())
       continue;
     options.backend = mode == "ilp" ? Backend::ILP : Backend::DD;
-    options.dd.improved_beam = mode == "improved-beam";
+    options.dd = DDOptions{};
+    if (mode == "beam") options.dd.improved_beam = false;
     options.dd.nussinov_dp = mode == "nussinov" || mode == "full-dd";
     options.dd.wavefront_dp = mode == "wavefront";
     options.dd.crossing_beam = mode == "full-dd" ? 0 : 100;

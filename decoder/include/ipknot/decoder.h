@@ -25,7 +25,7 @@ struct DecoderOptions {
   std::vector<float> weights;                   // empty: 1 / number of levels
   bool no_lonely_pairs = true;
   int threads = 1; // ILP only; 0: backend default
-  DDOptions dd;    // default: bounded beam DD; nussinov_dp=true: exact level DP
+  DDOptions dd;    // default: improved beam DD; nussinov_dp=true: exact level DP
 };
 
 struct DecodeResult {

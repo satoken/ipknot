@@ -23,7 +23,7 @@ struct DDOptions {
   int dp_threads = 1; // beam/wavefront workers; 0: automatic; overrides level threads
   bool nussinov_dp = false; // exact Nussinov ignores the configured beam
   bool wavefront_dp = false; // exact interval wavefront, quadratic storage
-  bool improved_beam = false; // suffix dominance before beam selection
+  bool improved_beam = true; // suffix dominance before beam selection; false: standard beam
   int dp_beam() const { return nussinov_dp || wavefront_dp ? 0 : beam; }
   int crossing_beam = 100;
   int witnesses = 16;
@@ -66,7 +66,7 @@ struct DDPair {
 class DDNussinov {
 public:
   DDNussinov(int length, const std::vector<DDPair>& pairs,
-             int level, int beam, bool no_lonely_pairs, bool improved_beam = false,
+             int level, int beam, bool no_lonely_pairs, bool improved_beam = true,
              int dp_threads = 1, bool wavefront = false);
   ~DDNussinov();
   DDNussinov(const DDNussinov&) = delete;

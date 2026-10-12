@@ -31,8 +31,10 @@ int main(int argc, char** argv) {
     for (const auto& pair : pairs) weights.push_back(pair.weight);
     std::vector<unsigned char> allowed(pairs.size(), 1);
     std::vector<int> selected;
-    DDNussinov dp(n, pairs, 0, beam, false);
+    // Keep the original standard-beam comparison independent of API defaults.
+    DDNussinov dp(n, pairs, 0, beam, false, false);
     DDOptions options;
+    options.improved_beam = false;
     options.beam = beam;
     options.max_iterations = 20;
 #ifdef IPKNOT_PERFORMANCE_THREADS

@@ -164,8 +164,8 @@ The reusable `IPknot::decoder` target accepts supplied base-pair probabilities
 and returns partners, pseudoknot levels, and the objective. It shares the CLI's
 improved beam, sparse exact Nussinov, level parallelism, and within-DP parallelism,
 and supports ILP without linking probability engines or the CLI.
-Set `options.dd.improved_beam = true` for the recommended LPC-DD beam mode;
-the library's option defaults retain standard beam.
+The library defaults to improved beam, matching the CLI and recommended LPC-DD
+settings. Set `options.dd.improved_beam = false` to select standard beam.
 See [the decoder API and examples](decoder/README.md) for CMake integration,
 installation, input formats, and complexity. Refinement and NMR constraints remain
 available through IPknot.

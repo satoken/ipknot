@@ -5,22 +5,20 @@
 int main(int argc, char **argv) {
   ipknot::DecoderOptions options;
   options.thresholds = {0.2f, 0.1f};
-  {
-    const std::string mode = argc > 1 ? argv[1] : "improved-beam";
-    if (mode == "nussinov")
-      options.dd.nussinov_dp = true;
-    else if (mode == "improved-beam")
-      options.dd.improved_beam = true;
-    else if (mode == "wavefront")
-      options.dd.wavefront_dp = true;
-    else if (mode == "full-dd") {
-      options.dd.nussinov_dp = true;
-      options.dd.crossing_beam = options.dd.witnesses = 0;
-    } else if (mode == "ilp")
-      options.backend = ipknot::Backend::ILP;
-    else if (mode != "beam")
-      return 2;
-  }
+  const std::string mode = argc > 1 ? argv[1] : "improved-beam";
+  if (mode == "nussinov")
+    options.dd.nussinov_dp = true;
+  else if (mode == "beam")
+    options.dd.improved_beam = false;
+  else if (mode == "wavefront")
+    options.dd.wavefront_dp = true;
+  else if (mode == "full-dd") {
+    options.dd.nussinov_dp = true;
+    options.dd.crossing_beam = options.dd.witnesses = 0;
+  } else if (mode == "ilp")
+    options.backend = ipknot::Backend::ILP;
+  else if (mode != "improved-beam")
+    return 2;
   try {
     // Two crossing stems; positions and returned partners are zero-based.
     const std::vector<ipknot::PairProbability> probabilities{
