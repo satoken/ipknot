@@ -11,10 +11,12 @@ option(ENABLE_GUROBI "Enable Gurobi backend" OFF)
 option(ENABLE_SCIP "Enable SCIP backend" OFF)
 option(ENABLE_HIGHS "Enable HiGHS backend" OFF)
 option(IPKNOT_DECODER_BUILD_EXAMPLE "Build the probability decoding example" OFF)
+option(ENABLE_OPENMP "Enable parallel DD levels and within-DP workers when OpenMP is available" ON)
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
 set(ipknot_core_dir "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 include(GNUInstallDirs)
 set(IPKNOT_DECODER_WITH_SCIP OFF)
+set(IPKNOT_DECODER_WITH_OPENMP OFF)
 
 add_library(ipknot_decoder
   src/decoder.cpp src/ilp_model.cpp
@@ -31,6 +33,14 @@ target_include_directories(ipknot_decoder
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE ${ipknot_core_dir})
+
+if(ENABLE_OPENMP)
+  find_package(OpenMP QUIET COMPONENTS CXX)
+  if(OpenMP_CXX_FOUND)
+    set(IPKNOT_DECODER_WITH_OPENMP ON)
+    target_link_libraries(ipknot_decoder PUBLIC OpenMP::OpenMP_CXX)
+  endif()
+endif()
 
 if(ENABLE_ILP)
   if(ENABLE_CPLEX)

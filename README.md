@@ -23,11 +23,11 @@ For solver-free dual decomposition:
 cmake -S . -B build-dd -DCMAKE_BUILD_TYPE=Release -DENABLE_ILP=OFF
 cmake --build build-dd -j
 ctest --test-dir build-dd --output-on-failure
-build-dd/ipknot --decoder dd examples/drz_Ppac_1_1.fa
+build-dd/ipknot -e lpc --decoder dd --dd-dp improved-beam examples/drz_Ppac_1_1.fa
 ```
 
 DD is the default decoder, including in solver-enabled builds. The defaults are
-`--decoder dd --dd-beam 100 --dd-max-iter 50 --dd-patience 0
+`--decoder dd --dd-dp beam --dd-beam 100 --dd-max-iter 50 --dd-patience 0
 --dd-crossing-beam 100 --dd-witnesses 16`, with LPC beam 100,
 `-t auto,auto`, and `-r 1`. The iteration limit applies separately to each
 threshold/refinement solve.
@@ -48,16 +48,67 @@ against all hard constraints. Candidate limits may omit feasible structures;
 `--dd-constraints full` retains the original full model for small diagnostics
 and has no linear complexity guarantee.
 Use `--dd-dp nussinov` to replace beam search with exact per-level
-Nussinov interval DP. It ignores `--dd-beam`, retains every interval start,
+Nussinov interval DP. It ignores `--dd-beam`, removes dominated interval starts
+and decomposable closed split candidates without beam pruning,
 and works with fixed and NMR constraints in both constraint modes. It has
 no linear complexity guarantee: worst-case time is cubic and DP memory is
 quadratic. Candidate/witness limits still apply to the retained graph.
 The default `--dd-dp beam` retains the configurable beam decoder.
 Use `--dd-dp improved-beam --dd-beam 100` for the fixed-width improved
-beam used in the DD/LPC comparison. It removes dominated interval states
+beam recommended for LPC-DD. It removes dominated interval states
 before beam selection and uses deterministic traceback ties. The crossing
 and iteration budgets still apply. Heap and adaptive-beam experiments are
 not enabled by this option.
+
+Recommended LPC-DD settings for reducing the latency of one RNA are:
+
+```sh
+build-dd/ipknot -e lpc --decoder dd --dd-dp improved-beam \
+  --beam-size 100 --dd-beam 100 --dd-threads 2 --dd-dp-threads 1 \
+  -t auto,auto -r 1 -n 1 input.fa
+```
+
+On all 11,843 sequences in the [2022 dataset study](experiments/dual-decomposition/performance/dataset-2022/results/RESULTS.md),
+improved beam increased macro F1 from 0.615594 to 0.617121 and micro F1
+from 0.508241 to 0.526274, with a 1.59x speedup in summed prediction time
+under the same single-thread conditions. Both variants with two level workers
+were also compared on 36 stratified RNAs, each repeated three times: improved
+beam was 1.48x faster than standard beam. These are aggregate results; medium-length
+macro F1 and crossing-pair F1 decreased slightly.
+Two level workers require OpenMP. For batches of independent RNAs, or a build
+without OpenMP, use `--dd-threads 1` with the same improved-beam settings.
+
+For CONTRAfold-DD, the recommended sparse exact, serial backend is:
+
+```sh
+build-dd/ipknot -e CONTRAfold --decoder dd --dd-dp nussinov \
+  --dd-threads 1 --dd-dp-threads 1 -t auto,auto -r 1 -n 1 input.fa
+```
+
+Use `--dd-threads 2` to solve independent DD levels concurrently in all
+DP modes, including constrained DD. The default is 1; 0 uses the OpenMP runtime
+limit, capped at the number of levels. Level scores are accumulated in the same
+order as serial execution. Primal recovery remains sequential because upper
+levels depend on the recovered lower levels. CMake enables OpenMP when available;
+use `-DENABLE_OPENMP=OFF` for a serial build. A serial build accepts 0/1 threads
+and rejects larger requests. See the [performance study](experiments/dual-decomposition/performance/README.md)
+for sparsification, parallelism limits, and reproducible measurements.
+
+Use `--dd-dp wavefront --dd-dp-threads 4` for exact interval-length wavefront
+parallelism within a single level. It retains closed-candidate sparsification
+and stacking support, but always allocates a quadratic interval chart (about
+`6*n*(n+1)` bytes for scores and choices, plus candidate/stack buffers).
+The sparse `nussinov` backend remains useful for long, sparse inputs and uses
+level parallelism only. Exact backends may choose different tied structures.
+
+`--dd-dp beam --dd-dp-threads 4` and `improved-beam` distribute closed components
+and prefix splits within each column, then merge before pruning. Thread counts
+preserve serial structures, scores and pruning decisions. Light inputs fall
+back to serial processing; the default sparse beam=100 workload usually gains
+more from level parallelism. Within-DP threads default to 1; 0 uses the runtime
+limit, subject to work-size caps for beam mode. A request other than 1 overrides
+`--dd-threads` to avoid nested teams. Recovery levels remain ordered, but each
+recovery DP can use the requested inner workers.
 
 Use `--dd-constraint-recovery-every 10` to resume constrained integer
 recovery every 10 iterations (default 0: final-only recovery). Initial,

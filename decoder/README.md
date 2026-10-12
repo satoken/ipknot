@@ -94,6 +94,29 @@ The existing DD bound, recovery, exchange, and tracing settings are available
 through `options.dd`. `dd.enabled` and NMR-specific settings are unused here;
 `options.backend` selects the backend.
 
+Exact level DP applies suffix dominance and omits decomposable closed candidates
+without beam pruning. Tied optima may trace back to a different structure than
+older revisions. Worst-case cubic time and quadratic chart memory still apply.
+Set `options.dd.threads = 2` to run independent level oracles concurrently;
+the default is 1, and 0 uses the OpenMP runtime limit capped at the level count.
+Serial and parallel executions aggregate scores in the same order. Recovery
+remains sequential. CMake discovers OpenMP by default; disable it with
+`-DENABLE_OPENMP=OFF`. Builds without OpenMP accept 0/1 and reject larger values.
+Installed CMake packages propagate the OpenMP dependency to consumers.
+
+Set `options.dd.wavefront_dp = true; options.dd.dp_threads = 4;` for exact
+single-DP wavefront parallelism. The beam is ignored. This backend keeps
+closed-candidate sparsification and stacking states, and allocates roughly
+`6*n*(n+1)` bytes for its score/choice chart plus candidate and stack buffers.
+Its optimal score matches sparse exact Nussinov; tied structures can differ.
+With finite beams, `dp_threads` instead parallelizes each column's components
+and prefix splits with a deterministic merge before beam pruning, preserving
+serial output. Small workloads automatically stay serial. `dp_threads=0`
+uses the runtime limit with work-size caps for beams. Requests other than 1
+take precedence over level threads; no nested teams or global runtime settings
+are used. Sparse exact (`beam=0`, `wavefront_dp=false`) remains serial within a
+level. Recovery preserves level order and can use the same inner workers.
+
 Exact Nussinov solves each *level subproblem*. DD may still stop with a gap
 between its feasible solution and upper bound. Its bound certifies the retained
 witness graph; with truncated crossings/witnesses it is not a certificate for

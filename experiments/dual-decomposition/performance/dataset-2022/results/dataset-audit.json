@@ -1,0 +1,8 @@
+{
+  "official_bpseq_members": 11843,
+  "verified_references": 11843,
+  "archive_sha256": "fd360f9d98820fb7f41b7cd3ea333416fc4e0ce12a1816171ed0fa12303d41a2",
+  "reference_index_sha256": "81efcfa3d7a6290b387708f0df0f4609c0436c5183639b54d014f5f93bc0c4b1",
+  "all_fasta_hashes_match": true,
+  "all_sequences_and_reference_pairs_match_archive": true
+}

@@ -1,4 +1,5 @@
 #include "dd_constrained.h"
+#include "dd_parallel.h"
 #include "dd_noe.h"
 
 #include <algorithm>
@@ -386,8 +387,11 @@ DDConstrainedResult solve_constrained_dd(int length,
   }
   std::vector<std::unique_ptr<DDNussinov>> decoders;
   for (int level = 0; level < levels; ++level)
-    decoders.push_back(std::make_unique<DDNussinov>(length, pairs, level, options.dp_beam(), false, options.improved_beam));
+    decoders.push_back(std::make_unique<DDNussinov>(length, pairs, level, options.dp_beam(), false, options.improved_beam, options.dp_threads, options.wavefront_dp));
   std::vector<double> weights(pairs.size()), adjusted(count), selected(count), preference(count);
+  std::vector<std::vector<int>> by_level(levels), level_selected(levels);
+  for (std::size_t id = 0; id < pairs.size(); ++id) by_level[pairs[id].level].push_back(id);
+  std::vector<double> level_scores(levels), maxima(length);
   std::vector<unsigned char> allowed(pairs.size());
   for (std::size_t id = 0; id < pairs.size(); ++id) allowed[id] = repair.root[columns[id]].upper > 0;
   for (int col = 0; col < count; ++col) preference[col] = model.variables[col].coefficient;
@@ -405,8 +409,9 @@ DDConstrainedResult solve_constrained_dd(int length,
     trace.exceptions(std::ios::badbit | std::ios::failbit);
     trace << std::setprecision(17);
     trace << "{\"event\":\"problem\",\"solve_id\":" << solve_id
-          << ",\"constrained\":true,\"dp\":\"" << (options.nussinov_dp ? "nussinov" : options.improved_beam ? "improved-beam" : "beam")
+          << ",\"constrained\":true,\"dp\":\"" << (options.wavefront_dp ? "wavefront" : options.nussinov_dp ? "nussinov" : options.improved_beam ? "improved-beam" : "beam")
           << "\",\"beam\":" << options.dp_beam()
+          << ",\"dp_threads\":" << options.dp_threads
           << ",\"repair_state_budget\":" << options.constraint_states
           << ",\"constraint_recovery_every\":" << options.constraint_recovery_every
           << ",\"recovery_target\":\"" << (options.recovery_target_best ? "best" : "baseline") << "\""
@@ -516,21 +521,21 @@ DDConstrainedResult solve_constrained_dd(int length,
       value += oracle.value; bound += oracle.upper_bound;
     }
     for (std::size_t id = 0; id < pairs.size(); ++id) weights[id] = adjusted[columns[id]];
+    dd_decode_levels(decoders, weights, allowed, level_selected, level_scores, options.threads);
     for (int level = 0; level < levels; ++level) {
-      std::vector<int> decoded;
-      const double score = decoders[level]->decode(weights, allowed, decoded);
+      const double score = level_scores[level];
       value += score;
       result.dp_pruned_states += decoders[level]->pruned_states();
       if (!options.dp_beam() || !decoders[level]->pruned_states()) bound += score;
       else {
-        std::vector<double> maxima(length);
-        for (std::size_t id = 0; id < pairs.size(); ++id) if (allowed[id] && pairs[id].level == level) {
+        std::fill(maxima.begin(), maxima.end(), 0);
+        for (int id : by_level[level]) if (allowed[id]) {
           maxima[pairs[id].left] = std::max(maxima[pairs[id].left], weights[id]);
           maxima[pairs[id].right] = std::max(maxima[pairs[id].right], weights[id]);
         }
         bound += std::accumulate(maxima.begin(), maxima.end(), 0.0) / 2;
       }
-      for (int id : decoded) selected[columns[id]] = 1;
+      for (int id : level_selected[level]) selected[columns[id]] = 1;
     }
     if (!std::isfinite(value) || !std::isfinite(bound))
       throw std::overflow_error("Constrained DD objective overflow");

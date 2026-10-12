@@ -36,7 +36,7 @@ public:
                    const std::vector<DDRecoveryRow>& rows, int history = 8,
                    unsigned proposal_mask = 7, bool cache_static = true,
                    const std::vector<DDNussinov*>& shared_decoders = {},
-                   bool improved_beam = false);
+                   bool improved_beam = false, int dp_threads = 1, bool wavefront = false);
   ~DDPrimalRecovery();
   DDPrimalRecovery(const DDPrimalRecovery&) = delete;
   DDPrimalRecovery& operator=(const DDPrimalRecovery&) = delete;
