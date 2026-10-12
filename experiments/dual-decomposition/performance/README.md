@@ -10,6 +10,13 @@ end-to-end validation on all 11,843 published sequences and paired timing of
 Use that study to assess the recommended RNA settings; the synthetic kernel
 timings below cover different workloads.
 
+For LPC-DD, use `--dd-dp improved-beam --beam-size 100 --dd-beam 100`.
+For single-RNA latency, add `--dd-threads 2 --dd-dp-threads 1` with OpenMP;
+for batches of independent RNAs, use one thread per prediction process.
+The dataset study retains standard beam as a comparison and records the
+accuracy tradeoffs. CONTRAfold-DD uses sparse exact `--dd-dp nussinov` with
+both thread settings at 1.
+
 Baseline: `454db3b` (`dev`), GCC 13.3.0, Release (`-O3 -DNDEBUG`), solver-free
 build on Linux aarch64. Measurements use a fixed seed, one warmup, and the median
 of five timed runs. The machine exposes Cortex-X925 and Cortex-A725 cores;

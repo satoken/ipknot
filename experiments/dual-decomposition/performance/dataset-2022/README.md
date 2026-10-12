@@ -17,6 +17,21 @@ The second uses the normal runtime default, with `OMP_WAIT_POLICY` and
 `GOMP_SPINCOUNT` unset, and compares the optimized serial and principal parallel
 settings. Recommendations use this second pass's paired serial/parallel timings.
 
+The recommended LPC-DD backend is `improved-beam`, with posterior and decoder
+beam widths of 100. For single-RNA latency on an OpenMP build, use:
+
+```sh
+ipknot -e lpc --decoder dd --dd-dp improved-beam \
+  --beam-size 100 --dd-beam 100 --dd-threads 2 --dd-dp-threads 1 \
+  -t auto,auto -r 1 -n 1 input.fa
+```
+
+For batches of independent RNAs, use `--dd-threads 1` with the same backend.
+CONTRAfold-DD uses `--dd-dp nussinov --dd-threads 1 --dd-dp-threads 1`.
+In the saved measurements, `lpc-*` names the standard beam comparison and
+`improved-*` names the recommended improved-beam algorithm. The reproduction
+commands below retain both algorithms and the original measurement conditions.
+
 From the repository root on a compatible Linux aarch64 host, use the saved
 binaries below. Alternatively build the two source revisions with Release and
 `ENABLE_ILP=OFF`, and place the binaries and compiled `measure.c` in `$RUN/bin`.

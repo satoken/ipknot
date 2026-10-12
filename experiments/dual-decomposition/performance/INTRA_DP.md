@@ -12,6 +12,11 @@ automatic thresholds and refinement. It measures the usual beam width 100,
 checks whether column workers actually activate, and compares serial and
 parallel settings under the normal OpenMP waiting policy.
 
+For LPC-DD, the recommended backend is `--dd-dp improved-beam` at posterior
+and decoder beam width 100. Use `--dd-threads 2 --dd-dp-threads 1` for
+single-RNA latency, or one thread per process for batches of independent RNAs.
+The standard beam cases below remain comparisons of the original algorithm.
+
 ## Exact wavefront
 
 `--dd-dp wavefront --dd-dp-threads 4` selects the new exact interval backend.

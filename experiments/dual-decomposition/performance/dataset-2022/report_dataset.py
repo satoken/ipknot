@@ -299,23 +299,28 @@ def main():
     t = timing_groups['all']
     d = default_groups['all']
     contra_gain = t['comparisons']['contra-before -> contra-serial']
-    lpc_parallel = d['comparisons']['lpc-serial -> lpc-level2']
+    lpc_parallel = d['comparisons']['improved-serial -> improved-level2']
+    standard = full_groups['all']['lpc-serial']
+    improved = full_groups['all']['improved-serial']
+    lpc_algorithm_speedup = standard['wall_sum_seconds'] / improved['wall_sum_seconds']
+    lpc_parallel_algorithm_speedup = (d['modes']['lpc-level2']['wall_sum_seconds'] /
+                                      d['modes']['improved-level2']['wall_sum_seconds'])
     lines = [
         '# 2022公開データでのNussinov高速化検証', '',
-        '改修前 `454db3b` と高速化後 `eb7cc1c` を比較。全11,843配列を高速化後の推奨パラメータ・1スレッドで実行し、'
+        '改修前 `454db3b` と高速化後 `eb7cc1c` を比較。全11,843配列を高速化後の厳密DP・標準/改良beamで各1スレッド実行し、'
         '従来と同じ層別36配列では改修前後・並列方式を各3回測定した。', '',
         f"全件 {len(full):,} 実行、ACTIVE反復 {len(timing):,} 実行、既定待機反復 {len(default):,} 実行。失敗 {len(failures)}、"
         '不正構造・反復間の構造差・対応する逐次版とのスレッド数による構造差はいずれも0。', '',
         f"CONTRAfold＋厳密Nussinovのsparse逐次版は、対応する改修前比で {contra_gain['speedup_wall_sum']:.3f} 倍。"
-        f"通常設定でのLPC＋LinearNussinovのレベル2並列は、新版逐次比で {lpc_parallel['speedup_wall_sum']:.3f} 倍、"
+        f"通常設定でのLPC＋改良LinearNussinovのレベル2並列は、改良版逐次比で {lpc_parallel['speedup_wall_sum']:.3f} 倍、"
         f"CPU時間比は {lpc_parallel['cpu_ratio']:.3f}。速度は36配列の対応比較であり、全件速度比ではない。", '',
         '## 設定と測定範囲', '',
         '- 2022公式ZIPの全単一配列：bpRNA-1m 3,437、Rfam14.5 8,406、12–4,381塩基。'
         '配列を除外せず、曖昧塩基の位置と参照の非標準対を保持。ZIPから全参照・FASTA hashを再照合。',
         '- 自動閾値、refinement 1、DD最大50反復、patience 0、交差幅100、witnesses 16。'
         '孤立対は禁止。追加PK/NMR/NOE・上界・交換・回収は既定の無効設定。',
-        '- CONTRAfoldは厳密Nussinov、LPCはposterior beam 100、LinearNussinov beam 100。'
-        '以前の比較で使った改良beam 100も参考として測定した。',
+        '- CONTRAfoldは厳密Nussinov、LPCはposterior beam 100、標準/改良LinearNussinovはbeam 100。'
+        'LPC-DDの推奨は改良版`improved-beam`。標準版も比較対象として測定した。',
         '- Release、GCC 13.3、aarch64、ILPなし。全件はX925の10コアに独立した1スレッド予測を分散。'
         '時間総和は子プロセスの合計であり、全件評価の経過時間とは異なる。',
         '- 反復測定はX925の独立した4コア群2組。各RNAの全条件・反復は同じ群、'
@@ -403,15 +408,22 @@ def main():
               f"wavefront 4スレッドは {d['comparisons']['contra-serial -> contra-wave4']['speedup_wall_sum']:.3f} 倍であり、"
               f"後者のCPU時間は {d['comparisons']['contra-serial -> contra-wave4']['cpu_ratio']:.3f} 倍だった。"
               '単一DP内のwavefront並列化は実装済みだが、この推奨パラメータでの全体処理には追加の利点が小さい。', '',
-              'LPCの単一配列の待ち時間を短縮する場合は、beam 100のレベル2並列を推奨する。'
+              'LPC-DDは`--dd-dp improved-beam --dd-beam 100`を推奨する。'
+              f"全11,843配列で標準版→改良版のmacro F1は {standard['accuracy']['macro_f1']:.6f}→{improved['accuracy']['macro_f1']:.6f}、"
+              f"micro F1は {standard['accuracy']['micro_f1']:.6f}→{improved['accuracy']['micro_f1']:.6f}、"
+              f"1スレッドでの実時間総和比は {lpc_algorithm_speedup:.3f} 倍だった。"
+              '中長配列のmacro F1と交差対のみのF1は微減しており、精度向上は全体評価での結果である。', '',
+              '単一配列の待ち時間を短縮する場合は、改良beam 100のレベル2並列を推奨する。'
+              f"通常設定では改良版逐次比 {lpc_parallel['speedup_wall_sum']:.3f} 倍、CPU時間比 {lpc_parallel['cpu_ratio']:.3f}。"
+              f"両方式をレベル2並列にした場合も改良版は標準版比 {lpc_parallel_algorithm_speedup:.3f} 倍高速だった。"
               '多数のRNAを処理する場合は、各プロセス1スレッドで独立したRNAをコアへ割り当てる運用を基本とする。'
               '列内並列は推奨beam幅で逐次フォールバックとなるため、その要求スレッド数を増やす効果は確認できなかった。', '',
               '対応するCLI設定（並列版はOpenMP対応ビルドが必要）：', '', '```sh',
               'ipknot '+' '.join(options('contra-serial'))+' input.fa',
-              'ipknot '+' '.join(options('lpc-level2'))+' input.fa',
+              'ipknot '+' '.join(options('improved-level2'))+' input.fa',
               '```', '',
               '`--dd-dp-threads`は1とし、LPCのレベル並列には`--dd-threads 2`を使う。'
-              '改良beamは別方式の参考比較として保存している。']
+              '測定結果の`lpc-*`は標準beamの比較対象、`improved-*`は推奨する改良beamを表す。']
     lines += ['', '## 正しさと列内並列の診断', '',
               '全件で対の座標、端点の排他性、正準対、孤立対禁止、参照から再計算した精度を検証。'
               '反復間と全件/反復の逐次版が一致。レベル並列と対応する逐次版、beam列内要求と逐次版、'

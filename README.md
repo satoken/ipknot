@@ -23,11 +23,11 @@ For solver-free dual decomposition:
 cmake -S . -B build-dd -DCMAKE_BUILD_TYPE=Release -DENABLE_ILP=OFF
 cmake --build build-dd -j
 ctest --test-dir build-dd --output-on-failure
-build-dd/ipknot --decoder dd examples/drz_Ppac_1_1.fa
+build-dd/ipknot -e lpc --decoder dd --dd-dp improved-beam examples/drz_Ppac_1_1.fa
 ```
 
 DD is the default decoder, including in solver-enabled builds. The defaults are
-`--decoder dd --dd-beam 100 --dd-max-iter 50 --dd-patience 0
+`--decoder dd --dd-dp beam --dd-beam 100 --dd-max-iter 50 --dd-patience 0
 --dd-crossing-beam 100 --dd-witnesses 16`, with LPC beam 100,
 `-t auto,auto`, and `-r 1`. The iteration limit applies separately to each
 threshold/refinement solve.
@@ -55,10 +55,35 @@ no linear complexity guarantee: worst-case time is cubic and DP memory is
 quadratic. Candidate/witness limits still apply to the retained graph.
 The default `--dd-dp beam` retains the configurable beam decoder.
 Use `--dd-dp improved-beam --dd-beam 100` for the fixed-width improved
-beam used in the DD/LPC comparison. It removes dominated interval states
+beam recommended for LPC-DD. It removes dominated interval states
 before beam selection and uses deterministic traceback ties. The crossing
 and iteration budgets still apply. Heap and adaptive-beam experiments are
 not enabled by this option.
+
+Recommended LPC-DD settings for reducing the latency of one RNA are:
+
+```sh
+build-dd/ipknot -e lpc --decoder dd --dd-dp improved-beam \
+  --beam-size 100 --dd-beam 100 --dd-threads 2 --dd-dp-threads 1 \
+  -t auto,auto -r 1 -n 1 input.fa
+```
+
+On all 11,843 sequences in the [2022 dataset study](experiments/dual-decomposition/performance/dataset-2022/results/RESULTS.md),
+improved beam increased macro F1 from 0.615594 to 0.617121 and micro F1
+from 0.508241 to 0.526274, with a 1.59x speedup in summed prediction time
+under the same single-thread conditions. Both variants with two level workers
+were also compared on 36 stratified RNAs, each repeated three times: improved
+beam was 1.48x faster than standard beam. These are aggregate results; medium-length
+macro F1 and crossing-pair F1 decreased slightly.
+Two level workers require OpenMP. For batches of independent RNAs, or a build
+without OpenMP, use `--dd-threads 1` with the same improved-beam settings.
+
+For CONTRAfold-DD, the recommended sparse exact, serial backend is:
+
+```sh
+build-dd/ipknot -e CONTRAfold --decoder dd --dd-dp nussinov \
+  --dd-threads 1 --dd-dp-threads 1 -t auto,auto -r 1 -n 1 input.fa
+```
 
 Use `--dd-threads 2` to solve independent DD levels concurrently in all
 DP modes, including constrained DD. The default is 1; 0 uses the OpenMP runtime

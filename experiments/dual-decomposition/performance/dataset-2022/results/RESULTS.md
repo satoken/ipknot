@@ -1,16 +1,16 @@
 # 2022公開データでのNussinov高速化検証
 
-改修前 `454db3b` と高速化後 `eb7cc1c` を比較。全11,843配列を高速化後の推奨パラメータ・1スレッドで実行し、従来と同じ層別36配列では改修前後・並列方式を各3回測定した。
+改修前 `454db3b` と高速化後 `eb7cc1c` を比較。全11,843配列を高速化後の厳密DP・標準/改良beamで各1スレッド実行し、従来と同じ層別36配列では改修前後・並列方式を各3回測定した。
 
 全件 35,529 実行、ACTIVE反復 1,404 実行、既定待機反復 756 実行。失敗 0、不正構造・反復間の構造差・対応する逐次版とのスレッド数による構造差はいずれも0。
 
-CONTRAfold＋厳密Nussinovのsparse逐次版は、対応する改修前比で 2.235 倍。通常設定でのLPC＋LinearNussinovのレベル2並列は、新版逐次比で 1.281 倍、CPU時間比は 1.060。速度は36配列の対応比較であり、全件速度比ではない。
+CONTRAfold＋厳密Nussinovのsparse逐次版は、対応する改修前比で 2.235 倍。通常設定でのLPC＋改良LinearNussinovのレベル2並列は、改良版逐次比で 1.149 倍、CPU時間比は 1.060。速度は36配列の対応比較であり、全件速度比ではない。
 
 ## 設定と測定範囲
 
 - 2022公式ZIPの全単一配列：bpRNA-1m 3,437、Rfam14.5 8,406、12–4,381塩基。配列を除外せず、曖昧塩基の位置と参照の非標準対を保持。ZIPから全参照・FASTA hashを再照合。
 - 自動閾値、refinement 1、DD最大50反復、patience 0、交差幅100、witnesses 16。孤立対は禁止。追加PK/NMR/NOE・上界・交換・回収は既定の無効設定。
-- CONTRAfoldは厳密Nussinov、LPCはposterior beam 100、LinearNussinov beam 100。以前の比較で使った改良beam 100も参考として測定した。
+- CONTRAfoldは厳密Nussinov、LPCはposterior beam 100、標準/改良LinearNussinovはbeam 100。LPC-DDの推奨は改良版`improved-beam`。標準版も比較対象として測定した。
 - Release、GCC 13.3、aarch64、ILPなし。全件はX925の10コアに独立した1スレッド予測を分散。時間総和は子プロセスの合計であり、全件評価の経過時間とは異なる。
 - 反復測定はX925の独立した4コア群2組。各RNAの全条件・反復は同じ群、逐次版は先頭1コア、レベル並列は先頭2コア、DP内並列は4コアに固定。条件順は入力hashと反復番号で入れ替えた。動作周波数は固定していない。ACTIVEと既定待機のパスは分けて実施した。
 - 全計測はFASTAから新しいプロセスを起動し、BPP計算・閾値探索・refinementを含む。BPPキャッシュ・traceなし。1実行1,800秒、仮想空間8 GiB。CLOCK_MONOTONIC実時間、wait4 CPU/RSS。
@@ -107,16 +107,18 @@ ACTIVEと既定待機は別時刻のパスであり、方式間の比は参考�
 
 厳密Nussinovはsparse逐次版を基本設定とする。通常待機でのレベル2並列は新版逐次比 1.011 倍、wavefront 4スレッドは 0.989 倍であり、後者のCPU時間は 1.378 倍だった。単一DP内のwavefront並列化は実装済みだが、この推奨パラメータでの全体処理には追加の利点が小さい。
 
-LPCの単一配列の待ち時間を短縮する場合は、beam 100のレベル2並列を推奨する。多数のRNAを処理する場合は、各プロセス1スレッドで独立したRNAをコアへ割り当てる運用を基本とする。列内並列は推奨beam幅で逐次フォールバックとなるため、その要求スレッド数を増やす効果は確認できなかった。
+LPC-DDは`--dd-dp improved-beam --dd-beam 100`を推奨する。全11,843配列で標準版→改良版のmacro F1は 0.615594→0.617121、micro F1は 0.508241→0.526274、1スレッドでの実時間総和比は 1.593 倍だった。中長配列のmacro F1と交差対のみのF1は微減しており、精度向上は全体評価での結果である。
+
+単一配列の待ち時間を短縮する場合は、改良beam 100のレベル2並列を推奨する。通常設定では改良版逐次比 1.149 倍、CPU時間比 1.060。両方式をレベル2並列にした場合も改良版は標準版比 1.479 倍高速だった。多数のRNAを処理する場合は、各プロセス1スレッドで独立したRNAをコアへ割り当てる運用を基本とする。列内並列は推奨beam幅で逐次フォールバックとなるため、その要求スレッド数を増やす効果は確認できなかった。
 
 対応するCLI設定（並列版はOpenMP対応ビルドが必要）：
 
 ```sh
 ipknot --decoder dd --dd-max-iter 50 --dd-patience 0 --dd-crossing-beam 100 --dd-witnesses 16 -t auto,auto -r 1 -n 1 -e CONTRAfold --beam-size 100 --dd-dp nussinov --dd-beam 100 --dd-threads 1 --dd-dp-threads 1 input.fa
-ipknot --decoder dd --dd-max-iter 50 --dd-patience 0 --dd-crossing-beam 100 --dd-witnesses 16 -t auto,auto -r 1 -n 1 -e lpc --beam-size 100 --dd-dp beam --dd-beam 100 --dd-threads 2 --dd-dp-threads 1 input.fa
+ipknot --decoder dd --dd-max-iter 50 --dd-patience 0 --dd-crossing-beam 100 --dd-witnesses 16 -t auto,auto -r 1 -n 1 -e lpc --beam-size 100 --dd-dp improved-beam --dd-beam 100 --dd-threads 2 --dd-dp-threads 1 input.fa
 ```
 
-`--dd-dp-threads`は1とし、LPCのレベル並列には`--dd-threads 2`を使う。改良beamは別方式の参考比較として保存している。
+`--dd-dp-threads`は1とし、LPCのレベル並列には`--dd-threads 2`を使う。測定結果の`lpc-*`は標準beamの比較対象、`improved-*`は推奨する改良beamを表す。
 
 ## 正しさと列内並列の診断
 
