@@ -6,6 +6,12 @@ The original [SparseRNAfolD applicability discussion](README.md#applicability-of
 still applies: these are additive pair-weight DD oracles, with optional stacking
 support, rather than Turner-energy MFE or partition-function recurrences.
 
+The [official 2022 RNA dataset study](dataset-2022/results/RESULTS.md) evaluates
+these backends with CONTRAfold and LPC, including posterior computation,
+automatic thresholds and refinement. It measures the usual beam width 100,
+checks whether column workers actually activate, and compares serial and
+parallel settings under the normal OpenMP waiting policy.
+
 ## Exact wavefront
 
 `--dd-dp wavefront --dd-dp-threads 4` selects the new exact interval backend.

@@ -1,0 +1,111 @@
+{
+  "baseline_commit": "454db3b63fdc37c32de601644058e762cda4e077",
+  "candidate_commit": "eb7cc1caee0f69c73e061ceb33970b460cef3609",
+  "baseline_build": "/tmp/ipknot-perf-baseline",
+  "candidate_build": "/tmp/ipknot-intra-final",
+  "compiler": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+  "uname": [
+    "Linux",
+    "spark-d797",
+    "6.14.0-1015-nvidia",
+    "#15-Ubuntu SMP PREEMPT_DYNAMIC Tue Nov 25 18:02:16 UTC 2025",
+    "aarch64",
+    "aarch64"
+  ],
+  "build_options": "Release; ENABLE_ILP=OFF; OpenMP enabled for candidate; baseline predates OpenMP support",
+  "dataset_archive_sha256": "fd360f9d98820fb7f41b7cd3ea333416fc4e0ce12a1816171ed0fa12303d41a2",
+  "dataset_archive_md5": "01f491361b31b4520f5fd527d4ad5cbf",
+  "historical_accuracy_only": {
+    "contra": "/tmp/ipknot-contra-nussinov-20261006/full-results.jsonl.gz",
+    "lpc": "experiments/allow-isolated/results/raw-results.jsonl.gz"
+  },
+  "binary_sha256": {
+    "measure": "37da2345eb66dc648c9dcce5d3089950eb61d02a7fa80fa5899514d42192ed42",
+    "baseline": "f98669e7e812b4b26bf356df41da2df1aa44f4554e64410b4c709b250b9b026f",
+    "candidate": "7bc262480d227caffe3b31e02f9a169c62f403f8304f741f80dc771da0504d31"
+  },
+  "omp_wait_policy": {
+    "full": "PASSIVE (serial DPs; no OpenMP worker teams)",
+    "timing": "ACTIVE (all variants, to avoid sleeping at frequent DP barriers)",
+    "default-policy": "OMP_WAIT_POLICY and GOMP_SPINCOUNT both unset; explicit normal GNU runtime default"
+  },
+  "runner_versions": "Full runner snapshot uses PASSIVE without OpenMP teams. ACTIVE timing snapshot adds --wait-policy. The final runner adds DEFAULT to reproduce the normal runtime environment, without changing algorithms, binaries or input/options.",
+  "excluded_pilot": {
+    "input_id": "56f839fb9c4b40e11cc9",
+    "model": "CONTRAfold / serial sparse Nussinov",
+    "resources": {
+      "wall_seconds": 217.319953638,
+      "user_seconds": 183.006459,
+      "system_seconds": 0.307957,
+      "rss_kib": 372220,
+      "exit_code": 0,
+      "timeout": false
+    },
+    "scope": "Exploratory pilot excluded from every reported timing/accuracy aggregate. It briefly overlapped the start of the full pass on CPU19; full wall sums are descriptive. The matched timing pass starts after full completion, without this pilot."
+  },
+  "inherited_openmp_environment": {
+    "OMP_THREAD_LIMIT": null,
+    "OMP_MAX_ACTIVE_LEVELS": null,
+    "GOMP_SPINCOUNT": null,
+    "OMP_SCHEDULE": null,
+    "OMP_DYNAMIC": null,
+    "OMP_PROC_BIND": null,
+    "OMP_PLACES": null,
+    "GOMP_CPU_AFFINITY": null
+  },
+  "wait_policy_reference": "https://gcc.gnu.org/onlinedocs/libgomp/GOMP_005fSPINCOUNT.html",
+  "frequency_observation": {
+    "utc": "2026-10-12T01:43:08Z",
+    "cpus": {
+      "5": {
+        "scaling_governor": "performance",
+        "scaling_min_freq": "1378000",
+        "scaling_max_freq": "3900000",
+        "scaling_cur_freq": "4082000"
+      },
+      "6": {
+        "scaling_governor": "performance",
+        "scaling_min_freq": "1378000",
+        "scaling_max_freq": "3900000",
+        "scaling_cur_freq": "3172000"
+      },
+      "7": {
+        "scaling_governor": "performance",
+        "scaling_min_freq": "1378000",
+        "scaling_max_freq": "3900000",
+        "scaling_cur_freq": "3354000"
+      },
+      "8": {
+        "scaling_governor": "performance",
+        "scaling_min_freq": "1378000",
+        "scaling_max_freq": "3900000",
+        "scaling_cur_freq": "4420000"
+      },
+      "15": {
+        "scaling_governor": "performance",
+        "scaling_min_freq": "1378000",
+        "scaling_max_freq": "3978000",
+        "scaling_cur_freq": "3744000"
+      },
+      "16": {
+        "scaling_governor": "performance",
+        "scaling_min_freq": "1378000",
+        "scaling_max_freq": "3978000",
+        "scaling_cur_freq": "3874000"
+      },
+      "17": {
+        "scaling_governor": "performance",
+        "scaling_min_freq": "1378000",
+        "scaling_max_freq": "3978000",
+        "scaling_cur_freq": "3094000"
+      },
+      "18": {
+        "scaling_governor": "performance",
+        "scaling_min_freq": "1378000",
+        "scaling_max_freq": "3978000",
+        "scaling_cur_freq": "5096000"
+      }
+    },
+    "note": "Read-only snapshot during default-policy phase. Core type and affinity controlled; frequency was not locked."
+  }
+}

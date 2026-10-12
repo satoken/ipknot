@@ -4,6 +4,12 @@ This section records the first optimization against `454db3b`. The subsequent
 [single-DP parallelism study](INTRA_DP.md) compares against `1b12107` and adds
 exact wavefront and finite-beam column workers.
 
+The [official 2022 RNA dataset study](dataset-2022/results/RESULTS.md) adds
+end-to-end validation on all 11,843 published sequences and paired timing of
+36 stratified sequences, including posterior computation and refinement.
+Use that study to assess the recommended RNA settings; the synthetic kernel
+timings below cover different workloads.
+
 Baseline: `454db3b` (`dev`), GCC 13.3.0, Release (`-O3 -DNDEBUG`), solver-free
 build on Linux aarch64. Measurements use a fixed seed, one warmup, and the median
 of five timed runs. The machine exposes Cortex-X925 and Cortex-A725 cores;
