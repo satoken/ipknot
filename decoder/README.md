@@ -57,6 +57,7 @@ The library has the same GPL-3.0-or-later license as IPknot; see [COPYING](../CO
 
 ipknot::DecoderOptions options;
 options.thresholds = {0.2f, 0.1f};  // two pseudoknot levels
+options.dd.improved_beam = true;   // recommended for LPC probabilities
 ipknot::Decoder decoder(options);
 
 // One entry per physical pair, with zero-based left < right.
@@ -75,21 +76,27 @@ The result above contains partners `{7,6,-1,10,9,-1,1,0,-1,4,3}` and objective
 `1.5`. The sequence length is explicit so trailing unpaired bases are retained.
 The decoder can be reused across calls. See
 [examples/decode_probabilities.cpp](examples/decode_probabilities.cpp) for a
-complete executable; its optional argument is `beam`, `nussinov`, `full-dd`, or
-`ilp`.
+complete executable; its optional argument is `improved-beam` (the example's
+default), `beam`, `nussinov`, `wavefront`, `full-dd`, or `ilp`.
 
 ## Linear and nonlinear decoding
 
 | Mode | Settings | Scope |
 | --- | --- | --- |
 | Bounded beam DD (default) | `options.backend = ipknot::Backend::DD` | Expected O(n+M) time and memory for fixed levels, beam/witness widths, iterations, and recovery budgets |
+| Improved beam DD (recommended for LPC) | `options.dd.improved_beam = true` | Dominance pruning before finite beam selection; same fixed-budget complexity |
 | DD with exact level DP | `options.dd.nussinov_dp = true` | Unpruned Nussinov per level; worst-case cubic time and quadratic DP memory; crossing/witness limits still apply |
-| DD with the full crossing graph | Above, plus `options.dd.crossing_beam = 0; options.dd.witnesses = 0;` | Removes crossing/witness truncation too; no linear complexity guarantee |
+| DD with exact wavefront DP | `options.dd.wavefront_dp = true; options.dd.dp_threads = 4;` | Exact quadratic chart with within-DP parallelism; crossing/witness limits still apply |
+| DD with the full crossing graph | Exact level DP, plus `options.dd.crossing_beam = 0; options.dd.witnesses = 0;` | Removes crossing/witness truncation too; no linear complexity guarantee |
 | ILP | `options.backend = ipknot::Backend::ILP` | Full layered integer-programming formulation; requires a linked solver; no linear complexity guarantee |
 
 For bounded DD, the defaults are DP beam 100, crossing beam 100, 16 witnesses,
-and 50 iterations. `options.dd.improved_beam = true` selects dominance pruning
-before beam selection. Zero beam/crossing/witness widths mean unlimited widths.
+and 50 iterations. The library retains `options.dd.improved_beam = false` as its
+option default; the CLI defaults to improved beam. Set
+`options.dd.improved_beam = true` for the recommended LPC-DD settings, and
+`options.dd.threads = 2; options.dd.dp_threads = 1;` to reduce single-RNA latency
+with OpenMP. Use one level thread for batches of independent RNAs.
+Zero beam/crossing/witness widths mean unlimited widths.
 The existing DD bound, recovery, exchange, and tracing settings are available
 through `options.dd`. `dd.enabled` and NMR-specific settings are unused here;
 `options.backend` selects the backend.
@@ -103,6 +110,10 @@ Serial and parallel executions aggregate scores in the same order. Recovery
 remains sequential. CMake discovers OpenMP by default; disable it with
 `-DENABLE_OPENMP=OFF`. Builds without OpenMP accept 0/1 and reject larger values.
 Installed CMake packages propagate the OpenMP dependency to consumers.
+The library compiles the same DD, sparsification, and parallel DP implementations
+as the CLI. Tests build a separate consumer against the installed headers and
+`IPknot::decoder` target, and verify improved beam, sparse exact DP, wavefront DP,
+and serial/parallel consistency through the public API.
 
 Set `options.dd.wavefront_dp = true; options.dd.dp_threads = 4;` for exact
 single-DP wavefront parallelism. The beam is ignored. This backend keeps

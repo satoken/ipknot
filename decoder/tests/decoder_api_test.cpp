@@ -6,6 +6,7 @@
 #include <limits>
 #include <random>
 #include <stdexcept>
+#include <string>
 
 using namespace ipknot;
 void check(bool condition) {
@@ -81,18 +82,20 @@ int main() {
     symmetric[pair.left + 1].emplace_back(pair.right + 1, pair.probability);
     symmetric[pair.right + 1].emplace_back(pair.left + 1, pair.probability);
   }
-  for (int mode = 0; mode < 4; ++mode) {
-    if (mode == 3 && !Decoder::ilp_available())
+  for (const std::string mode : {"beam", "improved-beam", "nussinov", "wavefront", "full-dd", "ilp"}) {
+    if (mode == "ilp" && !Decoder::ilp_available())
       continue;
-    options.backend = mode == 3 ? Backend::ILP : Backend::DD;
-    options.dd.nussinov_dp = mode == 1 || mode == 2;
-    options.dd.crossing_beam = mode == 2 ? 0 : 100;
-    options.dd.witnesses = mode == 2 ? 0 : 16;
+    options.backend = mode == "ilp" ? Backend::ILP : Backend::DD;
+    options.dd.improved_beam = mode == "improved-beam";
+    options.dd.nussinov_dp = mode == "nussinov" || mode == "full-dd";
+    options.dd.wavefront_dp = mode == "wavefront";
+    options.dd.crossing_beam = mode == "full-dd" ? 0 : 100;
+    options.dd.witnesses = mode == "full-dd" ? 0 : 16;
     Decoder decoder(options);
     const auto result = decoder.decode(11, pairs);
     check(result.bpseq == std::vector<int>({7, 6, -1, 10, 9, -1, 1, 0, -1, 4, 3}));
     check(std::abs(result.objective - 1.5) < 1e-6);
-    check(result.dd.has_value() == (mode != 3));
+    check(result.dd.has_value() == (mode != "ilp"));
     for (int i = 0; i < 11; ++i)
       if (result.bpseq[i] >= 0)
         check(result.levels[i] == result.levels[result.bpseq[i]]);
@@ -102,6 +105,25 @@ int main() {
     check(decoder.decode(0, {}).bpseq.empty());
     check(decoder.decode(SparsePosterior(1)).bpseq.empty());
     check(decoder.decode(11, {}).bpseq == std::vector<int>(11, -1));
+    if (options.backend == Backend::DD) {
+      // This test also runs in a separate project using only the installed
+      // headers and target, so OpenMP and both thread options must propagate.
+      std::vector<int> thread_counts{0, 1};
+#ifdef _OPENMP
+      thread_counts.push_back(2);
+#endif
+      for (bool inner : {false, true}) for (int workers : thread_counts) {
+        auto parallel = options;
+        parallel.dd.threads = inner ? 1 : workers;
+        parallel.dd.dp_threads = inner ? workers : 1;
+        const auto other = Decoder(parallel).decode(upper);
+        check(other.bpseq == result.bpseq && other.levels == result.levels);
+        check(other.objective == result.objective);
+        check(other.dd->upper_bound == result.dd->upper_bound);
+        check(other.dd->iterations == result.dd->iterations);
+        check(other.dd->stop_reason == result.dd->stop_reason);
+      }
+    }
   }
 
   Decoder decoder;
@@ -180,6 +202,18 @@ int main() {
     bad.dd.max_iterations = 0;
     Decoder{bad};
   });
+  for (bool inner : {false, true}) {
+    auto bad = options;
+    bad.backend = Backend::DD;
+    if (inner) bad.dd.dp_threads = -1;
+    else bad.dd.threads = -1;
+    invalid([&] { Decoder{bad}; });
+#ifndef _OPENMP
+    if (inner) bad.dd.dp_threads = 2;
+    else bad.dd.threads = 2;
+    invalid([&] { Decoder{bad}; });
+#endif
+  }
   if (!Decoder::ilp_available()) {
     options.backend = Backend::ILP;
     bool unavailable = false;
@@ -202,6 +236,7 @@ int main() {
   options.no_lonely_pairs = false;
   options.weights = {.7f, .3f};
   options.dd.nussinov_dp = true;
+  options.dd.wavefront_dp = false;
   options.dd.crossing_beam = options.dd.witnesses = 0;
   std::mt19937 random(42);
   for (int trial = 0; trial < 25; ++trial) {

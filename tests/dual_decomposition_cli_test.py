@@ -65,7 +65,8 @@ with tempfile.TemporaryDirectory() as temporary:
     default_result=run(*implicit,'--dd-trace',default_trace,'-B',default_output,bpp)
     require_success(default_result)
     assert 'Decoder: dd' in default_result.stdout+default_result.stderr
-    explicit_result=run(*common,'--dd-beam','100','--dd-max-iter','50',
+    assert 'DD DP: improved-beam' in default_result.stdout+default_result.stderr
+    explicit_result=run(*common,'--dd-dp','improved-beam','--dd-beam','100','--dd-max-iter','50',
                         '--dd-patience','0','--dd-crossing-beam','100','--dd-witnesses','16',
                         '--dd-trace',explicit_trace,'-B',explicit_output,bpp)
     require_success(explicit_result)
@@ -73,6 +74,7 @@ with tempfile.TemporaryDirectory() as temporary:
         return next(event for event in map(json.loads,path.read_text().splitlines())
                     if event['event']=='problem')
     assert problem(default_trace)==problem(explicit_trace), 'Implicit DD settings differ from explicit defaults'
+    assert problem(default_trace)['improved_beam'] == 1
     def numeric_lines(path):
         return [line for line in path.read_text().splitlines() if line and line[0].isdigit()]
     assert numeric_lines(default_output)==numeric_lines(explicit_output)
@@ -217,5 +219,16 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 require_success(result)
                 assert pairs(first) == pairs(second), 'CLI DP thread setting changed structure'
-    require_success(run('--decoder','dd','--loglevel','info','-r','1','-t','auto,auto',fixture))
+    # The default LPC pipeline, including refinement and automatic thresholds,
+    # must use the same DP and produce the same structure as explicit improved beam.
+    lpc = ['-e', 'lpc', '--loglevel', 'info', '-r', '1', '-t', 'auto,auto']
+    implicit_result = run(*lpc, '--dd-trace', default_trace, '-B', first, fixture)
+    explicit_result = run(*lpc, '--dd-dp', 'improved-beam', '-B', second, fixture)
+    require_success(implicit_result)
+    require_success(explicit_result)
+    assert 'DD DP: improved-beam' in implicit_result.stdout + implicit_result.stderr
+    assert pairs(first) == pairs(second), 'Default LPC-DD differs from explicit improved beam'
+    default_problems = [event for event in map(json.loads, default_trace.read_text().splitlines())
+                        if event['event'] == 'problem']
+    assert default_problems and all(event['improved_beam'] == 1 for event in default_problems)
 print('DD CLI, native sparse BPP roundtrip and automatic threshold/refinement passed')

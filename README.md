@@ -27,7 +27,7 @@ build-dd/ipknot -e lpc --decoder dd --dd-dp improved-beam examples/drz_Ppac_1_1.
 ```
 
 DD is the default decoder, including in solver-enabled builds. The defaults are
-`--decoder dd --dd-dp beam --dd-beam 100 --dd-max-iter 50 --dd-patience 0
+`--decoder dd --dd-dp improved-beam --dd-beam 100 --dd-max-iter 50 --dd-patience 0
 --dd-crossing-beam 100 --dd-witnesses 16`, with LPC beam 100,
 `-t auto,auto`, and `-r 1`. The iteration limit applies separately to each
 threshold/refinement solve.
@@ -53,9 +53,9 @@ and decomposable closed split candidates without beam pruning,
 and works with fixed and NMR constraints in both constraint modes. It has
 no linear complexity guarantee: worst-case time is cubic and DP memory is
 quadratic. Candidate/witness limits still apply to the retained graph.
-The default `--dd-dp beam` retains the configurable beam decoder.
-Use `--dd-dp improved-beam --dd-beam 100` for the fixed-width improved
-beam recommended for LPC-DD. It removes dominated interval states
+The default `--dd-dp improved-beam --dd-beam 100` selects the fixed-width improved
+beam recommended for LPC-DD. Use `--dd-dp beam` to select the standard beam
+decoder explicitly. Improved beam removes dominated interval states
 before beam selection and uses deterministic traceback ties. The crossing
 and iteration budgets still apply. Heap and adaptive-beam experiments are
 not enabled by this option.
@@ -161,9 +161,12 @@ Usage
 ### Decode probabilities as a C++ library
 
 The reusable `IPknot::decoder` target accepts supplied base-pair probabilities
-and returns partners, pseudoknot levels, and the objective. It supports bounded
-beam DD, unpruned Nussinov DD, and ILP without linking probability engines or the
-CLI. See [the decoder API and examples](decoder/README.md) for CMake integration,
+and returns partners, pseudoknot levels, and the objective. It shares the CLI's
+improved beam, sparse exact Nussinov, level parallelism, and within-DP parallelism,
+and supports ILP without linking probability engines or the CLI.
+Set `options.dd.improved_beam = true` for the recommended LPC-DD beam mode;
+the library's option defaults retain standard beam.
+See [the decoder API and examples](decoder/README.md) for CMake integration,
 installation, input formats, and complexity. Refinement and NMR constraints remain
 available through IPknot.
 

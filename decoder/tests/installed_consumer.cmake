@@ -14,14 +14,22 @@ run_checked("${CMAKE_COMMAND}" --install "${DECODER_BINARY_DIR}"
 file(MAKE_DIRECTORY "${consumer_dir}/src")
 configure_file("${DECODER_SOURCE_DIR}/examples/decode_probabilities.cpp"
   "${consumer_dir}/src/main.cpp" COPYONLY)
+configure_file("${DECODER_SOURCE_DIR}/tests/decoder_api_test.cpp"
+  "${consumer_dir}/src/decoder_api_test.cpp" COPYONLY)
 file(WRITE "${consumer_dir}/src/CMakeLists.txt" [=[
 cmake_minimum_required(VERSION 3.18)
 project(DecoderConsumer LANGUAGES CXX)
 find_package(IPknotDecoder CONFIG REQUIRED)
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE IPknot::decoder)
+add_executable(consumer_api_test decoder_api_test.cpp)
+target_link_libraries(consumer_api_test PRIVATE IPknot::decoder)
 enable_testing()
 add_test(NAME run_consumer COMMAND consumer)
+foreach(mode beam improved-beam nussinov wavefront full-dd)
+  add_test(NAME run_consumer_${mode} COMMAND consumer ${mode})
+endforeach()
+add_test(NAME installed_decoder_api COMMAND consumer_api_test)
 ]=])
 run_checked("${CMAKE_COMMAND}" -S "${consumer_dir}/src" -B "${consumer_dir}/build"
   -G "${TEST_GENERATOR}" "-DCMAKE_PREFIX_PATH=${install_dir}"

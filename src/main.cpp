@@ -673,7 +673,7 @@ main(int argc, char* argv[])
     ("dd-max-iter", "Maximum DD iterations per threshold/refinement",
       cxxopts::value<int>()->default_value("50"), "N")
     ("dd-dp", "Per-level DP: beam, improved-beam (suffix dominance), nussinov (sparse exact), or wavefront (exact interval DP)",
-      cxxopts::value<std::string>()->default_value("beam"), "NAME")
+      cxxopts::value<std::string>()->default_value("improved-beam"), "NAME")
     ("dd-beam", "Beam DP width (0: exact); ignored by nussinov/wavefront",
       cxxopts::value<int>()->default_value("100"), "N")
     ("dd-threads", "Threads for independent DD level oracles (0: automatic; requires OpenMP for >1)",
