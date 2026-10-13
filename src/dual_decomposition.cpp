@@ -61,13 +61,14 @@ void DDOptions::validate() const {
 }
 
 struct DDNussinov::Workspace {
-  int length, beam, dp_threads;
+  int length, level, beam, dp_threads;
   bool wavefront;
   int used_workers = 1;
   std::size_t parallel_steps = 0;
   std::size_t pruned = 0;
   std::size_t sparsified = 0;
-  bool no_lonely, improved;
+  bool no_lonely, improved, require_retained_inside;
+  DDNussinov::PruningObserver observer{nullptr, nullptr};
   const std::vector<DDPair>& pairs;
   std::vector<std::vector<int>> by_right;
   std::vector<int> inner, paired_trace;
@@ -79,25 +80,48 @@ struct DDNussinov::Workspace {
   std::vector<int> generation, starts, suffix_best, pending;
   std::vector<Trace> traces;
   std::vector<double> prefix;
-  Workspace(int n, const std::vector<DDPair>& p, int level, int b, bool lonely, bool improve, int workers, bool wave)
-      : length(n), beam(b), dp_threads(workers), wavefront(wave), no_lonely(lonely), improved(improve || !b), pairs(p), by_right(n),
+  Workspace(int n, const std::vector<DDPair>& p, int level, int b, bool lonely, bool improve, int workers, bool wave, bool retained_inside)
+      : length(n), level(level), beam(b), dp_threads(workers), wavefront(wave), no_lonely(lonely), improved(improve || !b), require_retained_inside(retained_inside), pairs(p), by_right(n),
         inner(lonely ? p.size() : 0, -1), paired_trace(lonely ? p.size() : 0, -1),
         paired_score(lonely ? p.size() : 0),
         chart(n), candidates(n), candidate_traces(n), origin(n), generation(n, -1), prefix(n) {
-    std::unordered_map<std::uint64_t, int> lookup;
-    for (int id = 0; id < static_cast<int>(p.size()); ++id) if (p[id].level == level) {
-      by_right[p[id].right].push_back(id);
-      if (no_lonely) lookup.emplace(key(p[id].left, p[id].right), id);
-    }
-    if (no_lonely) for (const auto& row : by_right) for (int id : row) {
-      auto found = lookup.find(key(p[id].left + 1, p[id].right - 1));
-      if (found != lookup.end()) inner[id] = found->second;
+    reset_pairs();
+  }
+  void reset_pairs() {
+    for (const auto& p : pairs)
+      if (p.left < 0 || p.right >= length || p.left >= p.right ||
+          p.level < 0 || !std::isfinite(p.weight))
+        throw std::invalid_argument("Invalid Nussinov pair");
+    for (auto& row : by_right) row.clear();
+    for (int id = 0; id < static_cast<int>(pairs.size()); ++id)
+      if (pairs[id].level == level) by_right[pairs[id].right].push_back(id);
+    if (no_lonely) {
+      inner.assign(pairs.size(), -1);
+      paired_score.resize(pairs.size());
+      paired_trace.resize(pairs.size());
+      // Adjacent child endpoints are in the preceding right column. A flat
+      // last-column index avoids rebuilding a hash table on every DD update.
+      std::vector<int> last_id(length, -1), last_right(length, -1);
+      for (int right = 0; right < length; ++right) {
+        for (int id : by_right[right]) {
+          const int left = pairs[id].left;
+          if (last_right[left+1] == right-1) inner[id] = last_id[left+1];
+        }
+        for (int id : by_right[right]) {
+          const int left = pairs[id].left;
+          if (last_right[left] != right) {
+            last_right[left] = right;
+            last_id[left] = id; // preserve the first duplicate's original ID
+          }
+        }
+      }
     }
     if (!beam) for (auto& row : by_right)
       std::sort(row.begin(), row.end(), [&](int a, int b) {
-        return p[a].left != p[b].left ? p[a].left > p[b].left : a < b;
+        return pairs[a].left != pairs[b].left ? pairs[a].left > pairs[b].left : a < b;
       });
   }
+
   struct LocalColumn {
     std::vector<Cell> cells;
     std::vector<Trace> proposals;
@@ -138,17 +162,21 @@ struct DDNussinov::Workspace {
 };
 
 DDNussinov::DDNussinov(int n, const std::vector<DDPair>& pairs, int level,
-                     int beam, bool no_lonely_pairs, bool improved_beam, int dp_threads, bool wavefront) {
+                     int beam, bool no_lonely_pairs, bool improved_beam,
+                     int dp_threads, bool wavefront)
+    : DDNussinov(n, pairs, level, beam, no_lonely_pairs, improved_beam,
+                dp_threads, wavefront, false) {}
+
+DDNussinov::DDNussinov(int n, const std::vector<DDPair>& pairs, int level,
+                     int beam, bool no_lonely_pairs, bool improved_beam, int dp_threads, bool wavefront, bool require_retained_inside) {
   if (n < 0 || level < 0 || beam < 0 || dp_threads < 0 || (wavefront && beam)) throw std::invalid_argument("Invalid Nussinov dimensions");
 #ifndef _OPENMP
   if (dp_threads > 1) throw std::invalid_argument("DP threads > 1 requires an OpenMP build");
 #endif
-  for (const auto& p : pairs)
-    if (p.left < 0 || p.right >= n || p.left >= p.right || p.level < 0 || !std::isfinite(p.weight))
-      throw std::invalid_argument("Invalid Nussinov pair");
-  workspace_ = std::make_unique<Workspace>(n, pairs, level, beam, no_lonely_pairs, improved_beam, dp_threads, wavefront);
+  workspace_ = std::make_unique<Workspace>(n, pairs, level, beam, no_lonely_pairs, improved_beam, dp_threads, wavefront, require_retained_inside);
 }
 DDNussinov::~DDNussinov() = default;
+void DDNussinov::reset_pairs() { workspace_->reset_pairs(); }
 std::size_t DDNussinov::pruned_states() const { return workspace_->pruned; }
 std::size_t DDNussinov::sparsified_candidates() const { return workspace_->sparsified; }
 
@@ -191,6 +219,7 @@ DDNussinov::Workspace::Component DDNussinov::Workspace::beam_component(int right
   const auto& p = w.pairs[id];
   double inside = 0;
   int inside_trace = -1;
+  bool has_inside = false;
   if (right) {
     const auto& previous = w.chart[right - 1];
     const std::size_t index = previous.size() == std::size_t(right) ? std::size_t(p.left + 1) :
@@ -198,9 +227,11 @@ DDNussinov::Workspace::Component DDNussinov::Workspace::beam_component(int right
             [](const Cell& cell, int start) { return cell.start < start; }) - previous.begin());
     if (index < previous.size()) {
       const auto& cell = previous[w.suffix_best[index]];
+      has_inside = true;
       inside = cell.score; inside_trace = cell.trace;
     }
   }
+  if (w.require_retained_inside && !w.no_lonely && !has_inside) return {0, -1};
   // P(i,j) may borrow stacking support from its parent. F intervals
   // contain only complete helices; a pair exposed to F must have a child.
   const int child = w.no_lonely ? w.inner[id] : -1;
@@ -269,11 +300,18 @@ void DDNussinov::Workspace::finish_column(int right) {
   if (beam_pruned) {
     w.pruned += w.starts.size() - w.beam;
     std::nth_element(w.starts.begin(), w.starts.begin() + w.beam, w.starts.end(), better);
-    w.starts.resize(w.beam);
-    if (std::find(w.starts.begin(), w.starts.end(), 0) == w.starts.end()) {
-      auto worst = std::max_element(w.starts.begin(), w.starts.end(), better);
+    const auto retained_end = w.starts.begin() + w.beam;
+    if (std::find(w.starts.begin(), retained_end, 0) == retained_end) {
+      auto worst = std::max_element(w.starts.begin(), retained_end, better);
+      if (w.observer.record)
+        w.observer.record(w.observer.context, *worst, right, w.candidates[*worst].score);
       *worst = 0;
     }
+    if (w.observer.record)
+      for (auto it = retained_end; it != w.starts.end(); ++it)
+        if (*it != 0)
+          w.observer.record(w.observer.context, *it, right, w.candidates[*it].score);
+    w.starts.resize(w.beam);
   }
   // Dominance emits descending starts, so an unpruned column can restore
   // interval order without another comparison sort.
@@ -531,6 +569,7 @@ double DDNussinov::Workspace::decode_sparse(const std::vector<double>& weights,
       const auto& p = w.pairs[id];
       double inside = 0;
       int inside_trace = -1;
+      bool has_inside = false;
       if (right) {
         const auto& previous = w.chart[right - 1];
         std::size_t index;
@@ -546,9 +585,11 @@ double DDNussinov::Workspace::decode_sparse(const std::vector<double>& weights,
         }
         if (index < previous.size()) {
           const auto& cell = previous[w.suffix_best[index]];
+          has_inside = true;
           inside = cell.score; inside_trace = cell.trace;
         }
       }
+      if (w.require_retained_inside && !w.no_lonely && !has_inside) continue;
       // P(i,j) may borrow stacking support from its parent. F intervals
       // contain only complete helices; a pair exposed to F must have a child.
       const int child = w.no_lonely ? w.inner[id] : -1;
@@ -634,11 +675,18 @@ double DDNussinov::Workspace::decode_sparse(const std::vector<double>& weights,
     if (beam_pruned) {
       w.pruned += w.starts.size() - w.beam;
       std::nth_element(w.starts.begin(), w.starts.begin() + w.beam, w.starts.end(), better);
-      w.starts.resize(w.beam);
-      if (std::find(w.starts.begin(), w.starts.end(), 0) == w.starts.end()) {
-        auto worst = std::max_element(w.starts.begin(), w.starts.end(), better);
+      const auto retained_end = w.starts.begin() + w.beam;
+      if (std::find(w.starts.begin(), retained_end, 0) == retained_end) {
+        auto worst = std::max_element(w.starts.begin(), retained_end, better);
+        if (w.observer.record)
+          w.observer.record(w.observer.context, *worst, right, w.candidates[*worst].score);
         *worst = 0;
       }
+      if (w.observer.record)
+        for (auto it = retained_end; it != w.starts.end(); ++it)
+          if (*it != 0)
+            w.observer.record(w.observer.context, *it, right, w.candidates[*it].score);
+      w.starts.resize(w.beam);
     }
     // Dominance emits descending starts, so an unpruned column can restore
     // interval order without another comparison sort.
@@ -674,6 +722,12 @@ double DDNussinov::Workspace::decode_sparse(const std::vector<double>& weights,
 double DDNussinov::decode(const std::vector<double>& weights,
                          const std::vector<unsigned char>& allowed,
                          std::vector<int>& selected) {
+  return decode(weights, allowed, selected, {nullptr, nullptr});
+}
+
+double DDNussinov::decode(const std::vector<double>& weights,
+                         const std::vector<unsigned char>& allowed,
+                         std::vector<int>& selected, PruningObserver observer) {
   auto& w = *workspace_;
   if (weights.size() != w.pairs.size() || allowed.size() != weights.size())
     throw std::invalid_argument("Nussinov weight/mask size mismatch");
@@ -682,6 +736,7 @@ double DDNussinov::decode(const std::vector<double>& weights,
   w.sparsified = 0;
   w.used_workers = 1;
   w.parallel_steps = 0;
+  w.observer = observer;
   if (!w.length) return 0;
   int workers = 1;
 #ifdef _OPENMP

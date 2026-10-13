@@ -63,14 +63,29 @@ struct DDPair {
 // Exact charts omit dominated starts and decomposable closed split candidates.
 // wavefront=true selects an exact quadratic interval chart (requires beam=0).
 // dp_threads controls wavefront/finite-beam teams; sparse exact stays serial.
+// require_retained_inside preserves DAFS's historical finite-beam treatment
+// of an allowed isolated pair when all its inside states were pruned.
 class DDNussinov {
 public:
+  // Called once for each state lost to finite-beam pruning, after safe suffix
+  // dominance and forced root retention. Callers can certify its completion.
+  struct PruningObserver {
+    void* context;
+    void (*record)(void* context, int start, int right, double score);
+  };
   DDNussinov(int length, const std::vector<DDPair>& pairs,
              int level, int beam, bool no_lonely_pairs, bool improved_beam = true,
              int dp_threads = 1, bool wavefront = false);
+  DDNussinov(int length, const std::vector<DDPair>& pairs,
+             int level, int beam, bool no_lonely_pairs, bool improved_beam,
+             int dp_threads, bool wavefront, bool require_retained_inside);
   ~DDNussinov();
   DDNussinov(const DDNussinov&) = delete;
   DDNussinov& operator=(const DDNussinov&) = delete;
+  // After changing the borrowed pair vector between decodes, rebuild graph
+  // indices while retaining chart/trace buffers. Length and options stay fixed.
+  // Do not decode the changed graph before calling this method.
+  void reset_pairs();
   std::size_t pruned_states() const;
   std::size_t sparsified_candidates() const;
   int dp_threads() const;
@@ -79,6 +94,9 @@ public:
   double decode(const std::vector<double>& weights,
                 const std::vector<unsigned char>& allowed,
                 std::vector<int>& selected);
+  double decode(const std::vector<double>& weights,
+                const std::vector<unsigned char>& allowed,
+                std::vector<int>& selected, PruningObserver observer);
 private:
   struct Workspace;
   std::unique_ptr<Workspace> workspace_;
