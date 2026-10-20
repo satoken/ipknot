@@ -15,6 +15,7 @@ struct DDConstrainedResult {
   int iterations = 0;
   std::size_t repair_states = 0, nonzeros = 0, propagation_work = 0, structural_work = 0;
   std::size_t repair_calls = 0, periodic_repair_calls = 0, dp_pruned_states = 0;
+  std::size_t polish_states = 0, polish_calls = 0, polish_improvements = 0;
   std::size_t noe_ilp_variables = 0, noe_ilp_rows = 0, noe_ilp_calls = 0, noe_ilp_cache_hits = 0;
   double noe_ilp_seconds = 0;
   std::size_t noe_primal_calls = 0, noe_primal_feasible = 0, noe_primal_cache_hits = 0;

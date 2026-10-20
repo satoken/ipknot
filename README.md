@@ -117,8 +117,30 @@ DFS-node limit per threshold/refinement solve. The search frontier and best
 feasible solution persist between checkpoints; this does not multiply the
 state budget by the number of DD iterations. `--dd-recovery-target baseline`
 (default) preserves the original Polyak target; `best` also uses checkpoint
-incumbents in that target. Recovery is opt-in because accuracy effects vary
-with the input and state budget.
+incumbents in that target. Periodic recovery is opt-in because accuracy effects
+vary with the input and state budget.
+
+NMR-constrained DD also performs a final structure recovery pass by default
+(`--dd-nmr-polish-states 2048`, also `DDOptions::nmr_polish_states`). It proposes
+RNA matchings using original, averaged DD, and upper-level-aware scores, then
+fixes those pairs while recovering the count slacks and NOE explanations.
+Every accepted assignment satisfies all retained constraints and improves the
+original objective. The preceding DD iterations and incumbent are preserved.
+This pass is solver-free with the default `--dd-noe-solver relaxed`; it has a
+separate total node budget shared across at most six proposals per solve.
+Use `--dd-nmr-polish-states 0` to reproduce the previous recovery behavior.
+Trace summaries report `polish_states`, `polish_calls`, and
+`polish_improvements` separately from the ordinary repair budget.
+
+The [NMR quality benchmark](experiments/dual-decomposition/nmr-quality/README.md)
+compares identical saved posteriors and constraints against ILP. With two fixed
+thresholds, the recovered base-pair sets matched all 14 completed ILP runs;
+16-RNA mean reference F1 rose from 69.88% to 88.51%, with about 1.6% additional
+decoding time. This is a heuristic improvement, not an ILP optimality guarantee.
+Retained NMR candidates can still change penalties even for identical RNA
+structures. `--dd-constraints full` removes that candidate restriction for
+diagnostics at higher cost. Automatic threshold selection can change the final
+structure and does not guarantee improved reference accuracy on every RNA.
 
 Optional joint integer certificates group distant PK endpoints into bounded
 clusters. Add `--dd-unpruned-bound --dd-global-bound --dd-joint-bound 12

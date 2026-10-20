@@ -13,6 +13,7 @@ struct DDOptions {
   int max_iterations = 50;
   std::size_t constraint_states = 2048; // total visited repair states per solve; 0: unlimited
   int constraint_recovery_every = 0; // 0: final-only; finite budget shared by all calls
+  std::size_t nmr_polish_states = 2048; // additional final NMR repair nodes; 0: disabled
   bool linear_constraints = true;
   bool noe_ilp = false; // joint NOE factor; RNA pairs remain in the DP
   int constraint_passes = 8;

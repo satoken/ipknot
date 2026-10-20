@@ -1,0 +1,202 @@
+[
+  {
+    "bmrb": "17961",
+    "pdb": "2LKR",
+    "sequence": "GGCAAUACAGAGAUGAUCAGCAGUUCCCCUGCAUAAGGAUGAACCGUUUUACAAAGAGAUUUCUUCGGGAAUCUCUUUGCCUUUUGGCUUAGAUCAAGUGUAGUAUCUGUC",
+    "structure": "((((((((.....((((((((.((((.(((.....)))..)))).......((((((((((((....)))))))))))).......)))..)))))......)))).))))",
+    "counts": "GC=10,AU=12,GU=2,AG=1",
+    "patterns": [
+      "G-(GU)-U-U",
+      "AU GC AU GC",
+      "AU AU AU",
+      "GC AU AU GC",
+      "GC GC",
+      "(GU)-G-U",
+      "GC AU",
+      "GC AU AU GC",
+      "GC AU"
+    ]
+  },
+  {
+    "bmrb": "25811",
+    "pdb": "2N7M",
+    "sequence": "GGCCUUAUGCACGGGAAAUACGCAUAUCAGUGAGGAUUCGUCCGAGAUUGUGUUUUUGCUGGUGUAAAUCAGCAGUUCCCCUGCAUAAGGCU",
+    "structure": "(((((((((((.(((((..(((((.(((.....(((....)))..))))))))...(((((((....))))))).))))).)))))))))))",
+    "counts": "GC=14,AU=8,GU=3",
+    "patterns": [
+      "(GU)-G-U-U-U",
+      "(GU)-U-G-G",
+      "U-(GU)-G",
+      "AU GC",
+      "GC AU AU AU AU GC",
+      "AU AU GC",
+      "GC GC"
+    ]
+  },
+  {
+    "bmrb": "25867",
+    "pdb": "2N8V",
+    "sequence": "GGAACAGCUGUACUGGGCAGUUACAGCAGUCGUAUGGUAACACAUGCGGCGUUCCGAAAUACCAUGCCUG",
+    "structure": "(((((.(((((((.[[[[[).)))))).((((((((......))))))))))))).........]]]]].",
+    "counts": "GC=13,AU=9,GU=3,AG=1",
+    "patterns": [
+      "(GU)-G",
+      "(GA)-G-U-U-(GU)-G",
+      "GC AU AU GC",
+      "AU AU GC AU GC GC",
+      "AU GC",
+      "G-G-(GU)"
+    ]
+  },
+  {
+    "bmrb": "25049",
+    "pdb": "2MQT",
+    "sequence": "GGGCGAGGGUCUCCUCUGAGUGAUUGACUACCCGUCAGCGGGGGUCUUUCAUUUGGGGGCUCGUGCCC",
+    "structure": "(((((.((((((((.....((((..((((.((((....))))))))..))))..)))))))).)))))",
+    "counts": "GC=4,AU=3,GU=6,UU=2",
+    "patterns": []
+  },
+  {
+    "bmrb": "25784",
+    "pdb": "2N6W",
+    "sequence": "GGAAUUUAUGAGUACGUAGAGUAUAAUUAGUCUUCGGACUUCCUUAUACUUAUAUACUUAUAGAUUCC",
+    "structure": "((((((((((((((......(((((...((((....))))....))))).....))))))))))))))",
+    "counts": "GC=5,AU=14,GU=3,UU=1",
+    "patterns": [
+      "(GU)-G-U-G-U-(UU)",
+      "U-U-U-(GU)-U-U-U-(GU)-U-G-U-U",
+      "AU GC",
+      "AU AU"
+    ]
+  },
+  {
+    "bmrb": "31171",
+    "pdb": "9BLM",
+    "sequence": "GGCCUGGGAUAGACUAGGAGAUCUUCUGCUCUGCACAACCUUCGGGUGGUGCGAGAACACAGGAUACU",
+    "structure": "..(((((......)))))(((((((.((.(((((((.(((....))).)))).))).)).))))).))",
+    "counts": "GC=8,AU=7,GU=2",
+    "patterns": [
+      "U-G-(GU)-U",
+      "AU GC",
+      "GC GC",
+      "(GU)-G-G-U",
+      "GC AU GC"
+    ]
+  },
+  {
+    "bmrb": "25654",
+    "pdb": "2N3Q",
+    "sequence": "GCAGCAGGGAACUCACGCUUGCGUAGAGGCUAAGUGCUUCGGCACAGCACAAGCCCGCUGCG",
+    "structure": "(((((.(((..(((.(((..)))..)))(((..((((....))))))).....)))))))).",
+    "counts": "GC=17,AU=4,GU=1,AG=1",
+    "patterns": [
+      "GC GC AU GC GC GC GC GC",
+      "(UU)-G-G-G",
+      "GC AU GC",
+      "GC GC AU",
+      "G-U-G-G-(GU)"
+    ]
+  },
+  {
+    "bmrb": "30701",
+    "pdb": "6VAR",
+    "sequence": "GGUUCAUGUCCUACUGUUCAAGCCUCCAAGCUGUGCCUUGGGUGGCUUUGGGGCAUGGACC",
+    "structure": "((((((((((((.........(((((((((......)))))).)))...))))))))))))",
+    "counts": "GC=12,AU=6,GU=4",
+    "patterns": [
+      "G-U-(GU)-G-U-U-G-(GU)-G-G-(GU)-U",
+      "U-G-G-G-(GU)-G-G-U-U-G"
+    ]
+  },
+  {
+    "bmrb": "19698",
+    "pdb": "2MIY",
+    "sequence": "GCUUGGUGCUUAGCUUCUUUCACCAAGCAUAUUACACGCGGAUAACCGCCAAAGGAGAA",
+    "structure": "((((((((.....[[[[[[.)))))))).........((((....))))..]]]]]]..",
+    "counts": "GC=8,AU=7,GU=1",
+    "patterns": []
+  },
+  {
+    "bmrb": "30026",
+    "pdb": "5IEM",
+    "sequence": "GGGAUCUGUCACCCCAUUGAUCGCCUUCGGGCUGAUCUGGCUGGCUAGGCGGGUCCC",
+    "structure": "((((((((((.(((((..(((((((....))).)))))))..))...))))))))))",
+    "counts": "GC=13,AU=3,GU=3",
+    "patterns": [
+      "G-G-U-(GU)-G-(GU)-G-(GU)-G",
+      "GC GC",
+      "GC GC AU",
+      "GC AU AU GC",
+      "GC GC GC"
+    ]
+  },
+  {
+    "bmrb": "30560",
+    "pdb": "6NOA",
+    "sequence": "GGCAGUAUAGUCCGAACUGCAAAUCUUAUUUUCUUUUCACCUUCUCUCUAACUGCC",
+    "structure": "((((((.(((...(((.((.(((...........)))))..)))...)))))))))",
+    "counts": "GC=6,AU=5,GU=0,UU=1",
+    "patterns": [
+      "(UU)-G-U",
+      "AU AU GC",
+      "AU AU",
+      "GC GC AU GC"
+    ]
+  },
+  {
+    "bmrb": "17316",
+    "pdb": "2KZL",
+    "sequence": "GGGAGUAAAGAUUGAGACAAGUAGGACUUCGGUCCGAAUACACUCAUGAACUCCC",
+    "structure": "((((((......((((.......((((....)))).......))))...))))))",
+    "counts": "GC=8,AU=5,GU=1,UU=1",
+    "patterns": []
+  },
+  {
+    "bmrb": "19634",
+    "pdb": "2MHI",
+    "sequence": "GGAAACGCCGCGGUCAGCUCGGCUGCUGCGAAGAGUUCGUCUCUGUUGUUUCC",
+    "structure": "(((((((..((((.((((...))))))))(..(((.....))))..)))))))",
+    "counts": "GC=9,AU=5,GU=3",
+    "patterns": [
+      "GC AU AU AU GC",
+      "G-G-(GU)-G",
+      "GC AU",
+      "(GU)-G-(GU)"
+    ]
+  },
+  {
+    "bmrb": "18503",
+    "pdb": "2LU0",
+    "sequence": "GGAAUAUGCUCAACGAAAGUGAAUCAGCUUCGGCUGAGAGCUAAGUUCC",
+    "structure": "(((((..((((.((....))...(((((....)))))))))...)))))",
+    "counts": "GC=9,AU=6,GU=2",
+    "patterns": [
+      "GC AU",
+      "G-G-U-U-(GU)",
+      "G-G-U-G-U-G-U-G-G-(GU)"
+    ]
+  },
+  {
+    "bmrb": "25163",
+    "pdb": "2MTJ",
+    "sequence": "GGACCUCCCGUCCUUGGACGGUCGAGCGAAAGCUUGUGAUUGGUCCG",
+    "structure": "(((((..((((((..))))))..((((....))))......))))).",
+    "counts": "GC=11,AU=4,GU=1,UU=1,AG=1",
+    "patterns": [
+      "G-U-G-G-(UU)",
+      "(UU)-G-G-U-G-G-G-(UU)",
+      "(GU)-U-G-G-(GA)"
+    ]
+  },
+  {
+    "bmrb": "30108",
+    "pdb": "5KH8",
+    "sequence": "GGCGAUGGUGUUCGCCAUAAACGCUCUUCGGAGCUAAUGACACCUAC",
+    "structure": "[[[[..((((((]]]]......((((....))))....))))))...",
+    "counts": "GC=10,AU=5,GU=2",
+    "patterns": [
+      "G-G-U-G-U-(GU)-G-G-G",
+      "G-G-U-(GU)"
+    ]
+  }
+]

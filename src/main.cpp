@@ -670,6 +670,8 @@ main(int argc, char* argv[])
       cxxopts::value<int>()->default_value("2048"))
     ("dd-constraint-recovery-every", "Resume constrained primal recovery every N iterations (0: final-only); shares total state budget",
       cxxopts::value<int>()->default_value("0"), "N")
+    ("dd-nmr-polish-states", "Additional final NMR structure recovery states per solve (0: disabled)",
+      cxxopts::value<int>()->default_value("2048"), "N")
     ("dd-max-iter", "Maximum DD iterations per threshold/refinement",
       cxxopts::value<int>()->default_value("50"), "N")
     ("dd-dp", "Per-level DP: beam, improved-beam (suffix dominance), nussinov (sparse exact), or wavefront (exact interval DP)",
@@ -1126,6 +1128,9 @@ main(int argc, char* argv[])
     if (constraint_states < 0) throw std::invalid_argument("DD constraint state budget must be nonnegative");
     dd_options.constraint_states = constraint_states;
     dd_options.constraint_recovery_every = res["dd-constraint-recovery-every"].as<int>();
+    const int nmr_polish_states = res["dd-nmr-polish-states"].as<int>();
+    if (nmr_polish_states < 0) throw std::invalid_argument("DD NMR polish budget must be nonnegative");
+    dd_options.nmr_polish_states = nmr_polish_states;
     dd_options.max_iterations = res["dd-max-iter"].as<int>();
     dd_options.beam = res["dd-beam"].as<int>();
     dd_options.threads = res["dd-threads"].as<int>();

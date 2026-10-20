@@ -1,6 +1,7 @@
 #include "dd_constrained.h"
 #include "dd_parallel.h"
 #include "dd_noe.h"
+#include "dd_recovery.h"
 
 #include <algorithm>
 #include <atomic>
@@ -239,20 +240,48 @@ public:
     return score;
   }
 
+  // Complete a proposed RNA matching with feasible auxiliary assignments.
+  // Its restricted search never certifies exhaustion of the original model.
+  // Preserve the original frontier and counters, but keep any better incumbent.
+  std::size_t complete(const std::vector<unsigned char>& selected,
+                       const std::vector<double>& preference, std::size_t budget) {
+    auto fixed = root;
+    for (std::size_t id = 0; id < pairs.size(); ++id) {
+      auto& d = fixed[columns[id]];
+      const double value = selected[id] ? 1 : 0;
+      if (value < d.lower || value > d.upper) return 0;
+      d = {value, value};
+    }
+    auto saved_pending = std::move(pending);
+    auto saved_decisions = std::move(decisions);
+    const auto saved_states = states, saved_calls = calls;
+    const bool saved_started = search_started, saved_exhausted = exhausted;
+    pending.clear(); decisions.clear(); search_started = false;
+    search(preference, budget, false, &fixed);
+    const auto visited = states - saved_states;
+    pending = std::move(saved_pending);
+    decisions = std::move(saved_decisions);
+    states = saved_states; calls = saved_calls;
+    search_started = saved_started; exhausted = saved_exhausted;
+    return visited;
+  }
+
   // Bounded primal repair; an optional NOE ILP handles explanation choices.
   // Other integer bounds branch by bisection;
   // continuous score columns are optimized only after integers are fixed.
   // This search does not supply the dual certificate or claim optimality
   // when its budget is exhausted.
-  void search(const std::vector<double>& preference, std::size_t budget, bool first_feasible = false) {
+  void search(const std::vector<double>& preference, std::size_t budget,
+              bool first_feasible = false, const std::vector<Range>* restricted = nullptr) {
     exhausted = false;
+    const auto& base = restricted ? *restricted : root;
     // Linear mode stores only branch decisions. Reconstructing a domain for
     // each state keeps memory O(model size + state budget), rather than
     // retaining a complete model-sized snapshot at every DFS depth.
     // Keep the frontier and branch decisions between calls. A later call
     // may use new DD preferences for fresh branches. A scheduled second
     // branching order can restart the frontier, but never the incumbent.
-    if (!search_started) { pending.push_back({root, -1}); search_started = true; }
+    if (!search_started) { pending.push_back({base, -1}); search_started = true; }
     if (pending.empty()) return;
     ++calls;
     std::size_t visited = 0;
@@ -260,7 +289,7 @@ public:
       if (budget && visited >= budget) { exhausted = true; break; }
       State state = std::move(pending.back()); pending.pop_back(); ++visited; ++states;
       if (options.linear_constraints && state.path >= 0) {
-        state.domain = root;
+        state.domain = base;
         for (int path = state.path; path >= 0; path = decisions[path].parent) {
           const auto& cut = decisions[path]; auto& d = state.domain[cut.column];
           d.lower = std::max(d.lower, cut.range.lower); d.upper = std::min(d.upper, cut.range.upper);
@@ -414,6 +443,7 @@ DDConstrainedResult solve_constrained_dd(int length,
           << ",\"dp_threads\":" << options.dp_threads
           << ",\"repair_state_budget\":" << options.constraint_states
           << ",\"constraint_recovery_every\":" << options.constraint_recovery_every
+          << ",\"nmr_polish_state_budget\":" << options.nmr_polish_states
           << ",\"recovery_target\":\"" << (options.recovery_target_best ? "best" : "baseline") << "\""
           << ",\"variables\":" << count << ",\"row_count\":" << dual.size()
           << ",\"noe_solver\":\"" << (options.noe_ilp ? "ilp" : "relaxed") << "\""
@@ -601,6 +631,55 @@ DDConstrainedResult solve_constrained_dd(int length,
   if (!std::isfinite(repair.objective) || best_bound - repair.objective > tolerance * std::max(1.0, std::abs(best_bound))) {
     recover(result.iterations, false);
   }
+  // Run after the ordinary repair, so a finite-budget solve retains its
+  // original dual trajectory and incumbent. Models with auxiliary variables
+  // (NMR counts, witnesses, slacks) benefit from fixing the RNA matching first.
+  if (options.nmr_polish_states && model.variables.size() > pairs.size() &&
+      !pairs.empty() && !repair.search_complete() &&
+      (!std::isfinite(repair.objective) || best_bound - repair.objective >
+       tolerance * std::max(1.0, std::abs(best_bound)))) {
+    auto graph = dd_bounded_graph(length, pairs, levels, options);
+    auto mask = allowed;
+    std::vector<DDRecoveryRow> rows;
+    for (const auto& row : graph.rows) {
+      if (row.contacts.empty()) mask[row.upper] = 0;
+      DDRecoveryRow proposal_row{row.upper, {}};
+      for (int id : row.contacts) proposal_row.contacts.emplace_back(id, 0);
+      rows.push_back(std::move(proposal_row));
+    }
+    std::vector<unsigned char> dual_selected(pairs.size());
+    auto proposal_pairs = pairs;
+    for (std::size_t id = 0; id < pairs.size(); ++id) {
+      dual_selected[id] = selected[columns[id]] > .5;
+      weights[id] = preference[columns[id]] / (result.iterations + 1);
+      proposal_pairs[id].weight = model.variables[columns[id]].coefficient;
+    }
+    std::vector<std::vector<unsigned char>> seen;
+    for (int attempt = 0; attempt < 6 && result.polish_states < options.nmr_polish_states; ++attempt) {
+      DDPrimalRecovery proposals(length, proposal_pairs, levels, options.dp_beam(),
+          attempt < 3, mask, rows, 1, 1u << (attempt % 3), false, {},
+          options.improved_beam, options.dp_threads, options.wavefront_dp);
+      proposals.observe_adjusted(weights);
+      auto proposal = proposals.propose(dual_selected);
+      if (std::find(seen.begin(), seen.end(), proposal.selected) != seen.end()) continue;
+      seen.push_back(proposal.selected);
+      const auto remaining = options.nmr_polish_states - result.polish_states;
+      const auto budget = std::max<std::size_t>(1, remaining / (6 - attempt));
+      const double before = repair.objective;
+      const auto visited = repair.complete(proposal.selected, preference, budget);
+      result.polish_states += visited;
+      ++result.polish_calls;
+      result.polish_improvements += repair.objective > before;
+      if (trace.is_open()) {
+        trace << "{\"event\":\"nmr_polish\",\"solve_id\":" << solve_id
+              << ",\"method\":\"" << proposal.method << "\",\"states_visited\":" << visited
+              << ",\"strict_stacking\":" << (attempt < 3 ? "true" : "false")
+              << ",\"lower_bound\":";
+        if (std::isfinite(repair.objective)) trace << repair.objective; else trace << "null";
+        trace << "}\n";
+      }
+    }
+  }
   if (!std::isfinite(repair.objective)) {
     if (repair.exhausted)
       throw std::runtime_error("Constrained DD found no feasible structure within the repair budget; increase --dd-constraint-states, or use --dd-constraints full --dd-constraint-states 0 for unlimited diagnostics");
@@ -634,6 +713,9 @@ DDConstrainedResult solve_constrained_dd(int length,
           << result.iterations << ",\"lower_bound\":" << result.objective << ",\"upper_bound\":" << best_bound
           << ",\"repair_states\":" << result.repair_states << ",\"repair_calls\":" << result.repair_calls
           << ",\"periodic_repair_calls\":" << result.periodic_repair_calls
+          << ",\"polish_states\":" << result.polish_states
+          << ",\"polish_calls\":" << result.polish_calls
+          << ",\"polish_improvements\":" << result.polish_improvements
           << ",\"noe_ilp_variables\":" << result.noe_ilp_variables
           << ",\"noe_ilp_rows\":" << result.noe_ilp_rows
           << ",\"noe_ilp_calls\":" << result.noe_ilp_calls

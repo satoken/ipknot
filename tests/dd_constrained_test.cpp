@@ -194,6 +194,64 @@ int main() {
     const auto r=solve_constrained_dd(16,nested,{0,1,2},1,m,resumed);
     check(r.objective==1 && !r.repair_budget_exhausted,"Completed periodic repair was called budget exhaustion");
   }
+  // NMR observations compete for the same stack. The independent oracles
+  // select RNA without a consistent explanation; one generic repair node
+  // keeps the empty seed. Completing an RNA proposal must recover score 2.9
+  // and pay one violation, never satisfy both observations by reusing a pair.
+  const std::vector<DDPair> nmr_pairs{{0,11,0,.9},{1,10,0,.8},
+                                      {3,8,0,.7},{4,7,0,.6}};
+  const auto nmr_model = [&](bool counts) {
+    IPModel m; IP ip(m);
+    for (const auto& p : nmr_pairs) ip.make_variable(p.weight);
+    for (int first : {0,2}) {
+      const int row = ip.make_constraint(IP::FX,0,0);
+      ip.add_constraint(row,first,1); ip.add_constraint(row,first+1,-1);
+    }
+    if (counts) {
+      const int missing = ip.make_variable(-.1,0,4), excess = ip.make_variable(-.1,0,4);
+      const int row = ip.make_constraint(IP::FX,2,2);
+      for (int col = 0; col < 4; ++col) ip.add_constraint(row,col,1);
+      ip.add_constraint(row,missing,1); ip.add_constraint(row,excess,-1);
+      m.solution = {0,0,0,0,2,0};
+    } else {
+      const int w0=ip.make_variable(0), w1=ip.make_variable(0);
+      const int v0=ip.make_variable(-.1), v1=ip.make_variable(-.1);
+      for (int col : {w0,w1,v0,v1}) ip.mark_noe_variable(col);
+      for (auto observation : {std::pair<int,int>{w0,v0},{w1,v1}}) {
+        const int row=ip.make_constraint(IP::FX,1,1);
+        ip.add_constraint(row,observation.first,1); ip.add_constraint(row,observation.second,1);
+      }
+      for (int col : {0,1}) {
+        const int row=ip.make_constraint(IP::UP,0,0);
+        ip.add_constraint(row,w0,1); ip.add_constraint(row,w1,1); ip.add_constraint(row,col,-1);
+      }
+      m.solution = {0,0,0,0,0,0,1,1};
+    }
+    return m;
+  };
+  for (bool counts : {false,true}) for (bool full : {false,true}) {
+    DDOptions o; o.constraint_states=1; o.max_iterations=1; o.beam=0;
+    o.linear_constraints=!full; o.nmr_polish_states=0;
+    auto baseline=nmr_model(counts);
+    const auto old=solve_constrained_dd(12,nmr_pairs,{0,1,2,3},1,baseline,o);
+    check(old.objective<0 && old.polish_states==0,"Disabled NMR polish changed the baseline");
+    for (std::size_t budget : {1,64}) {
+      auto m=nmr_model(counts); o.nmr_polish_states=budget;
+      const auto r=solve_constrained_dd(12,nmr_pairs,{0,1,2,3},1,m,o);
+      check(r.objective>=old.objective && feasible(m,m.solution) &&
+            planar(nmr_pairs,{0,1,2,3},m.solution),"NMR polish weakened or invalidated an incumbent");
+      check(r.repair_states==old.repair_states && r.polish_states<=budget,
+            "NMR polish consumed the original budget or exceeded its own budget");
+      check(r.upper_bound==old.upper_bound && r.stop_reason==old.stop_reason,
+            "Restricted NMR search changed the dual certificate or claimed global optimality");
+      if (!full)
+        check(r.propagation_work<=2*(r.repair_states+r.polish_states+1)*o.constraint_passes*r.nonzeros,
+              "NMR polish propagation work exceeded the reported state budget");
+      if (budget==64)
+        check(std::abs(r.objective-(counts ? 2.8 : 2.9))<1e-8 && r.polish_improvements>0,
+              "NMR polish missed the independently known optimum");
+    }
+  }
   // Dense input longer than the default beam. Independent cardinality
   // bound: n/2 pairs is attainable using adjacent pairs. The DP selector
   // must disable pruning even when the configured beam is one.

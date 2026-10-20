@@ -91,10 +91,12 @@ with tempfile.TemporaryDirectory() as directory:
                 assert summary['upper_bound'] >= summary['lower_bound']-1e-7
                 assert summary['iterations'] <= budgets['iterations']
                 assert summary['repair_states'] <= budgets['states']
-                assert summary['propagation_work'] <= (2*budgets['passes']*(budgets['states']+1)*summary['nonzeros'])
+                assert summary['polish_states'] <= problem['nmr_polish_state_budget']
+                visited = summary['repair_states'] + summary['polish_states']
+                assert summary['propagation_work'] <= (2*budgets['passes']*(visited+1)*summary['nonzeros'])
                 planar_unit = 3*n*budgets['levels']+counters['pairs']
-                assert summary['structural_work'] <= ((budgets['passes']*(budgets['states']+1)+
-                                                       budgets['states']+budgets['iterations']+3)*planar_unit)
+                assert summary['structural_work'] <= ((budgets['passes']*(visited+1)+
+                                                       visited+budgets['iterations']+3)*planar_unit)
                 prediction = {int(i)-1:int(j)-1 for line in output.read_text().splitlines()
                               if line and line[0].isdigit() for i,base,j in [line.split()]}
                 assert prediction == {i:partners.get(i,-1) for i in range(n)}, (family,n)

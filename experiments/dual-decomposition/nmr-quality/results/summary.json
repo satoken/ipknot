@@ -1,0 +1,14 @@
+{
+  "rnas": 16,
+  "ilp_completed": 14,
+  "objective_improved": 8,
+  "baseline_ilp_matches": 8,
+  "candidate_ilp_matches": 14,
+  "candidate_ilp_objective_matches": 10,
+  "baseline_reference_f1": 0.6987783605337814,
+  "candidate_reference_f1": 0.8850831579706466,
+  "baseline_seconds": 3.180649019777775,
+  "candidate_seconds": 3.231244725175202,
+  "completed_ilp_seconds": 220.05407992564142,
+  "completed_candidate_seconds": 1.5419265981763601
+}

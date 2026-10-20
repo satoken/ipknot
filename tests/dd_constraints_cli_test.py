@@ -117,6 +117,8 @@ with tempfile.TemporaryDirectory() as temporary:
         success=False, message='DD DP must be beam, improved-beam, nussinov or wavefront')
     run('-x', '-c', constraints, '--dd-constraint-recovery-every', '-1', bpp,
         success=False, message='recovery interval must be nonnegative')
+    run('-x', '-c', constraints, '--dd-nmr-polish-states', '-1', bpp,
+        success=False, message='NMR polish budget must be nonnegative')
     for option in ('--dd-crossing-beam', '--dd-witnesses', '--dd-constraint-states'):
         run('-x', '-c', constraints, option, '0', bpp, success=False,
             message='use --dd-constraints full')

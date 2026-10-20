@@ -760,12 +760,12 @@ double decode_linear_constraints(
                              "(allowed in soft NMR mode).");
   spdlog::info("DD: iterations={}, pairs={}, constraint_rows={}, nonzeros={}, "
                "objective={:.12g}, graph_upper_bound={:.12g}, "
-               "repair_states={}, propagation_work={}, structural_work={}, "
+               "repair_states={}, polish_states={}, polish_improvements={}, propagation_work={}, structural_work={}, "
                "nmr_seed_visits={}, nmr_pair_drops={}, nmr_witness_drops={}, "
                "crossing_beam_drops={}, witness_drops={}, linear=1, stop={}",
                result.iterations, pairs.size(), b.model.rows.size(),
                result.nonzeros, result.objective, result.upper_bound,
-               result.repair_states, result.propagation_work,
+               result.repair_states, result.polish_states, result.polish_improvements, result.propagation_work,
                result.structural_work, b.seed_visits, b.pair_drops,
                b.witness_drops, graph.crossing_drops, graph.witness_drops,
                result.stop_reason);
