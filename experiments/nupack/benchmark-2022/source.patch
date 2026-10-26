@@ -1,0 +1,853 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 99c952d..286da1c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -42,6 +42,7 @@ add_executable(ipknot
+   src/bpseq.h src/bpseq.cpp
+   src/boltzmann_param.c
+   src/nupack/nupack.cpp
++  src/nupack/linear_nupack.cpp
+   src/contrafold/LogSpace.hpp
+   src/contrafold/Defaults.hpp
+   src/contrafold/InferenceEngine.cpp
+@@ -118,6 +119,21 @@ install(TARGETS ipknot RUNTIME DESTINATION bin)
+ 
+ include(CTest)
+ if(BUILD_TESTING)
++  add_executable(nupack_test tests/nupack_test.cpp src/nupack/nupack.cpp src/nupack/linear_nupack.cpp)
++  target_include_directories(nupack_test PRIVATE src)
++  target_compile_features(nupack_test PRIVATE cxx_std_17)
++  if(MSVC)
++    target_compile_options(nupack_test PRIVATE /UNDEBUG)
++  else()
++    target_compile_options(nupack_test PRIVATE -UNDEBUG)
++  endif()
++  add_test(NAME nupack_exact_and_linear COMMAND nupack_test)
++  set_tests_properties(nupack_exact_and_linear PROPERTIES TIMEOUT 120)
++  if(UNIX)
++    add_executable(nupack_benchmark experiments/nupack/driver.cpp src/nupack/nupack.cpp src/nupack/linear_nupack.cpp)
++    target_include_directories(nupack_benchmark PRIVATE src/nupack)
++    target_compile_features(nupack_benchmark PRIVATE cxx_std_17)
++  endif()
+   add_executable(nmr_pair_index_test tests/nmr_pair_index_test.cpp)
+   add_executable(nmr_sequence_index_test tests/nmr_sequence_index_test.cpp)
+   add_executable(nmr_candidate_filter_test tests/nmr_candidate_filter_test.cpp)
+@@ -535,6 +551,9 @@ if(BUILD_TESTING)
+   set_tests_properties(dual_decomposition_exhaustive PROPERTIES TIMEOUT 60)
+   find_package(Python3 QUIET COMPONENTS Interpreter)
+   if(Python3_Interpreter_FOUND)
++    add_test(NAME linear_nupack_cli COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tests/linear_nupack_cli_test.py $<TARGET_FILE:ipknot>)
++    set_tests_properties(linear_nupack_cli PROPERTIES TIMEOUT 120)
+     add_test(NAME removed_options_cli COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tests/removed_options_cli_test.py $<TARGET_FILE:ipknot>)
+     set_tests_properties(removed_options_cli PROPERTIES TIMEOUT 60)
+diff --git a/README.md b/README.md
+index 3f5a255..8ff1029 100644
+--- a/README.md
++++ b/README.md
+@@ -132,9 +132,87 @@ IPknot can calculate the base pairing probability using the following probabilit
+ * McCaskill model with ViennaRNA parameters (`ViennaRNA`)
+ * CONTRAfold model (`CONTRAfold`)
+ * NUPACK model (`NUPACK`)
++* Beam approximation with NUPACK energies and two crossing pseudoknot bands
++  (`LinearNUPACK` or `lnupack`)
+ 
+ You can specify the model using `-e` option.
+ 
++`NUPACK` retains the full pseudoknot dynamic program. Its hot paths now use
++precomputed table offsets and loop/dangling energies, constant-time poly-C
++checks, and a bounded cache of **exact** `expl` results keyed by the float
++argument. These optimizations do not use energy quantization or fast-math.
++The default parameter reader also consumes the NINIO upper bound correctly;
++previously this value was uninitialized and subsequent parameters were shifted
++by one. The posterior pass now includes single-pair pseudoknot bands and the
++same band penalty as the inside pass. Predictions can change because of these
++correctness repairs. BPSEQ restrictions are validated and stored only in the
++upper triangle.
++
++For long sequences, select the approximate model explicitly:
++
++```sh
++ipknot -e LinearNUPACK --beam-size 100 -r 0 sequence.fa
++```
++
++`LinearNUPACK` implements left-to-right beam search inspired by
++[LinearFold](https://github.com/LinearFold/LinearFold/blob/master/src/LinearFold.cpp)
++and [LinearPartition](https://github.com/LinearFold/LinearPartition/blob/master/src/LinearPartition.cpp),
++using this repository's NUPACK energy functions. It computes inside/outside
++values in log space on the retained derivation forest. The sparse posterior
++path, including constrained refinement, avoids dense probability and
++four-dimensional tables. Sequence and alignment inputs are supported, as are
++parameter files through `-P`.
++
++Both NUPACK engines preserve ambiguous nucleotide symbols and their positions,
++while treating them as unpaired, like LPC/LPV. Sequence-specific loop bonuses
++are omitted when the relevant nucleotide is unknown; small interior loops with
++unknown bases use generic length/asymmetry energies.
++
++The full 2022 single-sequence comparison uses refinement 0 for both NUPACK
++engines and refinement 1 for LPC/LPV; see
++[benchmark results and reproduction](experiments/nupack/benchmark-2022/README.md).
++
++The approximation retains ordinary hairpins, bulges, interior loops and
++multiloops, plus pseudoknots with two crossing bands. Both bands can have
++arbitrary stem length and bounded bulges/interior loops; all three gaps can
++contain secondary structures or further pseudoknots. Multiloops **inside a
++crossing band** are excluded. Interior loops, left multiloop padding and
++leading padding of structured gap states are limited to 30 unpaired bases.
++Middle-gap starts come from up to 30 bases of padding or from retained
++structured gap states. These bounds
++are separate from the beam and are configurable through the C++ constructor.
++There is no overall sequence window or maximum pair distance.
++
++Each state family retains at most the requested beam width per right endpoint,
++with deterministic tie-breaking and prefix-plus-inside ranking. For fixed
++positive beam width and loop bound, expected time and memory are O(sequence
++length). Constants depend on the beam and loop bound; retaining the forest's
++edges for outside computation can use substantial memory at larger beams
++(up to O(n(bL²+b²)) edges for length n, beam b and loop bound L).
++Hairpin selection and posterior coordinate ordering also avoid global
++comparison sorts. Dense output requested through the C++ matrix interface
++still requires O(length²) space. `--beam-size 0` disables pruning but keeps
++the grammar bounds; it is not equivalent to full `NUPACK` and has no linear
++complexity guarantee. Larger beams provide a tunable approximation, without
++an accuracy or monotonicity guarantee.
++
++The correctness tests compare short inside/outside results with the full
++pseudoknot DP, independently extract forced motif weights from exact subset
++partition functions, check probability normalization and long-distance pairs,
++and exercise sparse output and refinement. Reproduce kernel timings and
++posterior errors with:
++
++```sh
++cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ILP=OFF
++cmake --build build -j
++ctest --test-dir build --output-on-failure
++python3 experiments/nupack/benchmark.py --output experiments/nupack/results.json
++```
++
++The benchmark applies the same correctness repairs to its reference version
++before checking exact posterior identity and speed. Measurements and their
++limits are recorded in [experiments/nupack/RESULTS.md](experiments/nupack/RESULTS.md).
++
+ #### Thresholds
+ 
+ IPknot predicts the pseudoknot structure hierarchically. The `-t` option is used to specify the base pairing probability threshold for each level. For example, if you run `ipknot -t 0.25 -t 0.125 seq.fa`, the threshold for the first level is 0.25 and the threshold for the second level is 0.125.
+diff --git a/src/fold.cpp b/src/fold.cpp
+index 6ff4fca..74a8ff7 100644
+--- a/src/fold.cpp
++++ b/src/fold.cpp
+@@ -53,6 +53,7 @@ typedef Vienna::FLT_OR_DBL FLT_OR_DBL;
+ #endif
+ 
+ #include "nupack/nupack.h"
++#include "nupack/linear_nupack.h"
+ #ifdef WITH_MXFOLD2
+ #include "mxfold2.h"
+ #endif
+@@ -394,7 +395,10 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
+ {
+   Nupack<long double> nu;
+   if (param_)
+-    nu.load_parameters(param_);
++  {
++    if (!nu.load_parameters(param_))
++      throw std::runtime_error(std::string("Cannot load NUPACK parameters: ")+param_);
++  }
+   else
+     nu.load_default_parameters(/*model_*/);
+   //nu.dump_parameters(std::cout);
+@@ -428,6 +432,70 @@ calculate_posterior(const std::string& seq, float th) const
+   return sbp;
+ }
+ 
++// LinearNUPACK model. The sparse path never materializes a quadratic matrix.
++namespace {
++LinearNupack run_linear_nupack(const char* param, uint beam, const std::string& seq,
++                             const std::string& constraints)
++{
++  LinearNupack parser(beam);
++  if (param && !parser.load_parameters(param))
++    throw std::runtime_error(std::string("Cannot load LinearNUPACK parameters: ")+param);
++  parser.calculate(seq,constraints);
++  return parser;
++}
++
++void linear_nupack_dense(const LinearNupack& parser, std::size_t n,
++                        std::vector<float>& bp, std::vector<int>& offset)
++{
++  bp.assign((n+1)*(n+2)/2,0);
++  offset.resize(n+1);
++  for (std::size_t i=0; i<=n; ++i) offset[i]=i*(2*n+1-i)/2;
++  for (const auto& item:parser.posterior())
++  {
++    auto [i,j,p]=item;
++    bp[offset[i+1]+j+1]=static_cast<float>(p);
++  }
++}
++
++VSVF linear_nupack_sparse(const LinearNupack& parser, std::size_t n, float threshold)
++{
++  VSVF result(n+1);
++  for (const auto& item:parser.posterior())
++  {
++    auto [i,j,p]=item;
++    const float probability=static_cast<float>(p);
++    if (probability>=threshold)
++    {
++      result[i+1].emplace_back(j+1,probability);
++      result[j+1].emplace_back(i+1,probability);
++    }
++  }
++  return result;
++}
++}
++
++void LinearNupackModel::calculate_posterior(const std::string& seq, std::vector<float>& bp,
++                                           std::vector<int>& offset) const
++{
++  calculate_posterior(seq,"",bp,offset);
++}
++
++VSVF LinearNupackModel::calculate_posterior(const std::string& seq, float th) const
++{
++  return calculate_posterior(seq,"",th);
++}
++
++void LinearNupackModel::calculate_posterior(const std::string& seq, const std::string& constraints,
++                                           std::vector<float>& bp, std::vector<int>& offset) const
++{
++  linear_nupack_dense(run_linear_nupack(param_,beam_size_,seq,constraints),seq.size(),bp,offset);
++}
++
++VSVF LinearNupackModel::calculate_posterior(const std::string& seq, const std::string& constraints, float th) const
++{
++  return linear_nupack_sparse(run_linear_nupack(param_,beam_size_,seq,constraints),seq.size(),th);
++}
++
+ // LinearPartition model
+ 
+ void
+@@ -1382,6 +1450,8 @@ BPEngineSeq::build(const char* model, const char* param, uint beam_size, uint n_
+     en = std::make_unique<CONTRAfoldModel>();
+   else if (strcasecmp(model, "nupack")==0)
+     en = std::make_unique<NupackModel>(param);
++  else if (strcasecmp(model, "LinearNUPACK")==0 || strcasecmp(model, "lnupack")==0)
++    en = std::make_unique<LinearNupackModel>(param, beam_size);
+   else if (strcasecmp(model, "LinearPartition-C")==0 || strcasecmp(model, "lpc")==0)
+     en = std::make_unique<LinearPartitionModel>(false, beam_size);
+   else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
+@@ -1428,6 +1498,11 @@ BPEngineAln::build(const std::vector<std::string>& model, const char* param, uin
+         auto e = std::make_unique<CONTRAfoldModel>();
+         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+       }
++      else if (strcasecmp(m, "NUPACK")==0 || strcasecmp(m, "LinearNUPACK")==0 || strcasecmp(m, "lnupack")==0)
++      {
++        auto e=BPEngineSeq::build(m,param,beam_size);
++        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
++      }
+       else if (strcasecmp(m, "Alifold")==0)
+       {
+         en_a.push_back(std::make_unique<AlifoldModel>(param));
+diff --git a/src/fold.h b/src/fold.h
+index c8975b3..e2d056a 100644
+--- a/src/fold.h
++++ b/src/fold.h
+@@ -148,6 +148,19 @@ private:
+   const char* param_;
+ };
+ 
++class LinearNupackModel : public BPEngineSeq
++{
++public:
++  LinearNupackModel(const char* param, uint beam_size=100) : param_(param), beam_size_(beam_size) {}
++  void calculate_posterior(const std::string&, std::vector<float>&, std::vector<int>&) const override;
++  VSVF calculate_posterior(const std::string&, float th=DEFAULT_THRESHOLD) const override;
++  void calculate_posterior(const std::string&, const std::string&, std::vector<float>&, std::vector<int>&) const override;
++  VSVF calculate_posterior(const std::string&, const std::string&, float th=DEFAULT_THRESHOLD) const override;
++private:
++  const char* param_;
++  uint beam_size_;
++};
++
+ class LinearPartitionModel : public BPEngineSeq
+ {
+ public:
+diff --git a/src/main.cpp b/src/main.cpp
+index b97cd29..d550452 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -754,7 +754,7 @@ main(int argc, char* argv[])
+     ("n,threads", "The number of threads for the available solvers",
+       cxxopts::value<uint>()->default_value("1"), "N")
+ #endif
+-    ("P,param", "Read the energy parameter file for Vienna RNA package",
++    ("P,param", "Read an energy parameter file for the selected model",
+       cxxopts::value<std::string>(), "FILE")
+     ("x,aux", "Import an auxiliary file for base-pairing probabilities",
+       cxxopts::value<bool>()->default_value("false"))
+@@ -773,7 +773,7 @@ main(int argc, char* argv[])
+     ("V,verbose", "Verbose output")
+     ("loglevel", "Set the logging level (trace, debug, info, warn, error, critical)",
+       cxxopts::value<std::string>()->default_value("warn"), "LEVEL")
+-    ("beam-size", "Beam size for LinearPartition algorithm",
++    ("beam-size", "Beam size for LinearPartition / LinearNUPACK (0 disables pruning)",
+       cxxopts::value<uint>()->default_value("100"), "N")
+     ("base-pairs", "Specify base pair count constraints (e.g., GC=1,AU=3,GU=1,UU=1)",
+       cxxopts::value<std::string>(), "CONSTRAINTS")
+diff --git a/src/nupack/dptable.h b/src/nupack/dptable.h
+index 89e0c8b..31b8f4c 100644
+--- a/src/nupack/dptable.h
++++ b/src/nupack/dptable.h
+@@ -23,6 +23,12 @@
+ #define __INC_DP_TABLE_H__
+ 
+ #include <cassert>
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <stdexcept>
++#include <limits>
++#include <vector>
+ 
+ template < class T >
+ class DPTable2
+@@ -37,7 +43,7 @@ public:
+   void resize(int n)
+   {
+     N_=n;
+-    V_.resize(N_*(N_+1)/2+(N_+1));
++    V_.resize(std::size_t(N_)*(N_+1)/2+(N_+1));
+   }
+ 
+   void fill(const T& v)
+@@ -56,12 +62,13 @@ public:
+   }
+ 
+ private:
+-  int index(int i, int j) const
++  std::size_t index(int i, int j) const
+   {
+     //assert(i<=j);
+     assert(j<=N_);
+ 
+-    return j==i-1 ? N_*(N_+1)/2 + i : i*N_+j-i*(1+i)/2;
++    return j==i-1 ? std::size_t(N_)*(N_+1)/2 + i :
++      std::size_t(i)*N_+j-std::size_t(i)*(1+i)/2;
+   }
+ 
+ private:
+@@ -79,8 +86,21 @@ public:
+ 
+   void resize(int n)
+   {
++    if (n < 0) throw std::invalid_argument("negative DP table size");
++    if (n == N_ && !V_.empty()) return;
+     N_=n;
+-    V_.resize(N_*(N_-1)*(N_-2)*(N_-3)/2/3/4);
++    const auto count = choose(n, 4);
++    // The degenerate one-pair state has its own slot, even for n < 4.
++    V_.resize(static_cast<std::size_t>(count)+1);
++    left_.resize(n);
++    inner_left_.resize(n);
++    inner_right_.resize(n);
++    for (int i=0; i<n; ++i)
++    {
++      left_[i] = count-choose(n-i,4)+choose(n-i-1,3);
++      inner_left_[i] = -choose(n-i,3)+choose(n-i-1,2);
++      inner_right_[i] = -choose(n-i,2)-i-1;
++    }
+   }
+ 
+   void fill(const T& v)
+@@ -99,33 +119,35 @@ public:
+   }
+ 
+ private:
+-  int index(int h, int r, int m, int s) const
+-  {
+-    int n = N_;
+-    int h2 = h*h;
+-    int h3 = h2*h;
+-    int h4 = h3*h;
+-    int m2 = m*m;
+-    int n2 = n*n;
+-    int n3 = n2*n;
+-    int r2 = r*r;
+-    int r3 = r2*r;
++  static std::int64_t choose(int n, int k)
++  {
++    if (n < k) return 0;
++    std::int64_t result=1;
++    for (int i=1; i<=k; ++i)
++    {
++      if (result>std::numeric_limits<std::int64_t>::max()/(n-i+1))
++        throw std::length_error("NUPACK DP table is too large");
++      result=result*(n-i+1)/i;
++    }
++    return result;
++  }
+ 
++  std::size_t index(int h, int r, int m, int s) const
++  {
++    assert(h>=0);
+     assert(h<=r);
+     assert(r<=m);
+     assert(m<=s);
+-    assert(s<=N_);
+-
+-    return (h==r && m==s) ? V_.size()-1 :
+-      (-24 - 50*h - 35*h2 - 10*h3 - h4 - 36*m -12*m2 +
+-       12*n + 70*h*n + 30*h2*n + 4*h3*n + 24*m*n - 12*n2 -30*h*n2 -
+-       6*h2*n2 + 4*h*n3 + 44*r - 48*n*r + 12*n2*r + 
+-       24*r2 - 12*n*r2 +  4*r3 + 24*s)/24 ;
++    assert(s<N_);
++    if (h==r && m==s) return V_.size()-1;
++    assert(h<r && r<m && m<s);
++    return static_cast<std::size_t>(left_[h]+inner_left_[r]+inner_right_[m]+s);
+   }
+ 
+ private:
+   std::vector<T> V_;
+   int N_;
++  std::vector<std::int64_t> left_, inner_left_, inner_right_;
+ };
+ 
+ template < class T >
+@@ -140,9 +162,10 @@ public:
+   {
+     N_=n;
+     D_=d;
+-    int max_sz=0;
++    std::size_t max_sz=0;
+     for (int i=d; i<d+3; ++i)
+-      max_sz = std::max(max_sz, (N_-i)*(i-5)*(i-1)*(i-2)/2);
++      if (i>5 && i<N_)
++        max_sz = std::max(max_sz, std::size_t(N_-i)*(i-5)*(i-1)*(i-2)/2);
+     V_.resize(max_sz);
+   }
+ 
+@@ -169,17 +192,17 @@ public:
+   }
+ 
+ private:
+-  int index(int i, int h1, int m1, int s) const
++  std::size_t index(int i, int h1, int m1, int s) const
+   {
+     int d=D_;
+-    int d1d2 = (d-1)*(d-2);
++    std::size_t d1d2 = std::size_t(d-1)*(d-2);
+     int d5 = d-5;
+     int h1_i_1 = h1-i-1;
+     assert(i+d<N_);
+     assert(d-6>=s);
+     assert(i<h1);
+-    return i*d5*d1d2/2 + s*d1d2/2 + 
+-      h1_i_1*(d-1) - h1_i_1*(h1-i)/2 + m1 - h1 - 1;
++    return std::size_t(i)*d5*d1d2/2 + s*d1d2/2 +
++      std::size_t(h1_i_1)*(d-1) - std::size_t(h1_i_1)*(h1-i)/2 + m1 - h1 - 1;
+   }
+ 
+ private:
+diff --git a/src/nupack/nupack.cpp b/src/nupack/nupack.cpp
+index 9597caf..135c4d2 100644
+--- a/src/nupack/nupack.cpp
++++ b/src/nupack/nupack.cpp
+@@ -27,6 +27,7 @@
+ #include <fstream>
+ #include <sstream>
+ #include <algorithm>
++#include <cstring>
+ #include "dptable.h"
+ 
+ typedef float energy_t;
+@@ -39,13 +40,14 @@ enum { BASE_N=0, BASE_A, BASE_C, BASE_G, BASE_U };
+ enum { A=BASE_A-1, C=BASE_C-1, G=BASE_G-1, U=BASE_U-1 };
+ enum { AU=PAIR_AU, CG=PAIR_CG, GC=PAIR_GC, UA=PAIR_UA, GU=PAIR_GU, UG=PAIR_UG };
+ 
+-#define EXP expl
++#define EXP exp_weight
+ #define LOG logl
+ 
+ template < class PF_TYPE >
+ Nupack<PF_TYPE>::
+ Nupack()
+   : base_map('z'-'a'+1),
++    N(0),
+     RT(kB*(ZERO_C_IN_KELVIN+37)),
+     SALT_CORRECTION(0),
+     loop_greater30(1.079 /*=1.75*RT*/),
+@@ -111,7 +113,8 @@ bool
+ Nupack<PF_TYPE>::
+ wc_pair(int i, int j) const
+ {
+-  return pair_type(i, j)!=PAIR_GU && pair_type(i, j)!=PAIR_UG;
++  const int type=pair_type(i,j);
++  return type>=0 && type!=PAIR_GU && type!=PAIR_UG;
+ }
+ 
+ template < class PF_TYPE >
+@@ -129,7 +132,57 @@ load_sequence(const std::string& s)
+ {
+   N=s.size();
+   seq.resize(N);
+-  for (int i=0; i!=N; ++i) seq[i] = base(s[i]);
++  non_c_prefix.assign(N+1, 0);
++  for (int i=0; i!=N; ++i)
++  {
++    seq[i] = base(s[i]);
++    non_c_prefix[i+1] = non_c_prefix[i] + (seq[i]!=BASE_C);
++  }
++  allow_paired_tbl.resize(0);
++  dangle_left.clear(); dangle_right.clear();
++  hairpin_length.clear(); bulge_length.clear(); interior_length.clear();
++}
++
++template <class PF_TYPE>
++void Nupack<PF_TYPE>::prepare_scoring()
++{
++  // Exact memoization of the float argument: no quantization or fast-math.
++  // A bounded direct-mapped cache avoids allocation in the recurrence.
++  exp_cache.assign(N>=24 ? 8192 : 0, ExpEntry{});
++  dangle_left.assign(N, 0);
++  dangle_right.assign(N, 0);
++  for (int i=0; i<N; ++i)
++  {
++    if (i>0 && seq[i]>0 && seq[i-1]>0)
++      dangle_left[i] = dangle5_37[pair_type(i-1)][seq[i]-1];
++    if (i+1<N && seq[i]>0 && seq[i+1]>0)
++      dangle_right[i] = dangle3_37[3-pair_type(i+1)][seq[i]-1];
++  }
++  hairpin_length.resize(N+1);
++  bulge_length.resize(N+1);
++  interior_length.resize(N+1);
++  for (int l=1; l<=N; ++l)
++  {
++    const auto extension = l>30 ? loop_greater30*LOG(l/30.0) : 0.0L;
++    hairpin_length[l] = l<=30 ? hairpin37[l-1] : hairpin37[29]+extension;
++    bulge_length[l] = l<=30 ? bulge37[l-1] : bulge37[29]+extension;
++    interior_length[l] = l<=30 ? interior37[l-1] : interior37[29]+extension;
++  }
++}
++
++template<class PF_TYPE>
++long double Nupack<PF_TYPE>::exp_weight(float exponent) const
++{
++  if (exp_cache.empty()) return expl(exponent);
++  std::uint32_t bits;
++  std::memcpy(&bits,&exponent,sizeof(bits));
++  const auto hash=(bits^(bits>>16))*0x9e3779b9u;
++  auto& entry=exp_cache[hash&(exp_cache.size()-1)];
++  if (!entry.valid || entry.key!=bits)
++  {
++    entry.value=expl(exponent); entry.key=bits; entry.valid=true;
++  }
++  return entry.value;
+ }
+ 
+ template < class PF_TYPE >
+@@ -137,10 +190,17 @@ void
+ Nupack<PF_TYPE>::
+ load_constraints(const std::vector<int>& bpseq)
+ {
++  if (bpseq.size()!=static_cast<std::size_t>(N))
++    throw std::invalid_argument("NUPACK constraint length differs from sequence");
+   allow_paired_tbl.resize(N);
+   allow_paired_tbl.fill(0);
+-  for (size_t i=0; i!=N; ++i)
+-    allow_paired_tbl(i, bpseq[i]) = 1;
++  for (int i=0; i<N; ++i)
++    if (bpseq[i]>=0)
++    {
++      if (bpseq[i]>=N || bpseq[i]==i || bpseq[bpseq[i]]!=i)
++        throw std::invalid_argument("invalid NUPACK base-pair constraint");
++      if (i<bpseq[i]) allow_paired_tbl(i,bpseq[i])=1;
++    }
+ }
+ 
+ int
+@@ -1244,6 +1304,7 @@ load_default_parameters()
+   // asymmetry panelties
+   for (int i=0; i<4; ++i)
+     asymmetry_penalty[i] = *(v++)/100.0;
++  max_asymmetry = *(v++)/100.0;
+ 
+   // mismatch hairpin
+   for (int i=0; i!=4; ++i)
+@@ -1487,6 +1548,7 @@ typename Nupack<PF_TYPE>::pf_type
+ Nupack<PF_TYPE>::
+ calculate_partition_function()
+ {
++  prepare_scoring();
+   Q.resize(N);    Q.fill(0.0);
+   Qb.resize(N);   Qb.fill(0.0);
+   Qm.resize(N);   Qm.fill(0.0);
+@@ -1498,6 +1560,7 @@ calculate_partition_function()
+   Qgls.resize(N); Qgls.fill(0.0);
+   Qgrs.resize(N); Qgrs.fill(0.0);
+   for (int i=0; i!=N; ++i) Q(i,i-1) = Qz(i,i-1) = 1.0;
++  Q(0,-1)=Qz(0,-1)=1.0;
+   DPTableX<PF_TYPE> Qx, Qx1, Qx2;
+ 
+   for (int l=1; l<=N; ++l)
+@@ -2085,6 +2148,7 @@ typename Nupack<PF_TYPE>::pf_type
+ Nupack<PF_TYPE>::
+ calculate_minimum_free_energy()
+ {
++  prepare_scoring();
+   Q.resize(N);    Q.fill(0.0);
+   Qb.resize(N);   Qb.fill(0.0);
+   Qm.resize(N);   Qm.fill(0.0);
+@@ -2862,13 +2926,16 @@ calculate_posterior()
+                 int e=d;
+                 DBL_TYPE p = Qg(i,a,d,e) * Qg(b,c,f,j) * Qz(e+1,f-1) * Qz(c+1,d-1) * Qz(a+1,b-1) *
+                   EXP( -( score_pk_paired(2) +
++                          score_pk_band(2) +
+                           score_at_penalty(a,d) +
+                           score_at_penalty(c,f) +
+                           score_at_penalty(i,e) +
+                           score_at_penalty(b,j) )/RT )
+                   / Qp(i,j) * Pp(i,j);
+-                Pg(i,a,d,e) += p;
+-                Pg(b,c,f,j) += p;
++                // Degenerate Qg entries share a constant inside slot. Their
++                // pair marginals must be recorded at the actual endpoints.
++                Pbg(i,e) += p;
++                Pbg(b,j) += p;
+                 Pz(e+1,f-1) += p;
+                 Pz(c+1,d-1) += p;
+                 Pz(a+1,b-1) += p;
+@@ -2893,10 +2960,11 @@ calculate_posterior()
+               {
+                 DBL_TYPE p = Qg(i,i,e,f) * Qz(i+1,d-1) * Qgr(d,e-1,f+1,j) *
+                   EXP( -( score_pk_paired(1) +
++                          score_pk_band(2) +
+                           score_at_penalty(d,j) +
+                           score_at_penalty(i,f)*2 )/RT )
+                   / Qp(i,j) * Pp(i,j);
+-                Pg(i,i,e,f) += p;
++                Pbg(i,f) += p;
+                 Pz(i+1,d-1) += p;
+                 Pgr(d,e-1,f+1,j) += p;
+                 assert(!std::isnan(p));
+@@ -2918,11 +2986,12 @@ calculate_posterior()
+                 {
+                   DBL_TYPE p = Qgl(i,d-1,e,f) * Qg(d,d,j,j) * Qz(d+1,e-1) * Qz(f+1,j-1) *
+                     EXP( -( score_pk_paired(1) +
++                            score_pk_band(2) +
+                             score_at_penalty(d,j)*2 +
+                             score_at_penalty(i,f) )/RT )
+                     / Qp(i,j) * Pp(i,j);
+                   Pgl(i,d-1,e,f) += p;
+-                  Pg(d,d,j,j) += p;
++                  Pbg(d,j) += p;
+                   Pz(d+1,e-1) += p;
+                   Pz(f+1,j-1) += p;
+                   assert(!std::isnan(p));
+@@ -2947,7 +3016,8 @@ calculate_posterior()
+                 if (allow_paired(i,f) && wc_pair(i,f) && Pp(i,j)>0.0)
+                 {
+                   DBL_TYPE p = Qgl(i,d-1,e,f) * Qgr(d,e-1,f+1,j) *
+-                    EXP( -( score_at_penalty(d,j) +
++                    EXP( -( score_pk_band(2) +
++                            score_at_penalty(d,j) +
+                             score_at_penalty(i,j) )/RT )
+                     / Qp(i,j) * Pp(i,j);
+                   Pgl(i,d-1,e,f) += p;
+@@ -3510,12 +3580,12 @@ void
+ Nupack<PF_TYPE>::
+ get_posterior(std::vector<float>& bp1, std::vector<float>& bp2, std::vector<int>& offset) const
+ {
+-  bp1.resize((N+1)*(N+2)/2);
+-  bp2.resize((N+1)*(N+2)/2);
++  bp1.assign((N+1)*(N+2)/2,0);
++  bp2.assign((N+1)*(N+2)/2,0);
+   offset.resize(N+1);
+   for (int i=0; i<=N; ++i)
+     offset[i] = i*((N+1)+(N+1)-i-1)/2;
+-  for (int i=0; i!=N-1; ++i)
++  for (int i=0; i<N-1; ++i)
+     for (int j=i+1; j!=N; ++j)
+     {
+       bp1[offset[i+1]+(j+1)] = Pb(i,j);
+@@ -3528,11 +3598,11 @@ void
+ Nupack<PF_TYPE>::
+ get_posterior(std::vector<float>& bp, std::vector<int>& offset) const
+ {
+-  bp.resize((N+1)*(N+2)/2);
++  bp.assign((N+1)*(N+2)/2,0);
+   offset.resize(N+1);
+   for (int i=0; i<=N; ++i)
+     offset[i] = i*((N+1)+(N+1)-i-1)/2;
+-  for (int i=0; i!=N-1; ++i)
++  for (int i=0; i<N-1; ++i)
+     for (int j=i+1; j!=N; ++j)
+       bp[offset[i+1]+(j+1)] = Pb(i,j) + Pbg(i,j);
+ }
+@@ -3543,15 +3613,7 @@ Nupack<PF_TYPE>::
+ score_hairpin(int i, int j) const
+ {
+   energy_t e=0.0;
+-  bool polyC = true;
+-  for (int k=i+1; k<j; ++k)
+-  {
+-    if (seq[k]!=BASE_C)
+-    {
+-      polyC = false;
+-      break;
+-    }
+-  }
++  const bool polyC = non_c_prefix[j]==non_c_prefix[i+1];
+ 
+   int size=j-i-1;
+ #if 0
+@@ -3562,27 +3624,31 @@ score_hairpin(int i, int j) const
+   assert(allow_paired(i,j));
+ #endif
+ 
+-  e += size<=30 ?
++  e += !hairpin_length.empty() ? hairpin_length[size] : size<=30 ?
+     hairpin37[size-1] : 
+     hairpin37[30 - 1] + loop_greater30*LOG(size/30.0);
+ 
+   if (size==3)
+   {
+     e += score_at_penalty(i,j);
+-    e += triloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-1]-1][seq[j]-1];
++    if (seq[i+1]>0 && seq[i+2]>0 && seq[j-1]>0)
++      e += triloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-1]-1][seq[j]-1];
+     if (polyC) e += polyC_penalty;
+     if (seq[i+1]==BASE_G && seq[i+2]==BASE_G && seq[j-1]==BASE_G)
+       e += hairpin_GGG;
+   }
+   else if (size==4)
+   {
+-    e += tloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-2]-1][seq[j-1]-1][seq[j]-1];
+-    e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
++    if (seq[i+1]>0 && seq[i+2]>0 && seq[j-2]>0 && seq[j-1]>0)
++      e += tloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-2]-1][seq[j-1]-1][seq[j]-1];
++    if (seq[i+1]>0 && seq[j-1]>0)
++      e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
+     if (polyC) e += polyC_slope*size + polyC_int;
+   }
+   else /*if (size>4)*/
+   {
+-    e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
++    if (seq[i+1]>0 && seq[j-1]>0)
++      e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
+     if (polyC) e += polyC_slope*size + polyC_int;
+   }
+   return e;
+@@ -3593,7 +3659,7 @@ energy_t
+ Nupack<PF_TYPE>::
+ score_loop(int l) const
+ {
+-  return l<=30 ?
++  return !interior_length.empty() ? interior_length[l] : l<=30 ?
+     interior37[l-1] :
+     interior37[30-1]+loop_greater30*LOG(l/30.0);
+ }
+@@ -3618,7 +3684,7 @@ score_interior(int i, int h, int m, int j, bool pk) const
+   // bulge
+   else if (l1==0 || l2==0)
+   {
+-    e += size<=30 ?
++    e += !bulge_length.empty() ? bulge_length[size] : size<=30 ?
+       bulge37[size-1] :
+       bulge37[30-1] + loop_greater30*LOG(size/30.0);
+ 
+@@ -3638,7 +3704,12 @@ score_interior(int i, int h, int m, int j, bool pk) const
+   else if (l1>0 && l2>0)
+   {
+     int asymmetry = std::abs(l1-l2);
+-    if (asymmetry>1 || size>4)
++    // Ambiguous bases cannot pair. For unpaired ambiguous bases, omit
++    // sequence-specific bonuses and use the generic length/asymmetry model
++    // when a small-loop lookup would otherwise index an unknown nucleotide.
++    const bool tabulated_bases_known = seq[i+1]>0 && seq[j-1]>0 &&
++      (l1==1 || seq[i+2]>0) && (l2==1 || seq[j-2]>0);
++    if (asymmetry>1 || size>4 || !tabulated_bases_known)
+     {
+       e += score_interior_asymmetry(l1, l2);
+       if (l1>1 && l2>1)
+@@ -3689,6 +3760,7 @@ energy_t
+ Nupack<PF_TYPE>::
+ score_interior_mismatch(int i, int j, int k, int l) const
+ {
++  if (seq[k]==BASE_N || seq[l]==BASE_N) return 0;
+   return mismatch_interior37[seq[k]-1][seq[l]-1][pair_type(i,j)];
+ }
+ 
+@@ -3708,7 +3780,7 @@ score_interior_asymmetry(int l1, int l2) const
+   energy_t e=0.0;
+   int size = l1+l2;
+   int asymmetry = std::abs(l1-l2);
+-  e += size<=30 ?
++  e += !interior_length.empty() ? interior_length[size] : size<=30 ?
+     interior37[size-1] :
+     interior37[30-1] + loop_greater30*LOG(size/30.0);
+ 
+@@ -3756,6 +3828,13 @@ energy_t
+ Nupack<PF_TYPE>::
+ score_dangle(int i, int j) const
+ {
++  if (!dangle_left.empty())
++  {
++    if (j<i) return 0.0;
++    if (i==j && i!=0 && j!=N-1)
++      return std::min(dangle_right[j], dangle_left[i]);
++    return dangle_right[j]+dangle_left[i];
++  }
+   energy_t d5=0.0, d3=0.0;
+ 
+ #if 0
+@@ -3778,9 +3857,9 @@ score_dangle(int i, int j) const
+   if( (j==-1 && i>0) || (j==i-1 && (i==0 || j==N-1)) )
+     return 0.0;
+ 
+-  if (j!=N-1)
++  if (j!=N-1 && seq[j]>0 && seq[j+1]>0)
+     d3 = dangle3_37[3-pair_type(j+1)][seq[j]-1];
+-  if (i!=0)
++  if (i!=0 && seq[i]>0 && seq[i-1]>0)
+     d5 = dangle5_37[pair_type(i-1)][seq[i]-1];
+ #endif
+ 
+diff --git a/src/nupack/nupack.h b/src/nupack/nupack.h
+index 9264d8d..fbeac80 100644
+--- a/src/nupack/nupack.h
++++ b/src/nupack/nupack.h
+@@ -24,6 +24,8 @@
+ 
+ #include <vector>
+ #include <string>
++#include <cmath>
++#include <cstdint>
+ #include "dptable.h"
+ 
+ #define kB 0.00198717 // Boltzmann constant in kcal/mol/K
+@@ -58,6 +60,11 @@ public:
+   void get_posterior(std::vector<float>& bp1, std::vector<float>& bp2, std::vector<int>& offset) const;
+   
+ private:
++  friend class LinearNupack;
++  void prepare_scoring();
++  long double exp_weight(float exponent) const;
++  template<class T> long double exp_weight(T exponent) const
++  { return std::exp(static_cast<long double>(exponent)); }
+   void fastiloops(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2);
+   void fastiloopsv(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2);
+   void fastiloops_pr(int i, int j,
+@@ -95,6 +102,11 @@ private:
+   std::vector<int> base_map;
+   int pair_map[5][5];
+   std::vector<int> seq;
++  std::vector<int> non_c_prefix;
++  std::vector<energy_t> dangle_left, dangle_right;
++  std::vector<energy_t> hairpin_length, bulge_length, interior_length;
++  struct ExpEntry { long double value=0; std::uint32_t key=0; bool valid=false; };
++  mutable std::vector<ExpEntry> exp_cache;
+   int N;
+   float RT;
+   DPTable2<int> allow_paired_tbl;

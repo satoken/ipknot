@@ -27,6 +27,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cstring>
 #include "dptable.h"
 
 typedef float energy_t;
@@ -39,13 +40,14 @@ enum { BASE_N=0, BASE_A, BASE_C, BASE_G, BASE_U };
 enum { A=BASE_A-1, C=BASE_C-1, G=BASE_G-1, U=BASE_U-1 };
 enum { AU=PAIR_AU, CG=PAIR_CG, GC=PAIR_GC, UA=PAIR_UA, GU=PAIR_GU, UG=PAIR_UG };
 
-#define EXP expl
+#define EXP exp_weight
 #define LOG logl
 
 template < class PF_TYPE >
 Nupack<PF_TYPE>::
 Nupack()
   : base_map('z'-'a'+1),
+    N(0),
     RT(kB*(ZERO_C_IN_KELVIN+37)),
     SALT_CORRECTION(0),
     loop_greater30(1.079 /*=1.75*RT*/),
@@ -111,7 +113,8 @@ bool
 Nupack<PF_TYPE>::
 wc_pair(int i, int j) const
 {
-  return pair_type(i, j)!=PAIR_GU && pair_type(i, j)!=PAIR_UG;
+  const int type=pair_type(i,j);
+  return type>=0 && type!=PAIR_GU && type!=PAIR_UG;
 }
 
 template < class PF_TYPE >
@@ -129,7 +132,57 @@ load_sequence(const std::string& s)
 {
   N=s.size();
   seq.resize(N);
-  for (int i=0; i!=N; ++i) seq[i] = base(s[i]);
+  non_c_prefix.assign(N+1, 0);
+  for (int i=0; i!=N; ++i)
+  {
+    seq[i] = base(s[i]);
+    non_c_prefix[i+1] = non_c_prefix[i] + (seq[i]!=BASE_C);
+  }
+  allow_paired_tbl.resize(0);
+  dangle_left.clear(); dangle_right.clear();
+  hairpin_length.clear(); bulge_length.clear(); interior_length.clear();
+}
+
+template <class PF_TYPE>
+void Nupack<PF_TYPE>::prepare_scoring()
+{
+  // Exact memoization of the float argument: no quantization or fast-math.
+  // A bounded direct-mapped cache avoids allocation in the recurrence.
+  exp_cache.assign(N>=24 ? 8192 : 0, ExpEntry{});
+  dangle_left.assign(N, 0);
+  dangle_right.assign(N, 0);
+  for (int i=0; i<N; ++i)
+  {
+    if (i>0 && seq[i]>0 && seq[i-1]>0)
+      dangle_left[i] = dangle5_37[pair_type(i-1)][seq[i]-1];
+    if (i+1<N && seq[i]>0 && seq[i+1]>0)
+      dangle_right[i] = dangle3_37[3-pair_type(i+1)][seq[i]-1];
+  }
+  hairpin_length.resize(N+1);
+  bulge_length.resize(N+1);
+  interior_length.resize(N+1);
+  for (int l=1; l<=N; ++l)
+  {
+    const auto extension = l>30 ? loop_greater30*LOG(l/30.0) : 0.0L;
+    hairpin_length[l] = l<=30 ? hairpin37[l-1] : hairpin37[29]+extension;
+    bulge_length[l] = l<=30 ? bulge37[l-1] : bulge37[29]+extension;
+    interior_length[l] = l<=30 ? interior37[l-1] : interior37[29]+extension;
+  }
+}
+
+template<class PF_TYPE>
+long double Nupack<PF_TYPE>::exp_weight(float exponent) const
+{
+  if (exp_cache.empty()) return expl(exponent);
+  std::uint32_t bits;
+  std::memcpy(&bits,&exponent,sizeof(bits));
+  const auto hash=(bits^(bits>>16))*0x9e3779b9u;
+  auto& entry=exp_cache[hash&(exp_cache.size()-1)];
+  if (!entry.valid || entry.key!=bits)
+  {
+    entry.value=expl(exponent); entry.key=bits; entry.valid=true;
+  }
+  return entry.value;
 }
 
 template < class PF_TYPE >
@@ -137,10 +190,17 @@ void
 Nupack<PF_TYPE>::
 load_constraints(const std::vector<int>& bpseq)
 {
+  if (bpseq.size()!=static_cast<std::size_t>(N))
+    throw std::invalid_argument("NUPACK constraint length differs from sequence");
   allow_paired_tbl.resize(N);
   allow_paired_tbl.fill(0);
-  for (size_t i=0; i!=N; ++i)
-    allow_paired_tbl(i, bpseq[i]) = 1;
+  for (int i=0; i<N; ++i)
+    if (bpseq[i]>=0)
+    {
+      if (bpseq[i]>=N || bpseq[i]==i || bpseq[bpseq[i]]!=i)
+        throw std::invalid_argument("invalid NUPACK base-pair constraint");
+      if (i<bpseq[i]) allow_paired_tbl(i,bpseq[i])=1;
+    }
 }
 
 int
@@ -1244,6 +1304,7 @@ load_default_parameters()
   // asymmetry panelties
   for (int i=0; i<4; ++i)
     asymmetry_penalty[i] = *(v++)/100.0;
+  max_asymmetry = *(v++)/100.0;
 
   // mismatch hairpin
   for (int i=0; i!=4; ++i)
@@ -1487,6 +1548,7 @@ typename Nupack<PF_TYPE>::pf_type
 Nupack<PF_TYPE>::
 calculate_partition_function()
 {
+  prepare_scoring();
   Q.resize(N);    Q.fill(0.0);
   Qb.resize(N);   Qb.fill(0.0);
   Qm.resize(N);   Qm.fill(0.0);
@@ -1498,6 +1560,7 @@ calculate_partition_function()
   Qgls.resize(N); Qgls.fill(0.0);
   Qgrs.resize(N); Qgrs.fill(0.0);
   for (int i=0; i!=N; ++i) Q(i,i-1) = Qz(i,i-1) = 1.0;
+  Q(0,-1)=Qz(0,-1)=1.0;
   DPTableX<PF_TYPE> Qx, Qx1, Qx2;
 
   for (int l=1; l<=N; ++l)
@@ -2085,6 +2148,7 @@ typename Nupack<PF_TYPE>::pf_type
 Nupack<PF_TYPE>::
 calculate_minimum_free_energy()
 {
+  prepare_scoring();
   Q.resize(N);    Q.fill(0.0);
   Qb.resize(N);   Qb.fill(0.0);
   Qm.resize(N);   Qm.fill(0.0);
@@ -2862,13 +2926,16 @@ calculate_posterior()
                 int e=d;
                 DBL_TYPE p = Qg(i,a,d,e) * Qg(b,c,f,j) * Qz(e+1,f-1) * Qz(c+1,d-1) * Qz(a+1,b-1) *
                   EXP( -( score_pk_paired(2) +
+                          score_pk_band(2) +
                           score_at_penalty(a,d) +
                           score_at_penalty(c,f) +
                           score_at_penalty(i,e) +
                           score_at_penalty(b,j) )/RT )
                   / Qp(i,j) * Pp(i,j);
-                Pg(i,a,d,e) += p;
-                Pg(b,c,f,j) += p;
+                // Degenerate Qg entries share a constant inside slot. Their
+                // pair marginals must be recorded at the actual endpoints.
+                Pbg(i,e) += p;
+                Pbg(b,j) += p;
                 Pz(e+1,f-1) += p;
                 Pz(c+1,d-1) += p;
                 Pz(a+1,b-1) += p;
@@ -2893,10 +2960,11 @@ calculate_posterior()
               {
                 DBL_TYPE p = Qg(i,i,e,f) * Qz(i+1,d-1) * Qgr(d,e-1,f+1,j) *
                   EXP( -( score_pk_paired(1) +
+                          score_pk_band(2) +
                           score_at_penalty(d,j) +
                           score_at_penalty(i,f)*2 )/RT )
                   / Qp(i,j) * Pp(i,j);
-                Pg(i,i,e,f) += p;
+                Pbg(i,f) += p;
                 Pz(i+1,d-1) += p;
                 Pgr(d,e-1,f+1,j) += p;
                 assert(!std::isnan(p));
@@ -2918,11 +2986,12 @@ calculate_posterior()
                 {
                   DBL_TYPE p = Qgl(i,d-1,e,f) * Qg(d,d,j,j) * Qz(d+1,e-1) * Qz(f+1,j-1) *
                     EXP( -( score_pk_paired(1) +
+                            score_pk_band(2) +
                             score_at_penalty(d,j)*2 +
                             score_at_penalty(i,f) )/RT )
                     / Qp(i,j) * Pp(i,j);
                   Pgl(i,d-1,e,f) += p;
-                  Pg(d,d,j,j) += p;
+                  Pbg(d,j) += p;
                   Pz(d+1,e-1) += p;
                   Pz(f+1,j-1) += p;
                   assert(!std::isnan(p));
@@ -2947,7 +3016,8 @@ calculate_posterior()
                 if (allow_paired(i,f) && wc_pair(i,f) && Pp(i,j)>0.0)
                 {
                   DBL_TYPE p = Qgl(i,d-1,e,f) * Qgr(d,e-1,f+1,j) *
-                    EXP( -( score_at_penalty(d,j) +
+                    EXP( -( score_pk_band(2) +
+                            score_at_penalty(d,j) +
                             score_at_penalty(i,j) )/RT )
                     / Qp(i,j) * Pp(i,j);
                   Pgl(i,d-1,e,f) += p;
@@ -3510,12 +3580,12 @@ void
 Nupack<PF_TYPE>::
 get_posterior(std::vector<float>& bp1, std::vector<float>& bp2, std::vector<int>& offset) const
 {
-  bp1.resize((N+1)*(N+2)/2);
-  bp2.resize((N+1)*(N+2)/2);
+  bp1.assign((N+1)*(N+2)/2,0);
+  bp2.assign((N+1)*(N+2)/2,0);
   offset.resize(N+1);
   for (int i=0; i<=N; ++i)
     offset[i] = i*((N+1)+(N+1)-i-1)/2;
-  for (int i=0; i!=N-1; ++i)
+  for (int i=0; i<N-1; ++i)
     for (int j=i+1; j!=N; ++j)
     {
       bp1[offset[i+1]+(j+1)] = Pb(i,j);
@@ -3528,11 +3598,11 @@ void
 Nupack<PF_TYPE>::
 get_posterior(std::vector<float>& bp, std::vector<int>& offset) const
 {
-  bp.resize((N+1)*(N+2)/2);
+  bp.assign((N+1)*(N+2)/2,0);
   offset.resize(N+1);
   for (int i=0; i<=N; ++i)
     offset[i] = i*((N+1)+(N+1)-i-1)/2;
-  for (int i=0; i!=N-1; ++i)
+  for (int i=0; i<N-1; ++i)
     for (int j=i+1; j!=N; ++j)
       bp[offset[i+1]+(j+1)] = Pb(i,j) + Pbg(i,j);
 }
@@ -3543,15 +3613,7 @@ Nupack<PF_TYPE>::
 score_hairpin(int i, int j) const
 {
   energy_t e=0.0;
-  bool polyC = true;
-  for (int k=i+1; k<j; ++k)
-  {
-    if (seq[k]!=BASE_C)
-    {
-      polyC = false;
-      break;
-    }
-  }
+  const bool polyC = non_c_prefix[j]==non_c_prefix[i+1];
 
   int size=j-i-1;
 #if 0
@@ -3562,27 +3624,31 @@ score_hairpin(int i, int j) const
   assert(allow_paired(i,j));
 #endif
 
-  e += size<=30 ?
+  e += !hairpin_length.empty() ? hairpin_length[size] : size<=30 ?
     hairpin37[size-1] : 
     hairpin37[30 - 1] + loop_greater30*LOG(size/30.0);
 
   if (size==3)
   {
     e += score_at_penalty(i,j);
-    e += triloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-1]-1][seq[j]-1];
+    if (seq[i+1]>0 && seq[i+2]>0 && seq[j-1]>0)
+      e += triloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-1]-1][seq[j]-1];
     if (polyC) e += polyC_penalty;
     if (seq[i+1]==BASE_G && seq[i+2]==BASE_G && seq[j-1]==BASE_G)
       e += hairpin_GGG;
   }
   else if (size==4)
   {
-    e += tloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-2]-1][seq[j-1]-1][seq[j]-1];
-    e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
+    if (seq[i+1]>0 && seq[i+2]>0 && seq[j-2]>0 && seq[j-1]>0)
+      e += tloop37[seq[i]-1][seq[i+1]-1][seq[i+2]-1][seq[j-2]-1][seq[j-1]-1][seq[j]-1];
+    if (seq[i+1]>0 && seq[j-1]>0)
+      e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
     if (polyC) e += polyC_slope*size + polyC_int;
   }
   else /*if (size>4)*/
   {
-    e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
+    if (seq[i+1]>0 && seq[j-1]>0)
+      e += mismatch_hairpin37[seq[i+1]-1][seq[j-1]-1][pair_type(i,j)];
     if (polyC) e += polyC_slope*size + polyC_int;
   }
   return e;
@@ -3593,7 +3659,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_loop(int l) const
 {
-  return l<=30 ?
+  return !interior_length.empty() ? interior_length[l] : l<=30 ?
     interior37[l-1] :
     interior37[30-1]+loop_greater30*LOG(l/30.0);
 }
@@ -3618,7 +3684,7 @@ score_interior(int i, int h, int m, int j, bool pk) const
   // bulge
   else if (l1==0 || l2==0)
   {
-    e += size<=30 ?
+    e += !bulge_length.empty() ? bulge_length[size] : size<=30 ?
       bulge37[size-1] :
       bulge37[30-1] + loop_greater30*LOG(size/30.0);
 
@@ -3638,7 +3704,12 @@ score_interior(int i, int h, int m, int j, bool pk) const
   else if (l1>0 && l2>0)
   {
     int asymmetry = std::abs(l1-l2);
-    if (asymmetry>1 || size>4)
+    // Ambiguous bases cannot pair. For unpaired ambiguous bases, omit
+    // sequence-specific bonuses and use the generic length/asymmetry model
+    // when a small-loop lookup would otherwise index an unknown nucleotide.
+    const bool tabulated_bases_known = seq[i+1]>0 && seq[j-1]>0 &&
+      (l1==1 || seq[i+2]>0) && (l2==1 || seq[j-2]>0);
+    if (asymmetry>1 || size>4 || !tabulated_bases_known)
     {
       e += score_interior_asymmetry(l1, l2);
       if (l1>1 && l2>1)
@@ -3689,6 +3760,7 @@ energy_t
 Nupack<PF_TYPE>::
 score_interior_mismatch(int i, int j, int k, int l) const
 {
+  if (seq[k]==BASE_N || seq[l]==BASE_N) return 0;
   return mismatch_interior37[seq[k]-1][seq[l]-1][pair_type(i,j)];
 }
 
@@ -3708,7 +3780,7 @@ score_interior_asymmetry(int l1, int l2) const
   energy_t e=0.0;
   int size = l1+l2;
   int asymmetry = std::abs(l1-l2);
-  e += size<=30 ?
+  e += !interior_length.empty() ? interior_length[size] : size<=30 ?
     interior37[size-1] :
     interior37[30-1] + loop_greater30*LOG(size/30.0);
 
@@ -3756,6 +3828,13 @@ energy_t
 Nupack<PF_TYPE>::
 score_dangle(int i, int j) const
 {
+  if (!dangle_left.empty())
+  {
+    if (j<i) return 0.0;
+    if (i==j && i!=0 && j!=N-1)
+      return std::min(dangle_right[j], dangle_left[i]);
+    return dangle_right[j]+dangle_left[i];
+  }
   energy_t d5=0.0, d3=0.0;
 
 #if 0
@@ -3778,9 +3857,9 @@ score_dangle(int i, int j) const
   if( (j==-1 && i>0) || (j==i-1 && (i==0 || j==N-1)) )
     return 0.0;
 
-  if (j!=N-1)
+  if (j!=N-1 && seq[j]>0 && seq[j+1]>0)
     d3 = dangle3_37[3-pair_type(j+1)][seq[j]-1];
-  if (i!=0)
+  if (i!=0 && seq[i]>0 && seq[i-1]>0)
     d5 = dangle5_37[pair_type(i-1)][seq[i]-1];
 #endif
 

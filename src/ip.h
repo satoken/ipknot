@@ -20,7 +20,18 @@
 #ifndef __INC_IP_H__
 #define __INC_IP_H__
 
+#include <functional>
+#include <memory>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
 class IPimpl;
+struct IPModel;
+class IPInfeasible : public std::runtime_error {
+public:
+  explicit IPInfeasible(const std::string& message) : std::runtime_error(message) {}
+};
 
 class IP
 {
@@ -29,10 +40,15 @@ public:
   typedef enum {FR, LO, UP, DB, FX} BoundType;
 
 public:
-  IP(DirType dir, int n_th);
+  IP(DirType dir, int n_th, bool exact = false);
+  static bool available();
+  // Record the shared formulation without constructing a MIP backend.
+  explicit IP(IPModel& model);
   ~IP();
   int make_variable(double coef);
   int make_variable(double coef, int lo, int hi);
+  int make_continuous_variable(double coef, double lo = 0.0, double hi = 1.0);
+  void add_objective_coefficient(int col, double coefficient);
   int make_constraint(BoundType bnd, double l, double u);
   void add_constraint(int row, int col, double val);
   void update();
@@ -41,6 +57,36 @@ public:
 
 private:
   IPimpl* impl_;
+  IPModel* model_ = nullptr;
+};
+
+// A solver-independent formulation, used by constrained dual decomposition.
+struct IPModel {
+  struct Variable { double coefficient, lower, upper; bool integer; };
+  struct Row {
+    IP::BoundType bound;
+    double lower, upper;
+    std::vector<std::pair<int, double>> terms;
+  };
+  std::vector<Variable> variables;
+  std::vector<Row> rows;
+  std::vector<double> solution;
+  std::function<double()> optimize;
+};
+
+// Optimize an immutable recorded model with changing objective coefficients.
+// Model indices are always zero-based, independently of the backend's indices.
+// Backend-specific model reuse and objective bounds are implemented in ip.cpp.
+class IPModelSolver {
+public:
+  struct Result { double objective, bound; };
+  IPModelSolver(const IPModel& model, IP::DirType direction, int threads = 1);
+  ~IPModelSolver();
+  Result solve(const std::vector<double>& coefficients);
+  double get_value(int column) const;
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 #endif  // __INC_IP_H__

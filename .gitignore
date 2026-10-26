@@ -12,3 +12,11 @@ CMakeCache.txt
 CMakeFiles
 cmake_install.cmake
 build
+/build-pk-merged-highs/
+__pycache__/
+exp
+/prompt.txt
+
+# Keep local research documentation out of future commits.
+/docs/
+/build-no-pk-highs/

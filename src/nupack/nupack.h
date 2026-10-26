@@ -24,6 +24,8 @@
 
 #include <vector>
 #include <string>
+#include <cmath>
+#include <cstdint>
 #include "dptable.h"
 
 #define kB 0.00198717 // Boltzmann constant in kcal/mol/K
@@ -58,6 +60,11 @@ public:
   void get_posterior(std::vector<float>& bp1, std::vector<float>& bp2, std::vector<int>& offset) const;
   
 private:
+  friend class LinearNupack;
+  void prepare_scoring();
+  long double exp_weight(float exponent) const;
+  template<class T> long double exp_weight(T exponent) const
+  { return std::exp(static_cast<long double>(exponent)); }
   void fastiloops(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2);
   void fastiloopsv(int i, int j, DPTable4<PF_TYPE>& Qg, DPTableX<PF_TYPE>& Qx, DPTableX<PF_TYPE>& Qx2);
   void fastiloops_pr(int i, int j,
@@ -95,6 +102,11 @@ private:
   std::vector<int> base_map;
   int pair_map[5][5];
   std::vector<int> seq;
+  std::vector<int> non_c_prefix;
+  std::vector<energy_t> dangle_left, dangle_right;
+  std::vector<energy_t> hairpin_length, bulge_length, interior_length;
+  struct ExpEntry { long double value=0; std::uint32_t key=0; bool valid=false; };
+  mutable std::vector<ExpEntry> exp_cache;
   int N;
   float RT;
   DPTable2<int> allow_paired_tbl;

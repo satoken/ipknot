@@ -23,8 +23,13 @@
 
 #include "ip.h"
 #include <vector>
+#include <memory>
 #include <cassert>
 #include <stdexcept>
+#include <utility>
+
+#include <cstdlib>
+#include <cstdio>
 #ifdef WITH_GLPK
 #include <glpk.h>
 #endif
@@ -45,6 +50,10 @@ extern "C" {
 #endif
 
 #include <cfloat>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <map>
 
 #ifdef WITH_GLPK
 class IPimpl
@@ -60,6 +69,8 @@ public:
       case IP::MAX: glp_set_obj_dir(ip_, GLP_MAX); break;
     }
   }
+
+  void configure_exact() {} // glp_iocp defaults to zero MIP gap
 
   ~IPimpl()
   {
@@ -78,10 +89,24 @@ public:
   int make_variable(double coef, int lo, int hi)
   {
     int col = glp_add_cols(ip_, 1);
-    glp_set_col_bnds(ip_, col, GLP_DB, lo, hi);
+    glp_set_col_bnds(ip_, col, lo == hi ? GLP_FX : GLP_DB, lo, hi);
     glp_set_col_kind(ip_, col, GLP_IV);
     glp_set_obj_coef(ip_, col, coef);
     return col;
+  }
+
+  int make_continuous_variable(double coef, double lo, double hi)
+  {
+    int col = glp_add_cols(ip_, 1);
+    glp_set_col_bnds(ip_, col, lo == hi ? GLP_FX : GLP_DB, lo, hi);
+    glp_set_col_kind(ip_, col, GLP_CV);
+    glp_set_obj_coef(ip_, col, coef);
+    return col;
+  }
+
+  void add_objective_coefficient(int col, double coefficient)
+  {
+    glp_set_obj_coef(ip_, col, glp_get_obj_coef(ip_, col) + coefficient);
   }
 
   int make_constraint(IP::BoundType bnd, double l, double u)
@@ -116,8 +141,13 @@ public:
     glp_init_smcp(&smcp); smcp.msg_lev = GLP_MSG_ERR;
     glp_init_iocp(&iocp); iocp.msg_lev = GLP_MSG_ERR;
     glp_load_matrix(ip_, ia_.size()-1, &ia_[0], &ja_[0], &ar_[0]);
-    glp_simplex(ip_, &smcp);
-    glp_intopt(ip_, &iocp);
+    const int lp_status = glp_simplex(ip_, &smcp);
+    if (glp_get_status(ip_) == GLP_NOFEAS) throw IPInfeasible("GLPK model is infeasible");
+    const int mip_status = glp_intopt(ip_, &iocp);
+    if (glp_mip_status(ip_) == GLP_NOFEAS) throw IPInfeasible("GLPK model is infeasible");
+    if (lp_status != 0 || mip_status != 0 || glp_mip_status(ip_) != GLP_OPT) {
+      throw std::runtime_error("GLPK failed to find an optimal solution");
+    }
     return glp_mip_obj_val(ip_);
   }
 
@@ -147,6 +177,11 @@ public:
     model_ = new GRBModel(*env_);
   }
 
+  void configure_exact() {
+    model_->set(GRB_DoubleParam_MIPGap, 0.0);
+    model_->set(GRB_DoubleParam_MIPGapAbs, 0.0);
+  }
+
   ~IPimpl()
   {
     delete model_;
@@ -163,6 +198,17 @@ public:
   {
     vars_.push_back(model_->addVar(lo, hi, dir_*coef, GRB_INTEGER));
     return vars_.size()-1;
+  }
+
+  int make_continuous_variable(double coef, double lo, double hi)
+  {
+    vars_.push_back(model_->addVar(lo, hi, dir_*coef, GRB_CONTINUOUS));
+    return vars_.size()-1;
+  }
+
+  void add_objective_coefficient(int col, double coefficient)
+  {
+    vars_[col].set(GRB_DoubleAttr_Obj, vars_[col].get(GRB_DoubleAttr_Obj) + dir_ * coefficient);
   }
 
   int make_constraint(IP::BoundType bnd, double l, double u)
@@ -204,7 +250,12 @@ public:
     u_.clear();
     m_.clear();
     model_->optimize();
-    return model_->get(GRB_DoubleAttr_ObjVal);
+    if (model_->get(GRB_IntAttr_Status) == GRB_INFEASIBLE)
+      throw IPInfeasible("Gurobi model is infeasible");
+    if (model_->get(GRB_IntAttr_Status) != GRB_OPTIMAL) {
+      throw std::runtime_error("Gurobi failed to find an optimal solution");
+    }
+    return dir_ * model_->get(GRB_DoubleAttr_ObjVal);
   }
 
   double get_value(int col) const
@@ -243,6 +294,12 @@ public:
     status = CPXsetintparam(env_, CPXPARAM_Threads, n_th);
   }
 
+  void configure_exact() {
+    if (CPXsetdblparam(env_, CPXPARAM_MIP_Tolerances_MIPGap, 0.0) ||
+        CPXsetdblparam(env_, CPXPARAM_MIP_Tolerances_AbsMIPGap, 0.0))
+      throw std::runtime_error("Cannot set CPLEX exact MIP tolerances");
+  }
+
   ~IPimpl()
   {
     if (lp_) CPXfreeprob(env_, &lp_);
@@ -256,6 +313,10 @@ public:
     coef_.push_back(coef);
     vlb_.push_back(0.0);
     vub_.push_back(1.0);
+    // Recorded models may introduce auxiliary variables after the initial
+    // update().  Keep the sparse column storage in step with vars_ so that
+    // add_constraint() can address those columns immediately.
+    m_.emplace_back();
     return col;
   }
 
@@ -266,9 +327,26 @@ public:
     coef_.push_back(coef);
     vlb_.push_back(lo);
     vub_.push_back(hi);
+    m_.emplace_back();
     return col;
   }
  
+  int make_continuous_variable(double coef, double lo, double hi)
+  {
+    int col = vars_.size();
+    vars_.push_back('C');
+    coef_.push_back(coef);
+    vlb_.push_back(lo);
+    vub_.push_back(hi);
+    m_.emplace_back();
+    return col;
+  }
+
+  void add_objective_coefficient(int col, double coefficient)
+  {
+    coef_[col] += coefficient;
+  }
+
   int make_constraint(IP::BoundType bnd, double l, double u)
   {
     int row = bnd_.size();
@@ -327,13 +405,17 @@ public:
 
     status = CPXcopylp(env_, lp_, numcols, numrows,
                         dir_==IP::MIN ? CPX_MIN : CPX_MAX,
-                        &coef_[0], &rhs_[0], &bnd_[0], 
-                        &matbeg[0], &matcnt[0], &matind[0], &matval[0],
-                        &vlb_[0], &vub_[0], &rngval_[0] );
+                        coef_.data(), rhs_.data(), bnd_.data(),
+                        matbeg.data(), matcnt.data(), matind.data(), matval.data(),
+                        vlb_.data(), vub_.data(), rngval_.data() );
+    if (status != 0)
+      throw std::runtime_error("CPLEX failed to copy the optimization model");
     vlb_.clear();
     vub_.clear();
 
-    status = CPXcopyctype(env_, lp_, &vars_[0]);
+    status = CPXcopyctype(env_, lp_, vars_.data());
+    if (status != 0)
+      throw std::runtime_error("CPLEX failed to copy variable types");
     vars_.clear();
 
     CPXsetintparam(env_, CPXPARAM_MIP_Display, 0);
@@ -344,10 +426,23 @@ public:
     CPXsetintparam(env_, CPXPARAM_Simplex_Display, 0);
 
     status = CPXmipopt(env_, lp_);
+    if (status != 0) {
+      throw std::runtime_error("CPLEX failed while optimizing the model");
+    }
+    const int solution_status = CPXgetstat(env_, lp_);
+    if (solution_status == CPXMIP_INFEASIBLE) throw IPInfeasible("CPLEX model is infeasible");
+    if (solution_status != CPXMIP_OPTIMAL &&
+        solution_status != CPXMIP_OPTIMAL_TOL) {
+      char status_message[CPXMESSAGEBUFSIZE];
+      CPXgetstatstring(env_, solution_status, status_message);
+      throw std::runtime_error(
+          std::string("CPLEX failed to find an optimal solution: ") +
+          status_message);
+    }
     double objval;
     status = CPXgetobjval(env_, lp_, &objval);
     res_cols_.resize(CPXgetnumcols(env_, lp_));
-    status = CPXgetx(env_, lp_, &res_cols_[0], 0, res_cols_.size()-1);
+    status = CPXgetx(env_, lp_, res_cols_.data(), 0, res_cols_.size()-1);
 
     return objval;
   }
@@ -391,6 +486,12 @@ public:
     }
   }
 
+  void configure_exact() {
+    if (SCIPsetRealParam(scip_, "limits/gap", 0.0) != SCIP_OKAY ||
+        SCIPsetRealParam(scip_, "limits/absgap", 0.0) != SCIP_OKAY)
+      throw std::runtime_error("Cannot set SCIP exact MIP tolerances");
+  }
+
   ~IPimpl()
   {
     for (auto& v: vars_)
@@ -404,6 +505,8 @@ public:
   {
     int col = vars_.size();
     SCIP_VAR *var = nullptr;
+    const SCIP_VARTYPE variable_type =
+        (lo == 0 && hi == 1) ? SCIP_VARTYPE_BINARY : SCIP_VARTYPE_INTEGER;
     char buf[16];
     snprintf(buf, sizeof(buf), "var[%d]", col);
     SCIPcreateVarBasic(scip_,                // SCIP environment
@@ -412,11 +515,28 @@ public:
                        lo,                   // Lower bound of the variable
                        hi,                   // upper bound of the variable
                        coef,                 // Obj. coefficient. 
-                       SCIP_VARTYPE_BINARY   // Binary variable
+                       variable_type         // Binary or bounded integer
                       );
     SCIPaddVar(scip_, var);
     vars_.push_back(var);
     return col;
+  }
+
+  int make_continuous_variable(double coef, double lo, double hi)
+  {
+    int col = vars_.size();
+    SCIP_VAR* var = nullptr;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "continuous[%d]", col);
+    SCIPcreateVarBasic(scip_, &var, buf, lo, hi, coef, SCIP_VARTYPE_CONTINUOUS);
+    SCIPaddVar(scip_, var);
+    vars_.push_back(var);
+    return col;
+  }
+
+  void add_objective_coefficient(int col, double coefficient)
+  {
+    SCIPchgVarObj(scip_, vars_[col], SCIPvarGetObj(vars_[col]) + coefficient);
   }
 
   int make_constraint(IP::BoundType bnd, double l, double u)
@@ -468,8 +588,12 @@ public:
     // SCIP_CALL((SCIPwriteOrigProblem(scip, "ipknot.lp", nullptr, FALSE)));
     SCIPsetIntParam(scip_, "display/verblevel", 0);   // We use SCIPsetIntParams to turn off the logging. 
     SCIPsolve(scip_);
-    SCIP_STATUS soln_status = SCIPgetStatus(scip_); 
+    SCIP_STATUS soln_status = SCIPgetStatus(scip_);
+    if (soln_status == SCIP_STATUS_INFEASIBLE) throw IPInfeasible("SCIP model is infeasible");
     sol_ = SCIPgetBestSol(scip_);
+    if (soln_status != SCIP_STATUS_OPTIMAL || sol_ == nullptr) {
+      throw std::runtime_error("SCIP failed to find an optimal solution");
+    }
     return SCIPgetSolOrigObj(scip_, sol_);
   }
 
@@ -493,7 +617,7 @@ public:
   IPimpl(IP::DirType dir, int n_th)
     : model_()
   {
-    highs_.setOptionValue("output_flag", false);
+    highs_.setOptionValue("output_flag", std::getenv("IPKNOT_HIGHS_LOG") != nullptr);
     highs_.setOptionValue("threads", n_th);
     switch (dir)
     {
@@ -501,6 +625,12 @@ public:
       case IP::MAX: model_.lp_.sense_ = ObjSense::kMaximize; break;
       case IP::MIN: model_.lp_.sense_ = ObjSense::kMinimize; break;
     }
+  }
+
+  void configure_exact() {
+    if (highs_.setOptionValue("mip_rel_gap", 0.0) != HighsStatus::kOk ||
+        highs_.setOptionValue("mip_abs_gap", 0.0) != HighsStatus::kOk)
+      throw std::runtime_error("Cannot set HiGHS exact MIP tolerances");
   }
 
   ~IPimpl()
@@ -511,10 +641,23 @@ public:
   {
     int col = col_cost_.size();
     col_cost_.push_back(coef);
+    integrality_.push_back(HighsVarType::kInteger);
     col_lower_.push_back(l);
     col_upper_.push_back(u);
     m_.resize(col_cost_.size());
     return col;
+  }
+
+  int make_continuous_variable(double coef, double lo, double hi)
+  {
+    int col = make_variable(coef, lo, hi);
+    integrality_[col] = HighsVarType::kContinuous;
+    return col;
+  }
+
+  void add_objective_coefficient(int col, double coefficient)
+  {
+    col_cost_[col] += coefficient;
   }
 
   int make_constraint(IP::BoundType bnd, double l, double u)
@@ -552,38 +695,41 @@ public:
     for (auto i=1; i!=start.size(); i++)
       start[i] = start[i-1] + m_[i-1].size();
     auto non_zeros = start[start.size()-1];
-    std::vector<HighsInt> index(non_zeros);
-    std::vector<double> value(non_zeros);
-    for (auto i=0, k=0; i!=numcols; i++)
+    std::vector<HighsInt> index;
+    std::vector<double> value;
+    index.reserve(non_zeros);
+    value.reserve(non_zeros);
+    for (auto i=0; i!=numcols; i++)
     {
-      for (auto j=0; j!=m_[i].size(); j++, k++)
+      for (const auto& entry : m_[i])
       {
-        index[k] = m_[i][j].first;
-        value[k] = m_[i][j].second;
+        index.push_back(entry.first);
+        value.push_back(entry.second);
       }
+      // Release each source column as it is transferred. Large recorded matrices
+      // need not keep the complete builder and CSC buffers resident together.
+      std::vector<std::pair<int, double>>().swap(m_[i]);
     }
     m_.clear();
 
     model_.lp_.num_col_ = numcols;
     model_.lp_.num_row_ = numrows;
-    model_.lp_.col_cost_ = col_cost_;
-    model_.lp_.col_lower_ = col_lower_;
-    model_.lp_.col_upper_ = col_upper_;
-    model_.lp_.row_lower_ = row_lower_;
-    model_.lp_.row_upper_ = row_upper_;
-    model_.lp_.a_matrix_.start_ = start;
-    model_.lp_.a_matrix_.index_ = index;
-    model_.lp_.a_matrix_.value_ = value;
+    model_.lp_.col_cost_ = std::move(col_cost_);
+    model_.lp_.col_lower_ = std::move(col_lower_);
+    model_.lp_.col_upper_ = std::move(col_upper_);
+    model_.lp_.row_lower_ = std::move(row_lower_);
+    model_.lp_.row_upper_ = std::move(row_upper_);
+    model_.lp_.a_matrix_.start_ = std::move(start);
+    model_.lp_.a_matrix_.index_ = std::move(index);
+    model_.lp_.a_matrix_.value_ = std::move(value);
 
     // To indicate that variables must take integer values use the HighsLp::integrality vector.
-    model_.lp_.integrality_.resize(numcols);
-    for (int col=0; col < numcols; col++)
-      model_.lp_.integrality_[col] = HighsVarType::kInteger;
+    model_.lp_.integrality_ = integrality_;
 
     HighsStatus return_status;
   
     // Pass the model to HiGHS
-    return_status = highs_.passModel(model_);
+    return_status = highs_.passModel(std::move(model_));
     assert(return_status==HighsStatus::kOk);
 
     // Get a const reference to the LP data in HiGHS
@@ -591,13 +737,41 @@ public:
   
     // Solve the model
     return_status = highs_.run();
-    assert(return_status==HighsStatus::kOk);
-  
+    if (return_status != HighsStatus::kOk) {
+      throw std::runtime_error("HiGHS solver returned non-OK status");
+    }
+
     // Get the model status
     const HighsModelStatus& model_status = highs_.getModelStatus();
-    assert(model_status==HighsModelStatus::kOptimal);
+    if (model_status == HighsModelStatus::kInfeasible) throw IPInfeasible("HiGHS model is infeasible");
+    if (model_status != HighsModelStatus::kOptimal) {
+      std::string status_str;
+      switch (model_status) {
+        case HighsModelStatus::kNotset: status_str = "Not set"; break;
+        case HighsModelStatus::kLoadError: status_str = "Load error"; break;
+        case HighsModelStatus::kModelError: status_str = "Model error"; break;
+        case HighsModelStatus::kPresolveError: status_str = "Presolve error"; break;
+        case HighsModelStatus::kSolveError: status_str = "Solve error"; break;
+        case HighsModelStatus::kPostsolveError: status_str = "Postsolve error"; break;
+        case HighsModelStatus::kModelEmpty: status_str = "Model empty"; break;
+        case HighsModelStatus::kInfeasible: status_str = "Infeasible"; break;
+        case HighsModelStatus::kUnboundedOrInfeasible: status_str = "Unbounded or infeasible"; break;
+        case HighsModelStatus::kUnbounded: status_str = "Unbounded"; break;
+        case HighsModelStatus::kObjectiveBound: status_str = "Objective bound"; break;
+        case HighsModelStatus::kObjectiveTarget: status_str = "Objective target"; break;
+        case HighsModelStatus::kTimeLimit: status_str = "Time limit"; break;
+        case HighsModelStatus::kIterationLimit: status_str = "Iteration limit"; break;
+        case HighsModelStatus::kUnknown: status_str = "Unknown"; break;
+        default: status_str = "Other"; break;
+      }
+      throw std::runtime_error("HiGHS failed to find an optimal solution: " + status_str);
+    }
 
     const HighsInfo& info = highs_.getInfo();
+    if (std::getenv("IPKNOT_HIGHS_DIAGNOSTICS"))
+      std::fprintf(stderr, "IP solver statistics: nodes=%lld lp_iterations=%d cols=%d rows=%d gap=%.12g\n",
+          static_cast<long long>(info.mip_node_count), static_cast<int>(info.simplex_iteration_count),
+          numcols, numrows, info.mip_gap);
     return info.objective_function_value;
   }
 
@@ -613,6 +787,7 @@ private:
   HighsModel model_;
   Highs highs_;
   std::vector<double> col_cost_;
+  std::vector<HighsVarType> integrality_;
   std::vector<double> col_lower_;
   std::vector<double> col_upper_;
   std::vector<double> row_lower_;
@@ -622,133 +797,212 @@ private:
 #endif
 
 
+#if !defined(WITH_GLPK) && !defined(WITH_CPLEX) && !defined(WITH_GUROBI) && !defined(WITH_SCIP) && !defined(WITH_HIGHS)
+class IPimpl {
+  [[noreturn]] static void unavailable() {
+    throw std::runtime_error("No ILP solver is linked; use --decoder dd");
+  }
+public:
+  IPimpl(IP::DirType, int) { unavailable(); }
+  void configure_exact() { unavailable(); }
+  int make_variable(double) { unavailable(); }
+  int make_variable(double, int, int) { unavailable(); }
+  int make_continuous_variable(double, double, double) { unavailable(); }
+  void add_objective_coefficient(int, double) { unavailable(); }
+  int make_constraint(IP::BoundType, double, double) { unavailable(); }
+  void add_constraint(int, int, double) { unavailable(); }
+  void update() { unavailable(); }
+  double solve() { unavailable(); }
+  double get_value(int) const { unavailable(); }
+};
+#endif
+
+IP::IP(DirType dir, int n_th, bool exact) : impl_(nullptr) {
+  auto impl = std::make_unique<IPimpl>(dir, n_th);
+  if (exact) impl->configure_exact();
+  impl_ = impl.release();
+}
+bool IP::available() {
 #if defined(WITH_GLPK) || defined(WITH_CPLEX) || defined(WITH_GUROBI) || defined(WITH_SCIP) || defined(WITH_HIGHS)
-
-IP::
-IP(DirType dir, int n_th)
-  : impl_(new IPimpl(dir, n_th))
-{
+  return true;
+#else
+  return false;
+#endif
 }
+IP::IP(IPModel& model) : impl_(nullptr), model_(&model) {}
+IP::~IP() { delete impl_; }
 
-IP::
-~IP()
-{
-  delete impl_;
+int IP::make_variable(double coef) {
+  if (!model_) return impl_->make_variable(coef);
+  return make_variable(coef, 0, 1);
 }
-
-int
-IP::
-make_variable(double coef)
-{
-  return impl_->make_variable(coef);
+int IP::make_variable(double coef, int lo, int hi) {
+  if (!model_) return impl_->make_variable(coef, lo, hi);
+  model_->variables.push_back({coef, double(lo), double(hi), true});
+  return static_cast<int>(model_->variables.size()) - 1;
 }
-
-int
-IP::
-make_variable(double coef, int lo, int hi)
-{
-  return impl_->make_variable(coef, lo, hi);
+int IP::make_continuous_variable(double coef, double lo, double hi) {
+  if (!model_) return impl_->make_continuous_variable(coef, lo, hi);
+  model_->variables.push_back({coef, lo, hi, false});
+  return static_cast<int>(model_->variables.size()) - 1;
 }
-
-int
-IP::
-make_constraint(BoundType bnd, double l, double u)
-{
-  return impl_->make_constraint(bnd, l, u);
+void IP::add_objective_coefficient(int col, double coefficient) {
+  if (model_) model_->variables.at(col).coefficient += coefficient;
+  else impl_->add_objective_coefficient(col, coefficient);
 }
-
-void
-IP::
-add_constraint(int row, int col, double val)
-{
-  return impl_->add_constraint(row, col, val);
+int IP::make_constraint(BoundType bnd, double l, double u) {
+  if (!model_) return impl_->make_constraint(bnd, l, u);
+  model_->rows.push_back({bnd, l, u, {}});
+  return static_cast<int>(model_->rows.size()) - 1;
 }
-
-void
-IP::
-update()
-{
-  impl_->update();
+void IP::add_constraint(int row, int col, double val) {
+  if (model_) model_->rows.at(row).terms.emplace_back(col, val);
+  else impl_->add_constraint(row, col, val);
 }
-
-double
-IP::
-solve()
-{
+void IP::update() { if (!model_) impl_->update(); }
+double IP::solve() {
+  if (model_) {
+    if (!model_->optimize) throw std::logic_error("Missing recorded-model decoder");
+    return model_->optimize();
+  }
   return impl_->solve();
 }
-
-double
-IP::
-get_value(int col) const
-{
-  return impl_->get_value(col);
+double IP::get_value(int col) const {
+  return model_ ? model_->solution.at(col) : impl_->get_value(col);
 }
 
-#else
-
-IP::
-IP(DirType dir, int n_th)
-{
-  throw "no IP solver is linked.";
-}
-
-IP::
-~IP()
-{
-  //throw "no IP solver is linked.";
-}
-
-int
-IP::
-make_variable(double coef)
-{
-  throw "no IP solver is linked.";
-  return 0;
-}
-
-int
-make_variable(double coef, int lo, int hi)
-{
-  throw "no IP solver is linked.";
-  return 0;
-}
-
-int
-IP::
-make_constraint(BoundType bnd, double l, double u)
-{
-  throw "no IP solver is linked.";
-  return 0;
-}
-
-void
-IP::
-add_constraint(int row, int col, double val)
-{
-  throw "no IP solver is linked.";
-}
-
-void
-IP::
-update()
-{
-  throw "no IP solver is linked.";
-}
-
-double
-IP::
-solve()
-{
-  throw "no IP solver is linked.";
-}
-
-double
-IP::
-get_value(int col) const
-{
-  throw "no IP solver is linked.";
-  return 0;
-}
-
+struct IPModelSolver::Impl {
+  IPModel model;
+  IP::DirType direction;
+  int threads;
+  bool solved = false;
+  std::vector<double> values;
+#ifdef WITH_HIGHS
+  Highs highs;
 #endif
+
+  Impl(const IPModel& source, IP::DirType dir, int n_th)
+      : direction(dir), threads(n_th), values(source.variables.size()) {
+    if (!IP::available()) throw std::runtime_error("No ILP solver is linked");
+    if ((direction != IP::MIN && direction != IP::MAX) || threads < 0)
+      throw std::invalid_argument("Invalid IP solver options");
+    model.variables = source.variables;
+    model.rows = source.rows;
+    for (const auto& v : model.variables) {
+      if (!std::isfinite(v.lower) || !std::isfinite(v.upper) || v.lower > v.upper ||
+          (v.integer && (std::floor(v.lower) != v.lower || std::floor(v.upper) != v.upper ||
+                         v.lower < std::numeric_limits<int>::min() ||
+                         v.upper > std::numeric_limits<int>::max())))
+        throw std::invalid_argument("Invalid IP model variable bounds");
+    }
+    for (auto& row : model.rows) {
+      std::map<int, double> merged;
+      for (const auto& [col, a] : row.terms) {
+        if (col < 0 || col >= static_cast<int>(values.size()) || !std::isfinite(a))
+          throw std::invalid_argument("Invalid IP model coefficient");
+        merged[col] += a;
+      }
+      row.terms.clear();
+      for (const auto& [col, a] : merged) {
+        if (!std::isfinite(a)) throw std::invalid_argument("IP model coefficient overflow");
+        if (a != 0) row.terms.emplace_back(col, a);
+      }
+    }
+    if (values.empty()) return;
+#ifdef WITH_HIGHS
+    highs.setOptionValue("output_flag", false);
+    highs.setOptionValue("threads", threads);
+    if (highs.setOptionValue("mip_rel_gap", 0.0) != HighsStatus::kOk ||
+        highs.setOptionValue("mip_abs_gap", 0.0) != HighsStatus::kOk)
+      throw std::runtime_error("Cannot set HiGHS exact MIP tolerances");
+    HighsModel loaded;
+    auto& lp = loaded.lp_;
+    lp.sense_ = direction == IP::MAX ? ObjSense::kMaximize : ObjSense::kMinimize;
+    lp.num_col_ = values.size();
+    lp.num_row_ = model.rows.size();
+    lp.col_cost_.assign(values.size(), 0.0);
+    for (const auto& v : model.variables) {
+      lp.col_lower_.push_back(v.lower);
+      lp.col_upper_.push_back(v.upper);
+      lp.integrality_.push_back(v.integer ? HighsVarType::kInteger : HighsVarType::kContinuous);
+    }
+    lp.a_matrix_.format_ = MatrixFormat::kRowwise;
+    lp.a_matrix_.start_.assign(1, 0);
+    for (const auto& row : model.rows) {
+      lp.row_lower_.push_back(row.bound == IP::UP || row.bound == IP::FR ? -kHighsInf : row.lower);
+      lp.row_upper_.push_back(row.bound == IP::LO || row.bound == IP::FR ? kHighsInf :
+                             row.bound == IP::FX ? row.lower : row.upper);
+      for (const auto& [col, a] : row.terms) {
+        lp.a_matrix_.index_.push_back(col);
+        lp.a_matrix_.value_.push_back(a);
+      }
+      lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+    }
+    if (highs.passModel(loaded) != HighsStatus::kOk)
+      throw std::runtime_error("Cannot load IP model");
+#endif
+  }
+
+  Result solve(const std::vector<double>& coefficients) {
+    if (coefficients.size() != model.variables.size() ||
+        std::any_of(coefficients.begin(), coefficients.end(),
+                    [](double c) { return !std::isfinite(c); }))
+      throw std::invalid_argument("Invalid IP objective coefficients");
+    solved = false;
+    if (values.empty()) {
+      for (const auto& row : model.rows)
+        if (((row.bound == IP::LO || row.bound == IP::DB || row.bound == IP::FX) && row.lower > 0) ||
+            ((row.bound == IP::UP || row.bound == IP::DB) && row.upper < 0) ||
+            (row.bound == IP::FX && row.lower < 0))
+          throw IPInfeasible("IP model is infeasible");
+      solved = true;
+      return {0, 0};
+    }
+    Result result;
+#ifdef WITH_HIGHS
+    if (highs.changeColsCost(0, coefficients.size() - 1, coefficients.data()) != HighsStatus::kOk ||
+        highs.run() != HighsStatus::kOk)
+      throw std::runtime_error("IP solver failed");
+    if (highs.getModelStatus() == HighsModelStatus::kInfeasible)
+      throw IPInfeasible("IP model is infeasible");
+    if (highs.getModelStatus() != HighsModelStatus::kOptimal)
+      throw std::runtime_error("IP solver did not reach an optimal solution");
+    values = highs.getSolution().col_value;
+    const auto& info = highs.getInfo();
+    const bool integer = std::any_of(model.variables.begin(), model.variables.end(),
+                                   [](const IPModel::Variable& v) { return v.integer; });
+    result = {info.objective_function_value,
+              integer ? info.mip_dual_bound : info.objective_function_value};
+#else
+    // Rebuild through IP for backends without a reusable model implementation.
+    IP ip(direction, threads, true);
+    std::vector<int> columns;
+    for (std::size_t k = 0; k < coefficients.size(); ++k) {
+      const auto& v = model.variables[k];
+      columns.push_back(v.integer ? ip.make_variable(coefficients[k], int(v.lower), int(v.upper)) :
+                                    ip.make_continuous_variable(coefficients[k], v.lower, v.upper));
+    }
+    for (const auto& row : model.rows) {
+      const int r = ip.make_constraint(row.bound, row.lower, row.upper);
+      for (const auto& [col, a] : row.terms) ip.add_constraint(r, columns.at(col), a);
+    }
+    ip.update();
+    const double objective = ip.solve();
+    result = {objective, objective};
+    for (std::size_t k = 0; k < columns.size(); ++k) values[k] = ip.get_value(columns[k]);
+#endif
+    solved = true;
+    return result;
+  }
+};
+
+IPModelSolver::IPModelSolver(const IPModel& model, IP::DirType direction, int threads)
+    : impl_(std::make_unique<Impl>(model, direction, threads)) {}
+IPModelSolver::~IPModelSolver() = default;
+IPModelSolver::Result IPModelSolver::solve(const std::vector<double>& coefficients) {
+  return impl_->solve(coefficients);
+}
+double IPModelSolver::get_value(int column) const {
+  if (!impl_->solved) throw std::logic_error("IP model has not been solved");
+  return impl_->values.at(column);
+}

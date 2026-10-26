@@ -23,6 +23,7 @@
 #include "config.h"
 #endif
 #include "fold.h"
+#include "sparse_posterior.h"
 
 #include <cstring>
 #include <iostream>
@@ -52,6 +53,10 @@ typedef Vienna::FLT_OR_DBL FLT_OR_DBL;
 #endif
 
 #include "nupack/nupack.h"
+#include "nupack/linear_nupack.h"
+#ifdef WITH_MXFOLD2
+#include "mxfold2.h"
+#endif
 
 extern "C" {
 #include "boltzmann_param.h"
@@ -390,7 +395,10 @@ calculate_posterior(const std::string& seq, std::vector<float>& bp, std::vector<
 {
   Nupack<long double> nu;
   if (param_)
-    nu.load_parameters(param_);
+  {
+    if (!nu.load_parameters(param_))
+      throw std::runtime_error(std::string("Cannot load NUPACK parameters: ")+param_);
+  }
   else
     nu.load_default_parameters(/*model_*/);
   //nu.dump_parameters(std::cout);
@@ -422,6 +430,70 @@ calculate_posterior(const std::string& seq, float th) const
     }
 
   return sbp;
+}
+
+// LinearNUPACK model. The sparse path never materializes a quadratic matrix.
+namespace {
+LinearNupack run_linear_nupack(const char* param, uint beam, const std::string& seq,
+                             const std::string& constraints)
+{
+  LinearNupack parser(beam);
+  if (param && !parser.load_parameters(param))
+    throw std::runtime_error(std::string("Cannot load LinearNUPACK parameters: ")+param);
+  parser.calculate(seq,constraints);
+  return parser;
+}
+
+void linear_nupack_dense(const LinearNupack& parser, std::size_t n,
+                        std::vector<float>& bp, std::vector<int>& offset)
+{
+  bp.assign((n+1)*(n+2)/2,0);
+  offset.resize(n+1);
+  for (std::size_t i=0; i<=n; ++i) offset[i]=i*(2*n+1-i)/2;
+  for (const auto& item:parser.posterior())
+  {
+    auto [i,j,p]=item;
+    bp[offset[i+1]+j+1]=static_cast<float>(p);
+  }
+}
+
+VSVF linear_nupack_sparse(const LinearNupack& parser, std::size_t n, float threshold)
+{
+  VSVF result(n+1);
+  for (const auto& item:parser.posterior())
+  {
+    auto [i,j,p]=item;
+    const float probability=static_cast<float>(p);
+    if (probability>=threshold)
+    {
+      result[i+1].emplace_back(j+1,probability);
+      result[j+1].emplace_back(i+1,probability);
+    }
+  }
+  return result;
+}
+}
+
+void LinearNupackModel::calculate_posterior(const std::string& seq, std::vector<float>& bp,
+                                           std::vector<int>& offset) const
+{
+  calculate_posterior(seq,"",bp,offset);
+}
+
+VSVF LinearNupackModel::calculate_posterior(const std::string& seq, float th) const
+{
+  return calculate_posterior(seq,"",th);
+}
+
+void LinearNupackModel::calculate_posterior(const std::string& seq, const std::string& constraints,
+                                           std::vector<float>& bp, std::vector<int>& offset) const
+{
+  linear_nupack_dense(run_linear_nupack(param_,beam_size_,seq,constraints),seq.size(),bp,offset);
+}
+
+VSVF LinearNupackModel::calculate_posterior(const std::string& seq, const std::string& constraints, float th) const
+{
+  return linear_nupack_sparse(run_linear_nupack(param_,beam_size_,seq,constraints),seq.size(),th);
 }
 
 // LinearPartition model
@@ -823,6 +895,7 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
   uint N=aln.size();
   uint L=aln.front().size();
   std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  SparsePosteriorAccumulator accumulator(bp);
 
   for (const auto& s: aln)
   {
@@ -840,12 +913,7 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
     for (auto i=1; i!=lbp.size(); ++i)
       for (const auto [j, p]: lbp[i])
       {
-        auto res = std::find_if(std::begin(bp[idx[i-1]+1]), std::end(bp[idx[i-1]+1]),
-                        [&, &j=j](const auto& x) { return x.first==idx[j-1]+1; });
-        if (res != std::end(bp[idx[i-1]+1]))
-          res->second += p/N;
-        else
-          bp[idx[i-1]+1].emplace_back(idx[j-1]+1, p/N);
+        accumulator.add(idx[i-1]+1, idx[j-1]+1, p/N);
       }
   }
 
@@ -929,6 +997,7 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
   uint N=aln.size();
   uint L=aln.front().size();
   std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  SparsePosteriorAccumulator accumulator(bp);
 
   std::vector<int> p = bpseq(paren);
   for (const auto& s: aln)
@@ -961,12 +1030,7 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
     for (auto i=1; i!=lbp.size(); ++i)
       for (const auto [j, p]: lbp[i])
       {
-        auto res = std::find_if(std::begin(bp[idx[i-1]+1]), std::end(bp[idx[i-1]+1]),
-                        [&, &j=j](const auto& x) { return x.first==idx[j-1]+1; });
-        if (res != std::end(bp[idx[i-1]+1]))
-          res->second += p/N;
-        else
-          bp[idx[i-1]+1].emplace_back(idx[j-1]+1, p/N);
+        accumulator.add(idx[i-1]+1, idx[j-1]+1, p/N);
       }
   }
 
@@ -1003,6 +1067,7 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
 {
   uint L=aln.front().size();
   std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  SparsePosteriorAccumulator accumulator(bp);
   assert(en_.size()==w_.size());
   for (uint k=0; k!=en_.size(); ++k)
   {
@@ -1011,12 +1076,7 @@ calculate_posterior(const std::list<std::string>& aln, float th) const
     {
       for (const auto [j, p]: lbp[i])
       {
-        auto res = std::find_if(std::begin(bp[i]), std::end(bp[i]),
-                          [&, &j=j](const auto& x) { return x.first==j; });
-        if (res != std::end(bp[i]))
-          res->second += p * w_[k];
-        else
-          bp[i].emplace_back(j, p * w_[k]);
+        accumulator.add(i, j, p * w_[k]);
       }
     }
   }
@@ -1053,6 +1113,7 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
 {
   uint L=aln.front().size();
   std::vector<std::vector<std::pair<uint, float>>> bp(L+1);
+  SparsePosteriorAccumulator accumulator(bp);
   assert(en_.size()==w_.size());
   for (uint k=0; k!=en_.size(); ++k)
   {
@@ -1061,12 +1122,7 @@ calculate_posterior(const std::list<std::string>& aln, const std::string& paren,
     {
       for (const auto [j, p]: lbp[i])
       {
-        auto res = std::find_if(std::begin(bp[i]), std::end(bp[i]),
-                          [&, &j=j](const auto& x) { return x.first==j; });
-        if (res != std::end(bp[i]))
-          res->second += p * w_[k];
-        else
-          bp[i].emplace_back(j, p * w_[k]);
+        accumulator.add(i, j, p * w_[k]);
       }
     }
   }
@@ -1151,6 +1207,7 @@ void BPEngineSeq::update_bpm(uint pk_level, const std::string& seq, const VI& bp
   // update the base-pairing probability matrix by the previous result
   uint L = bpseq.size();
   sbp.resize(L+1);
+  SparsePosteriorAccumulator accumulator(sbp);
   
   for (uint l=0; l!=pk_level; ++l)
   {
@@ -1191,12 +1248,7 @@ void BPEngineSeq::update_bpm(uint pk_level, const std::string& seq, const VI& bp
       for (const auto [jl, vl]: sbpl[i]) 
       {
         auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
-        auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
-                            [&, &jl=jl](const auto& x) { return x.first == jl; });
-        if (re != std::end(sbp[i]))
-          re->second += v;
-        else
-          sbp[i].emplace_back(jl, v);
+        accumulator.add(i, jl, v);
       }
     }
   }
@@ -1273,6 +1325,7 @@ void BPEngineAln::update_bpm(uint pk_level, const std::list<std::string>& seq, c
   // update the base-pairing probability matrix by the previous result
   uint L = bpseq.size();
   sbp.resize(L+1);
+  SparsePosteriorAccumulator accumulator(sbp);
   
   for (uint l=0; l!=pk_level; ++l)
   {
@@ -1313,12 +1366,7 @@ void BPEngineAln::update_bpm(uint pk_level, const std::list<std::string>& seq, c
       for (const auto [jl, vl]: sbpl[i]) 
       {
         auto v = bpseq[i-1]>=0 ? vl : vl / pk_level;
-        auto re = std::find_if(std::begin(sbp[i]), std::end(sbp[i]),
-                            [&, &jl=jl](const auto& x) { return x.first == jl; });
-        if (re != std::end(sbp[i]))
-          re->second += v;
-        else
-          sbp[i].emplace_back(jl, v);
+        accumulator.add(i, jl, v);
       }
     }
   }
@@ -1391,7 +1439,7 @@ void BPEngineAln::update_bpm(uint pk_level, const std::list<std::string>& seq, c
 
 // Factory methods
 std::unique_ptr<BPEngineSeq>
-BPEngineSeq::build(const char* model, const char* param, uint beam_size)
+BPEngineSeq::build(const char* model, const char* param, uint beam_size, uint n_th, const std::string& mxfold2_config, int mxfold2_gpu)
 {
   std::unique_ptr<BPEngineSeq> en;
   if (model==nullptr || strcasecmp(model, "McCaskill")==0 || strcasecmp(model, "Boltzmann")==0)
@@ -1402,15 +1450,24 @@ BPEngineSeq::build(const char* model, const char* param, uint beam_size)
     en = std::make_unique<CONTRAfoldModel>();
   else if (strcasecmp(model, "nupack")==0)
     en = std::make_unique<NupackModel>(param);
+  else if (strcasecmp(model, "LinearNUPACK")==0 || strcasecmp(model, "lnupack")==0)
+    en = std::make_unique<LinearNupackModel>(param, beam_size);
   else if (strcasecmp(model, "LinearPartition-C")==0 || strcasecmp(model, "lpc")==0)
     en = std::make_unique<LinearPartitionModel>(false, beam_size);
   else if (strcasecmp(model, "LinearPartition-V")==0 || strcasecmp(model, "lpv")==0)
     en = std::make_unique<LinearPartitionModel>(true, beam_size);
+#ifdef WITH_MXFOLD2
+  else if (strcasecmp(model, "MXfold2")==0)
+    en = std::make_unique<MXfold2Model>(n_th, mxfold2_config, mxfold2_gpu);
+#else
+  else if (strcasecmp(model, "MXfold2")==0)
+    throw std::runtime_error("MXfold2 support not available. Rebuild with -DMXFOLD2=ON.");
+#endif
   return en;
 }
 
 std::unique_ptr<BPEngineAln>
-BPEngineAln::build(const std::vector<std::string>& model, const char* param, uint beam_size)
+BPEngineAln::build(const std::vector<std::string>& model, const char* param, uint beam_size, uint n_th, const std::string& mxfold2_config, int mxfold2_gpu)
 {
   std::unique_ptr<BPEngineAln> mix_en;
   std::vector<std::unique_ptr<BPEngineAln>> en_a;
@@ -1441,6 +1498,11 @@ BPEngineAln::build(const std::vector<std::string>& model, const char* param, uin
         auto e = std::make_unique<CONTRAfoldModel>();
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
+      else if (strcasecmp(m, "NUPACK")==0 || strcasecmp(m, "LinearNUPACK")==0 || strcasecmp(m, "lnupack")==0)
+      {
+        auto e=BPEngineSeq::build(m,param,beam_size);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
       else if (strcasecmp(m, "Alifold")==0)
       {
         en_a.push_back(std::make_unique<AlifoldModel>(param));
@@ -1455,6 +1517,18 @@ BPEngineAln::build(const std::vector<std::string>& model, const char* param, uin
         auto e = std::make_unique<LinearPartitionModel>(true, beam_size);
         en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
       }
+#ifdef WITH_MXFOLD2
+      else if (strcasecmp(m, "MXfold2")==0)
+      {
+        auto e = std::make_unique<MXfold2Model>(n_th, mxfold2_config, mxfold2_gpu);
+        en_a.push_back(std::make_unique<AveragedModel>(std::move(e)));
+      }
+#else
+      else if (strcasecmp(m, "MXfold2")==0)
+      {
+        throw std::runtime_error("MXfold2 support not available. Rebuild with -DMXFOLD2=ON.");
+      }
+#endif
       else
         return std::unique_ptr<BPEngineAln>();
     }
@@ -1463,4 +1537,3 @@ BPEngineAln::build(const std::vector<std::string>& model, const char* param, uin
   }
   return std::move(mix_en ? mix_en : en_a[0]);
 }
-

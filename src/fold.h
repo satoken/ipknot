@@ -61,7 +61,7 @@ public:
   void update_bpm(uint pk_level, const std::string& seq, const VI& bpseq, const VI& plevel, std::vector<float>& bp, VI& offset) const;
   
   // Factory method
-  static std::unique_ptr<BPEngineSeq> build(const char* model, const char* param, uint beam_size=100);
+  static std::unique_ptr<BPEngineSeq> build(const char* model, const char* param, uint beam_size=100, uint n_th=1, const std::string& mxfold2_config="", int mxfold2_gpu=-1);
 };
 
 // The base class for calculating base-pairing probabilities of aligned sequences
@@ -92,7 +92,7 @@ public:
   void update_bpm(uint pk_level, const std::list<std::string>& aln, const VI& bpseq, const VI& plevel, std::vector<float>& bp, VI& offset) const;
   
   // Factory method
-  static std::unique_ptr<BPEngineAln> build(const std::vector<std::string>& model, const char* param, uint beam_size=100);
+  static std::unique_ptr<BPEngineAln> build(const std::vector<std::string>& model, const char* param, uint beam_size=100, uint n_th=1, const std::string& mxfold2_config="", int mxfold2_gpu=-1);
 };
 
 class CONTRAfoldModel : public BPEngineSeq
@@ -146,6 +146,19 @@ public:
 private:
   //int model_;
   const char* param_;
+};
+
+class LinearNupackModel : public BPEngineSeq
+{
+public:
+  LinearNupackModel(const char* param, uint beam_size=100) : param_(param), beam_size_(beam_size) {}
+  void calculate_posterior(const std::string&, std::vector<float>&, std::vector<int>&) const override;
+  VSVF calculate_posterior(const std::string&, float th=DEFAULT_THRESHOLD) const override;
+  void calculate_posterior(const std::string&, const std::string&, std::vector<float>&, std::vector<int>&) const override;
+  VSVF calculate_posterior(const std::string&, const std::string&, float th=DEFAULT_THRESHOLD) const override;
+private:
+  const char* param_;
+  uint beam_size_;
 };
 
 class LinearPartitionModel : public BPEngineSeq

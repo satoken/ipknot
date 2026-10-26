@@ -1,0 +1,67 @@
+{
+  "reference": "b0f965c",
+  "repeats": 1,
+  "seed": 20261010,
+  "reference_correctness_repaired": true,
+  "exact": [
+    {
+      "length": 20,
+      "before_seconds": 0.015279076,
+      "after_seconds": 0.014846964,
+      "speedup": 1.0291044014116286,
+      "bitwise_float_bpp_equal": true,
+      "approximation": [
+        {
+          "beam": 25,
+          "seconds": 0.001159214,
+          "bpp_mae": 1.1715822468423229e-05,
+          "bpp_max_error": 0.0003025795016556865,
+          "log_z_error": -0.000468571679549612
+        }
+      ]
+    },
+    {
+      "length": 40,
+      "before_seconds": 1.202487766,
+      "after_seconds": 0.205477829,
+      "speedup": 5.852153353245717,
+      "bitwise_float_bpp_equal": true,
+      "approximation": [
+        {
+          "beam": 25,
+          "seconds": 0.01396231,
+          "bpp_mae": 0.00019834281379615956,
+          "bpp_max_error": 0.01122789637378252,
+          "log_z_error": -0.019106654651601218
+        }
+      ]
+    },
+    {
+      "length": 60,
+      "before_seconds": 15.743823288,
+      "after_seconds": 2.199947479,
+      "speedup": 7.156454160058609,
+      "bitwise_float_bpp_equal": true,
+      "approximation": [
+        {
+          "beam": 25,
+          "seconds": 0.059226132,
+          "bpp_mae": 0.011917643953567805,
+          "bpp_max_error": 0.8908478795001872,
+          "log_z_error": -3.157340010487971
+        }
+      ]
+    }
+  ],
+  "linear": [
+    {
+      "length": 1,
+      "seconds": 5.2176e-05,
+      "rss_kib": 17452,
+      "log_z": 0,
+      "states": 0,
+      "edges": 0,
+      "beam": 25
+    }
+  ]
+}

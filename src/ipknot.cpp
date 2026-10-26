@@ -30,75 +30,111 @@
 #include <iostream>
 #include <iterator>
 #include <list>
+#include <limits>
+#include <memory>
+#include <set>
+#include <sstream>
+#include <unordered_set>
+#include <unordered_map>
+#include <cstdint>
 
 #include "ipknot.h"
+#include "ipknot/decoder.h"
+#include "ilp_model.h"
+#include "decoder_internal.h"
 #include "ip.h"
-#include "bpseq.h" 
+#include "dd_constrained.h"
+#include "dd_constraint_builder.h"
+#include "bpseq.h"
+
+#include "spdlog/spdlog.h"
+#include "spdlog/stopwatch.h"
+//#include "spdlog/sinks/basic_file_sink.h"
 
 IPknot::IPknot(uint pk_level, const float* alpha,
-         bool levelwise, bool stacking_constraints, int n_th)
+         bool levelwise, bool stacking_constraints, int n_th,
+         DDOptions dd_options)
     : pk_level_(pk_level),
       alpha_(alpha, alpha+pk_level_),
       levelwise_(levelwise),
       stacking_constraints_(stacking_constraints),
-      n_th_(n_th)
+      n_th_(n_th),
+      dd_options_(dd_options)
 {
+    dd_options_.validate();
+    if (dd_options_.enabled && !levelwise_)
+      throw std::invalid_argument("DD requires levelwise prediction; remove --no-levelwise or use --decoder ilp");
 }
-void IPknot::solve(uint L, const VF& bp, const VI& offset,
+
+void IPknot::solve(const std::string& seq, const VSVF& bp,
              const VF& th, VI& bpseq, VI& plevel, bool constraint) const
 {
-    IP ip(IP::MAX, n_th_);
-    VVSVI v_l(pk_level_, VSVI(L));
-    VVSVI v_r(pk_level_, VSVI(L));
-    VI c_l(L, 0), c_r(L, 0);
-    uint n=0;
-
-    // make objective variables with their weights
-    for (auto j=1; j!=L; ++j)
-    {
-      for (auto i=j-1; i!=-1u; --i)
-      {
-        const float& p=bp[offset[i+1]+(j+1)];
-        for (auto lv=0; lv!=pk_level_; ++lv)
-          if (p>th[lv])
-          {
-            const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
-            v_l[lv][i].emplace_back(j, v_ij);
-            v_r[lv][j].emplace_back(i, v_ij);
-            c_l[i]++; c_r[j]++;
-            n++;
-          }
+    if (levelwise_ && !constraint) {
+      ipknot::DecoderOptions options;
+      options.backend = dd_options_.enabled ? ipknot::Backend::DD : ipknot::Backend::ILP;
+      options.thresholds = th;
+      options.weights = alpha_;
+      options.no_lonely_pairs = stacking_constraints_;
+      options.threads = n_th_;
+      options.dd = dd_options_;
+      if (bp.size() != seq.size() + 1)
+        throw std::invalid_argument("Invalid sparse posterior dimensions");
+      // Refinement accumulates posterior contributions and can exceed one.
+      spdlog::stopwatch decoder_timer;
+      const auto decoded = ipknot::detail::decode_posterior_scores(bp, std::move(options));
+      bpseq = decoded.bpseq; plevel = decoded.levels;
+      if (!decoded.dd) {
+        spdlog::debug("IP objective: {:.12g}", decoded.objective);
+        spdlog::info("IP optimization finished in {:.6f}s", decoder_timer.elapsed().count());
+        return;
+      }
+      const auto& result = *decoded.dd;
+      spdlog::info("DD: iterations={}, pairs={}, support_rows={}, contacts={}, "
+                   "crossing_beam_drops={}, witness_drops={}, objective={:.12g}, "
+                   "graph_upper_bound={:.12g}, stop={}",
+                   result.iterations, result.pairs, result.support_rows, result.contacts,
+                   result.crossing_beam_drops, result.witness_drops,
+                   result.objective, result.upper_bound, result.stop_reason);
+      return;
+    }
+    if (dd_options_.enabled && dd_options_.linear_constraints) {
+      decode_linear_constraints(seq, bp, th, alpha_, pk_level_, stacking_constraints_,
+                                dd_options_, bpseq, plevel, constraint);
+      return;
+    }
+    uint L = seq.size();
+    IPModel dd_model;
+    auto ip_owner = dd_options_.enabled ? std::make_unique<IP>(dd_model)
+                                       : std::make_unique<IP>(IP::MAX, n_th_);
+    IP& ip = *ip_owner;
+    if (dd_options_.enabled) {
+      if (th.size() != pk_level_ || bp.size() != seq.size() + 1 ||
+          (constraint && bpseq.size() != seq.size()))
+        throw std::invalid_argument("Invalid constrained DD input dimensions");
+      for (unsigned i = 1; i < bp.size(); ++i) for (const auto& [j, p] : bp[i])
+        if (j == 0 || j >= bp.size() || j == i || !std::isfinite(p) || p < 0)
+          throw std::invalid_argument("Invalid sparse posterior pair for DD");
+      if (constraint) for (int i = 0; i < static_cast<int>(seq.size()); ++i) {
+        if (bpseq[i] >= static_cast<int>(seq.size()) || bpseq[i] == i || bpseq[i] < BPSEQ::LR ||
+            (bpseq[i] >= 0 && bpseq[bpseq[i]] != i))
+          throw std::invalid_argument("Invalid fixed structure for DD");
       }
     }
-    ip.update();
-
-    if (n>0)
-      solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
-    else
-    {
-      bpseq.resize(L);
-      std::fill(std::begin(bpseq), std::end(bpseq), -1);
-      plevel.resize(L);
-      std::fill(std::begin(plevel), std::end(plevel), -1);
-    }
-  }
-
-void IPknot::solve(uint L, const VSVF& bp,
-             const VF& th, VI& bpseq, VI& plevel, bool constraint) const
-{
-    IP ip(IP::MAX, n_th_);
     VVSVI v_l(pk_level_, VSVI(L));
     VVSVI v_r(pk_level_, VSVI(L));
     VI c_l(L, 0), c_r(L, 0);
     uint n=0;
 
-    // make objective variables with their weights
+    // Make objective variables, including explicitly fixed pairs.
     for (auto i=1; i<=L; ++i)
     {
+      bool found_constraint_j = false;
       for (const auto [j, p]: bp[i])
         if (i<j)
+        {
           for (auto lv=0; lv!=pk_level_; ++lv)
-            if (p>th[lv])
+            if (p > th[lv]
+                || (constraint && bpseq[i-1]==j-1))
             {
               const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
               v_l[lv][i-1].emplace_back(j-1, v_ij);
@@ -106,23 +142,61 @@ void IPknot::solve(uint L, const VSVF& bp,
               c_l[i-1]++; c_r[j-1]++;
               n++;
             }
+          if (constraint && bpseq[i-1]==j-1) found_constraint_j = true;
+        }
+
+      if (constraint && !found_constraint_j && bpseq[i-1]>=0 && i-1<bpseq[i-1])
+      {
+        const auto j = bpseq[i-1]+1;
+        const auto p = 0.0;
+        for (auto lv=0; lv!=pk_level_; ++lv)
+        {
+          const auto v_ij = ip.make_variable((p-th[lv])*alpha_[lv]);
+          v_l[lv][i-1].emplace_back(j-1, v_ij);
+          v_r[lv][j-1].emplace_back(i-1, v_ij);
+          c_l[i-1]++; c_r[j-1]++;
+          n++;
+        }
+      }
+    }
+
+    if (dd_options_.enabled) {
+      dd_model.optimize = [&]() {
+        std::vector<DDPair> pairs;
+        std::vector<int> columns;
+        for (unsigned level = 0; level < pk_level_; ++level)
+          for (int i = 0; i < static_cast<int>(L); ++i)
+            for (const auto& [j, col] : v_l[level][i]) {
+              pairs.push_back({i, static_cast<int>(j), static_cast<int>(level), dd_model.variables[col].coefficient});
+              columns.push_back(col);
+            }
+        const auto result = solve_constrained_dd(L, pairs, columns, pk_level_, dd_model, dd_options_);
+        spdlog::info("DD: iterations={}, pairs={}, constraint_rows={}, objective={:.12g}, "
+                     "model_upper_bound={:.12g}, repair_states={}, repair_budget_exhausted={}, stop={}",
+                     result.iterations, pairs.size(), dd_model.rows.size(), result.objective,
+                     result.upper_bound, result.repair_states, result.repair_budget_exhausted, result.stop_reason);
+        return result.objective;
+      };
     }
     ip.update();
 
-    if (n>0)
-      solve(L, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
+    // Fixed constraints must also be checked when no posterior pair remains.
+    if (n > 0 || constraint)
+      solve(seq, ip, v_l, v_r, c_l, c_r, th, bpseq, plevel, constraint);
     else
     {
       bpseq.resize(L);
       std::fill(std::begin(bpseq), std::end(bpseq), -1);
       plevel.resize(L);
       std::fill(std::begin(plevel), std::end(plevel), -1);
+      return;
     }
   }
 
-void IPknot::solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
+void IPknot::solve(const std::string& seq, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI& c_l, const VI& c_r,
              const VF& th, VI& bpseq, VI& plevel, bool constraint) const
 {
+    uint L = seq.size();
     if (!constraint)
     {
       bpseq.resize(L);
@@ -163,7 +237,9 @@ void IPknot::solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI&
       }
       if (row_l<0 || row_r<0)
       {
-        std::cerr << "invalid constraint for the base " << i+1 << ", ignored." << std::endl;
+        if (dd_options_.enabled)
+          throw DDInfeasible("Fixed paired-base constraint has no candidate partner");
+        spdlog::warn("invalid constraint for the base {}, ignored.", i+1);
         row_l = row_r = ip.make_constraint(IP::UP, 0, 1); // fallback to no constraint
       }
       
@@ -198,81 +274,20 @@ void IPknot::solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI&
               ip.add_constraint(row, vals[lv], 1);
         }
         else
-          std::cerr << "invalid constraint for the bases " << i+1 << " and " << bpseq[i]+1 << ", ignored." << std::endl;
+          spdlog::warn("invalid constraint for the bases {} and {}, ignored.", i+1, bpseq[i]+1);
       }
     }
 
-    if (levelwise_)
-    {
-      // constraint 2: disallow pseudoknots in x[lv]
-      for (auto lv=0; lv!=pk_level_; ++lv)
-        for (auto i=0; i<v_l[lv].size(); ++i)
-          for (auto [j, v_ij]: v_l[lv][i])
-            for (auto k=i+1; k<j; ++k)
-              for (auto [l, v_kl]: v_l[lv][k])
-                if (j<l)
-                {
-                  auto row = ip.make_constraint(IP::UP, 0, 1);
-                  ip.add_constraint(row, v_ij, 1);
-                  ip.add_constraint(row, v_kl, 1);
-                }
-
-      // constraint 3: any x[t]_kl must be pseudoknotted with x[u]_ij for t>u
-      for (auto lv=1; lv!=pk_level_; ++lv)
-        for (auto k=0; k<v_l[lv].size(); ++k)
-          for (auto [l, v_kl]: v_l[lv][k])
-            for (auto plv=0; plv!=lv; ++plv)
-            {
-              int row = ip.make_constraint(IP::LO, 0, 0);
-              ip.add_constraint(row, v_kl, -1);
-              for (auto i=0; i<k; ++i)
-                for (auto [j, v_ij]: v_l[plv][i])
-                  if (k<j && j<l)
-                    ip.add_constraint(row, v_ij, 1);
-
-              for (auto i=k+1; i<l; ++i)
-                for (auto [j, v_ij]: v_l[plv][i])
-                  if (l<j)
-                    ip.add_constraint(row, v_ij, 1);
-            }
-    }
+    if (levelwise_) ipknot::detail::add_level_constraints(ip, v_l);
 
     if (stacking_constraints_)
-    {
-      for (auto lv=0; lv!=pk_level_; ++lv)
-      {
-        // upstream
-        for (auto i=0; i<L; ++i)
-        {
-          int row = ip.make_constraint(IP::LO, 0, 0);
-          for (auto [j, v_ji]: v_r[lv][i])
-            ip.add_constraint(row, v_ji, -1);
-          if (i>0)
-            for (auto [j, v_ji]: v_r[lv][i-1])
-              ip.add_constraint(row, v_ji, 1);
-          if (i+1<L)
-            for (auto [j, v_ji]: v_r[lv][i+1])
-              ip.add_constraint(row, v_ji, 1);
-        }
+      ipknot::detail::add_stacking_constraints(ip, v_l, v_r);
 
-        // downstream
-        for (auto i=0; i<L; ++i)
-        {
-          auto row = ip.make_constraint(IP::LO, 0, 0);
-          for (auto [j, v_ij]: v_l[lv][i])
-            ip.add_constraint(row, v_ij, -1);
-          if (i>0)
-            for (auto [j, v_ij]: v_l[lv][i-1])
-              ip.add_constraint(row, v_ij, 1);
-          if (i+1<L)
-            for (auto [j, v_ij]: v_l[lv][i+1])
-              ip.add_constraint(row, v_ij, 1);
-        }
-      }
-    }
-
-    // execute optimization
-    ip.solve();
+    ip.update();
+    spdlog::stopwatch solver_timer;
+    const double objective = ip.solve();
+    spdlog::debug("{} objective: {:.12g}", dd_options_.enabled ? "DD" : "IP", objective);
+    spdlog::info("{} optimization finished in {:.6f}s", dd_options_.enabled ? "DD" : "IP", solver_timer.elapsed().count());
 
     // build the result
     bpseq.resize(L);
@@ -290,48 +305,74 @@ void IPknot::solve(uint L, IP& ip, const VVSVI& v_l, const VVSVI& v_r, const VI&
 
     if (!levelwise_)
       decompose_plevel(bpseq, plevel);
+
   }
 
-auto IPknot::solve(uint L, const VSVF& bp,
-             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint, bool verbose) const -> std::pair<float,float>
+auto IPknot::solve(const std::string& seq, const VSVF& bp,
+             EnumParam<float>& ep, VI& bpseq, VI& plevel, bool constraint) const -> std::pair<float,float>
 {
+    uint L = seq.size();
     std::vector<float> th(ep.size());
     VI bpseq_temp, plevel_temp;
     VI max_bpseq, max_plevel;
     float max_fval=-100.0, max_fval_pk=-100.0;
-    if (verbose)
-      std::cerr << "Search for the best thresholds by pseudo expected F-value:" << std::endl;
-    const auto sump = compute_sump_pk(bp);
+    double max_selection_score = -std::numeric_limits<double>::infinity();
+    spdlog::info("Search for the best thresholds by pseudo expected F-value:");
+    std::vector<DDCrossingEvidence> dd_evidence;
+    if (dd_options_.enabled) dd_evidence = dd_crossing_evidence(bp, dd_options_.crossing_beam);
+    double dd_sump = 0;
+    for (const auto& contact : dd_evidence) dd_sump += contact.product;
+    const auto sump = dd_options_.enabled ? static_cast<float>(dd_sump) : compute_sump_pk(bp);
     do {
       ep.get(th);
       uint i;
       for (i=1; i!=th.size(); i++)
         if (th[i-1]<th[i]) break;
       if (i!=th.size()) continue;
-      if (verbose)
-      {
-        std::cerr << "th=";
-        std::copy(th.begin(), th.end(), std::ostream_iterator<float>(std::cerr, ","));
-      }
       bpseq_temp = bpseq;
       plevel_temp = plevel;
-      solve(L, bp, th, bpseq_temp, plevel_temp, constraint);
+      try {
+        solve(seq, bp, th, bpseq_temp, plevel_temp, constraint);
+      } catch (const DDInfeasible& error) {
+        spdlog::info("Skipping infeasible DD thresholds: {}", error.what());
+        continue;
+      }
       const auto [sen, ppv, mcc, fval] = compute_expected_accuracy(bpseq_temp, bp);
-      const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = compute_expected_accuracy_pk(bpseq_temp, bp, sump);
-      if (verbose)
-        std::cerr << " pF=" << fval << ", " << fval_pk << std::endl;
-      if (fval+fval_pk>max_fval+max_fval_pk)
+      const auto pk_accuracy = [&]() {
+        if (!dd_options_.enabled) return compute_expected_accuracy_pk(bpseq_temp, bp, sump);
+        double etp = 0;
+        int selected_contacts = 0;
+        for (const auto& c : dd_evidence)
+          if (bpseq_temp[c.left1] == c.right1 && bpseq_temp[c.left2] == c.right2) {
+            etp += c.product; ++selected_contacts;
+          }
+        const double total = static_cast<double>(bpseq_temp.size()) * (bpseq_temp.size() - 1) / 2;
+        return compute_expected_accuracy(etp, total - selected_contacts - sump + etp,
+                                         selected_contacts - etp, sump - etp);
+      };
+      const auto [sen_pk, ppv_pk, mcc_pk, fval_pk] = pk_accuracy();
+      if (spdlog::get_level() <= spdlog::level::info)
       {
+        std::ostringstream th_ss;
+        std::copy(th.begin(), th.end(), std::ostream_iterator<float>(th_ss, ","));
+        spdlog::info("th={} pF={}, pF_pk={}", th_ss.str(), fval, fval_pk);
+      }
+      const double selection_score = fval + fval_pk;
+      if (selection_score > max_selection_score)
+      {
+        max_selection_score = selection_score;
         max_fval = fval;
         max_fval_pk = fval_pk;
         max_bpseq = bpseq_temp;
         max_plevel = plevel_temp;
       }
     } while (!ep.succ());
+    if (dd_options_.enabled && !std::isfinite(max_selection_score))
+      throw DDInfeasible("No feasible structure for any DD threshold combination");
     bpseq = max_bpseq;
     plevel = max_plevel;
-    if (verbose)
-      std::cerr << "max pF=" << max_fval << "," << max_fval_pk << std::endl << std::endl;
+    spdlog::info("max pF={}, pF_pk={}, selection score={}",
+                 max_fval, max_fval_pk, max_selection_score);
 
     return {max_fval, max_fval_pk};
   }
@@ -449,6 +490,7 @@ auto IPknot::compute_expected_accuracy(float etp, float etn, float efp, float ef
     return {sen, ppv, mcc, f};
   }
 
+#if 0
 auto IPknot::compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& offset) -> std::tuple<float,float,float,float>
 {
     int L  = bpseq.size();
@@ -475,6 +517,7 @@ auto IPknot::compute_expected_accuracy(const VI& bpseq, const VF& bp, const VI& 
 
     return compute_expected_accuracy(etp, etn, efp, efn);
   }
+#endif
 
 auto IPknot::compute_expected_accuracy(const VI& bpseq, const VSVF& bp) -> std::tuple<float,float,float,float>
 {
